@@ -24,3 +24,6 @@ web/node_modules/
 __pycache__/
 *.log
 scratch/
+
+# 与 rvsim 无关的选题调研资料（Windows 侧 D:\rvsim\docs 有副本）
+docs/thesis-topics-2026-10/
