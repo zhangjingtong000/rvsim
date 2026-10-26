@@ -13,7 +13,7 @@
 | Gate 4 特权级与计数器 | 16/16 | ✅ | `./tests/run_tests.sh rv32mi` |
 | Gate 5 S 模式 + Sv32 | 6/6 | ✅ | `./tests/run_tests.sh rv32si` |
 | Gate 6 启动 Linux | 进 shell + 执行命令 | ✅ | `uname -a` / `ls /` / `cat /proc/cpuinfo` / `free` / `ps` |
-| Gate 7a 迷你内核 | M→S→U + Sv32 + 系统调用 | 🟡 **核心打通，未达 FR-7 全部要求** | 见下 |
+| Gate 7a 迷你内核 | M→S→U + Sv32 + 多进程 + 系统调用 | ✅ **核心达成** | 3 进程 `ABCABC...` 轮转 |
 | Gate 7b WASM 可视化 | 浏览器调试界面 | ✅ | 29 KB wasm，Node + 浏览器双验证 |
 
 **riscv-tests：82/82 全通过。**
@@ -67,14 +67,18 @@ cd web && python3 -m http.server 8777
 
 ## Gate 7a 的完成度（如实说明）
 
-**已做到**：M 模式启动 → 自建 Sv32 恒等页表 → `mret` 进 S 模式 → `sret` 进 U 模式 → 用户程序经 `ecall` 发系统调用 → S 模式 `s_trap_handler` 处理 `write`/`exit`（用 `sscratch` 换栈、`SUM=1` 读用户内存）→ 用户态输出正确 → 优雅关机。
+**已做到**：
+- M 模式启动 → 自建 Sv32 恒等页表 → `mret` 进 S 模式 → `sret` 进 U 模式
+- **3 个进程轮转**（`ABCABC...`），`proc_schedule` 时间片轮转
+- **完整上下文切换**：`s_trap_entry` 保存 x1-x31 + 用户 `sp`，切换时整组恢复
+- **4 个系统调用**：`write` / `exit` / `getpid` / `yield`
+- `sscratch` 换栈 + `SUM=1` 读用户内存
+- 优雅关机（syscon）
 
-**尚未做到**（设计文档 FR-7 的要求）：
-- 多进程（≥3 个）与上下文切换
-- 缺页异常处理（当前页表是静态建好的）
-- 系统调用数量（当前 2 个，要求 ≥4 个）
-- 定时器中断驱动的抢占式调度
-- 内核内 shell
+**尚未做到**（设计文档 FR-7 的完整要求）：
+- 缺页异常处理（当前页表静态建好，未做按需分配）
+- 定时器中断驱动的抢占式调度（`m_trap_handler` 的 MTIP 逻辑已写，但为避免与 yield 抢 pc 保存而暂未启用）
+- 内核内 shell**
 
 ## 代码结构要点
 
