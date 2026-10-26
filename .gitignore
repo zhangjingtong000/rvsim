@@ -1,10 +1,26 @@
+# 构建产物
 build/
+install/
 *.o
+*.a
+*.so*
+*.d
 *.elf
 *.bin
 *.dtb
+
+# 第三方源码（体积大，用脚本拉取）
 third_party/capstone/
 third_party/linux-image/
 refs/repos/
+tests/riscv-tests/
+tests/riscv-test-env/
+
+# WASM 工具链
+emsdk/
+web/node_modules/
+
+# 杂项
 __pycache__/
 *.log
+scratch/
