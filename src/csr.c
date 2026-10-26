@@ -65,7 +65,9 @@ bool csr_read_priv(csr_t *c, u32 addr, u32 *out)
     case CSR_SEPC:      v = c->sepc; break;
     case CSR_SCAUSE:    v = c->scause; break;
     case CSR_STVAL:     v = c->stval; break;
-    case CSR_SATP:      v = c->satp; break;
+    case CSR_SATP:
+        if (c->priv == PRV_S && (c->mstatus & MSTATUS_TVM)) return false;   /* TVM=1 时 S 模式不可读 */
+        v = c->satp; break;
 
     /* 只读影子计数器 */
     case CSR_CYCLE:     v = (u32)(c->mcycle); break;
@@ -99,7 +101,8 @@ bool csr_write_priv(csr_t *c, u32 addr, u32 val)
         /* 未实现的字段 read-only 0：只保留可写位 */
         c->mstatus = val & (MSTATUS_SIE | MSTATUS_MIE | MSTATUS_SPIE | MSTATUS_MPIE
                           | MSTATUS_SPP | MSTATUS_MPP | MSTATUS_MPRV
-                          | MSTATUS_SUM | MSTATUS_MXR);
+                          | MSTATUS_SUM | MSTATUS_MXR
+                          | MSTATUS_TVM | MSTATUS_TW | MSTATUS_TSR);
         break;
     case CSR_MSTATUSH:  c->mstatush = val & 0; break;   /* 全 RO 0 */
     case CSR_MISA:
@@ -162,6 +165,7 @@ bool csr_write_priv(csr_t *c, u32 addr, u32 val)
     case CSR_SCAUSE:    c->scause = val; break;
     case CSR_STVAL:     c->stval = val; break;
     case CSR_SATP:
+        if (c->priv == PRV_S && (c->mstatus & MSTATUS_TVM)) return false;   /* TVM=1 时 S 模式不可写 */
         /* RV32: MODE=bit31, ASID=30:22, PPN=21:0；不支持的 MODE 整条写无效 */
         if ((val >> 31) == 0 || (val >> 31) == 1) c->satp = val;
         break;

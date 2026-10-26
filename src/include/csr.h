@@ -15,6 +15,9 @@
 #define MSTATUS_MPRV  0x00020000u
 #define MSTATUS_SUM   0x00040000u
 #define MSTATUS_MXR   0x00080000u
+#define MSTATUS_TVM   0x00100000u
+#define MSTATUS_TW    0x00200000u
+#define MSTATUS_TSR   0x00400000u
 #define MSTATUS_MPP_U (0u << 11)
 #define MSTATUS_MPP_S (1u << 11)
 #define MSTATUS_MPP_M (3u << 11)

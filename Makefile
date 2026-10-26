@@ -6,7 +6,7 @@ SRCDIR   = src
 OBJDIR   = build
 TARGET   = $(OBJDIR)/rvsim
 
-SRCS = $(SRCDIR)/main.c $(SRCDIR)/exec.c $(SRCDIR)/csr.c $(SRCDIR)/bus.c $(SRCDIR)/loader.c
+SRCS = $(SRCDIR)/main.c $(SRCDIR)/exec.c $(SRCDIR)/csr.c $(SRCDIR)/bus.c $(SRCDIR)/loader.c $(SRCDIR)/mmu.c
 OBJS = $(patsubst $(SRCDIR)/%.c,$(OBJDIR)/%.o,$(SRCS))
 
 all: $(TARGET)

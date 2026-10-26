@@ -1,73 +1,150 @@
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include "include/cpu.h"
 #include "include/bus.h"
+#include "include/mmu.h"
 
-/* ── 存取辅助（misaligned 由硬件分解，不作为异常） ── */
-static bool mem_read32(cpu_t *c, u32 addr, u32 *v)
+/* ── 存取辅助（先过 MMU，misaligned 由硬件分解） ── */
+static u32 g_fault_cause = 0;
+
+static bool load_u32_phys(cpu_t *c, u32 pa, u32 *out)
 {
-    if ((addr & 3) == 0) return bus_read(addr, 4, v);
-    /* 拆成字节 */
+    (void)c;
+    return bus_read(pa, 4, out);
+}
+static bool load_u16_phys(cpu_t *c, u32 pa, u32 *out)
+{
+    (void)c;
+    return bus_read(pa, 2, out);
+}
+static bool load_u8_phys(cpu_t *c, u32 pa, u32 *out)
+{
+    (void)c;
+    return bus_read(pa, 1, out);
+}
+static bool store_u32_phys(cpu_t *c, u32 pa, u32 v)
+{
+    (void)c;
+    return bus_write(pa, 4, v);
+}
+static bool store_u16_phys(cpu_t *c, u32 pa, u32 v)
+{
+    (void)c;
+    return bus_write(pa, 2, v);
+}
+static bool store_u8_phys(cpu_t *c, u32 pa, u32 v)
+{
+    (void)c;
+    return bus_write(pa, 1, v);
+}
+
+/* 翻译单个字节/半字（用于 misaligned 分解，可能跨页） */
+static bool trans(cpu_t *c, u32 va, acc_t acc, u32 *pa)
+{
+    return mmu_translate(c->csr.satp, c->csr.priv, c->csr.mstatus, va, acc, pa, &g_fault_cause);
+}
+
+static bool mem_read32(cpu_t *c, u32 va, u32 *v)
+{
+    if ((va & 3) == 0) {
+        u32 pa;
+        if (!trans(c, va, ACC_LOAD, &pa)) return false;
+        return load_u32_phys(c, pa, v);
+    }
     u32 r = 0;
     for (int i = 0; i < 4; i++) {
-        u32 b;
-        if (!bus_read(addr + i, 1, &b)) return false;
+        u32 pa, b;
+        if (!trans(c, va + i, ACC_LOAD, &pa)) return false;
+        if (!load_u8_phys(c, pa, &b)) return false;
         r |= (b & 0xFF) << (8 * i);
     }
     *v = r; return true;
 }
 
-static bool mem_read16(cpu_t *c, u32 addr, u32 *v)
+static bool mem_read16(cpu_t *c, u32 va, u32 *v)
 {
-    (void)c;
-    if ((addr & 1) == 0) return bus_read(addr, 2, v);
-    u32 b0, b1;
-    if (!bus_read(addr, 1, &b0) || !bus_read(addr + 1, 1, &b1)) return false;
+    if ((va & 1) == 0) {
+        u32 pa;
+        if (!trans(c, va, ACC_LOAD, &pa)) return false;
+        return load_u16_phys(c, pa, v);
+    }
+    u32 b0, b1, pa;
+    if (!trans(c, va, ACC_LOAD, &pa) || !load_u8_phys(c, pa, &b0)) return false;
+    if (!trans(c, va + 1, ACC_LOAD, &pa) || !load_u8_phys(c, pa, &b1)) return false;
     *v = (b0 & 0xFF) | ((b1 & 0xFF) << 8);
     return true;
 }
 
-static bool mem_read8(cpu_t *c, u32 addr, u32 *v)
+static bool mem_read8(cpu_t *c, u32 va, u32 *v)
 {
-    (void)c;
-    return bus_read(addr, 1, v);
+    u32 pa;
+    if (!trans(c, va, ACC_LOAD, &pa)) return false;
+    return load_u8_phys(c, pa, v);
 }
 
-static bool mem_write32(cpu_t *c, u32 addr, u32 v)
+static bool mem_write32(cpu_t *c, u32 va, u32 v)
 {
-    if ((addr & 3) == 0) return bus_write(addr, 4, v);
-    for (int i = 0; i < 4; i++)
-        if (!bus_write(addr + i, 1, (v >> (8 * i)) & 0xFF)) return false;
+    if ((va & 3) == 0) {
+        u32 pa;
+        if (!trans(c, va, ACC_STORE, &pa)) return false;
+        return store_u32_phys(c, pa, v);
+    }
+    for (int i = 0; i < 4; i++) {
+        u32 pa;
+        if (!trans(c, va + i, ACC_STORE, &pa)) return false;
+        if (!store_u8_phys(c, pa, (v >> (8 * i)) & 0xFF)) return false;
+    }
     return true;
 }
 
-static bool mem_write16(cpu_t *c, u32 addr, u32 v)
+static bool mem_write16(cpu_t *c, u32 va, u32 v)
 {
-    (void)c;
-    if ((addr & 1) == 0) return bus_write(addr, 2, v);
-    if (!bus_write(addr, 1, v & 0xFF)) return false;
-    return bus_write(addr + 1, 1, (v >> 8) & 0xFF);
+    if ((va & 1) == 0) {
+        u32 pa;
+        if (!trans(c, va, ACC_STORE, &pa)) return false;
+        return store_u16_phys(c, pa, v);
+    }
+    u32 pa;
+    if (!trans(c, va, ACC_STORE, &pa) || !store_u8_phys(c, pa, v & 0xFF)) return false;
+    if (!trans(c, va + 1, ACC_STORE, &pa) || !store_u8_phys(c, pa, (v >> 8) & 0xFF)) return false;
+    return true;
 }
 
-static bool mem_write8(cpu_t *c, u32 addr, u32 v)
+static bool mem_write8(cpu_t *c, u32 va, u32 v)
 {
-    (void)c;
-    return bus_write(addr, 1, v & 0xFF);
+    u32 pa;
+    if (!trans(c, va, ACC_STORE, &pa)) return false;
+    return store_u8_phys(c, pa, v & 0xFF);
 }
 
-/* ── 取指 ── */
+/* ── 取指（过 MMU） ── */
 static bool fetch(cpu_t *c, u32 *insn)
 {
-    return mem_read32(c, c->pc, insn);
+    u32 pa;
+    if (!trans(c, c->pc, ACC_FETCH, &pa)) return false;
+    if ((pa & 3) == 0) return load_u32_phys(c, pa, insn);
+    u32 r = 0;
+    for (int i = 0; i < 4; i++) {
+        u32 b;
+        if (!load_u8_phys(c, pa + i, &b)) return false;
+        r |= (b & 0xFF) << (8 * i);
+    }
+    *insn = r; return true;
 }
 
 /* ── trap：填 mepc/sepc 后跳到 mtvec/stvec ── */
 static void do_trap(cpu_t *c, u32 cause, u32 tval)
 {
     u32 epc = c->pc;
+    if (getenv("RVSIM_TRAP")) fprintf(stderr, "[trap] cause=%u tval=%08x epc=%08x pc=%08x\n", cause, tval, epc, c->pc);
     csr_raise(&c->csr, cause, tval);
+    if (getenv("RVSIM_TRAP"))
+        fprintf(stderr, "[trap2] cause=%u epc=%08x target=%d mepc_set=%08x sepc_set=%08x\n",
+                cause, epc, c->csr.priv, c->csr.mepc, c->csr.sepc);
     if (c->csr.priv == PRV_M) {
         c->csr.mepc = epc;
+        if (getenv("RVSIM_TRAP")) fprintf(stderr, "[set] mepc=%08x mtvec=%08x\n", c->csr.mepc, c->csr.mtvec);
         u32 base = c->csr.mtvec & ~3u;
         u32 mode = c->csr.mtvec & 3u;
         if (mode == 1 && (cause >> 31)) base += 4u * (cause & 0x7FFFFFFFu);
@@ -81,13 +158,12 @@ static void do_trap(cpu_t *c, u32 cause, u32 tval)
     }
 }
 
-/* ── 中断检查：在指令之间注入 ── */
+/* ── 中断检查：在指令之间注入，按 mideleg 判定委派 ── */
 static bool check_interrupt(cpu_t *c)
 {
     u32 pending = c->csr.mip & c->csr.mie;
     if (!pending) return false;
 
-    /* 按"是否被 mideleg 委派"分类，而不是按中断编号的 M/S 名义 */
     static const u32 bit[]  = { MIP_MEIP, MIP_MSIP, MIP_MTIP, MIP_SEIP, MIP_SSIP, MIP_STIP };
     static const u32 code[] = { IRQ_M_EXTERNAL, IRQ_M_SOFTWARE, IRQ_M_TIMER,
                                 IRQ_S_EXTERNAL, IRQ_S_SOFTWARE, IRQ_S_TIMER };
@@ -159,7 +235,7 @@ bool cpu_step(cpu_t *c)
 
     u32 insn = 0;
     if (!fetch(c, &insn)) {
-        do_trap(c, CAUSE_FETCH_ACCESS, c->pc);
+        do_trap(c, g_fault_cause ? g_fault_cause : CAUSE_FETCH_ACCESS, c->pc);
         return true;
     }
     c->cur_instr = insn;
@@ -200,6 +276,9 @@ bool cpu_step(cpu_t *c)
         case 7: take = (a >= b); break;
         default: do_trap(c, CAUSE_ILLEGAL_INSTRUCTION, insn); return true;
         }
+        if (getenv("RVSIM_BR") && c->pc >= 0x80002270u && c->pc <= 0x80002280u)
+            fprintf(stderr, "[br] pc=%08x insn=%08x a(x%d)=%08x b(x%d)=%08x take=%d\n",
+                    c->pc, insn, rs1, a, rs2, b, take);
         if (take) {
             next_pc = c->pc + imm_b(insn);
             if (next_pc & 3) { do_trap(c, CAUSE_MISALIGNED_FETCH, next_pc); return true; }
@@ -217,7 +296,7 @@ bool cpu_step(cpu_t *c)
         case 5: ok = mem_read16(c, addr, &v); break;
         default: do_trap(c, CAUSE_ILLEGAL_INSTRUCTION, insn); return true;
         }
-        if (!ok) { do_trap(c, CAUSE_LOAD_ACCESS, addr); return true; }
+        if (!ok) { do_trap(c, g_fault_cause ? g_fault_cause : CAUSE_LOAD_ACCESS, addr); return true; }
         wr(c, rd, v);
         break;
     }
@@ -230,7 +309,7 @@ bool cpu_step(cpu_t *c)
         case 2: ok = mem_write32(c, addr, b); break;
         default: do_trap(c, CAUSE_ILLEGAL_INSTRUCTION, insn); return true;
         }
-        if (!ok) { do_trap(c, CAUSE_STORE_ACCESS, addr); return true; }
+        if (!ok) { do_trap(c, g_fault_cause ? g_fault_cause : CAUSE_STORE_ACCESS, addr); return true; }
         break;
     }
     case 0x13: { /* OP-IMM */
@@ -312,15 +391,24 @@ bool cpu_step(cpu_t *c)
             }
             if (insn == 0x10200073) {        /* SRET */
                 if (c->csr.priv < PRV_S) { do_trap(c, CAUSE_ILLEGAL_INSTRUCTION, insn); return true; }
+                if (c->csr.priv == PRV_S && (c->csr.mstatus & MSTATUS_TSR)) {
+                    do_trap(c, CAUSE_ILLEGAL_INSTRUCTION, insn); return true;   /* TSR=1 时 S 模式非法 */
+                }
                 c->pc = c->csr.sepc;
                 csr_return(&c->csr);
                 return true;
             }
             if (insn == 0x10500073) {        /* WFI：不阻塞，作 NOP（规范允许） */
-                break;   /* 用 break 走正常流程以推进 pc，不能 return */
+                if (c->csr.priv < PRV_M && (c->csr.mstatus & MSTATUS_TW)) {
+                    do_trap(c, CAUSE_ILLEGAL_INSTRUCTION, insn); return true;   /* TW=1 时低特权级非法 */
+                }
+                break;
             }
             if ((insn & 0xFE007FFF) == 0x12000073) {   /* SFENCE.VMA */
                 if (c->csr.priv == PRV_U) { do_trap(c, CAUSE_ILLEGAL_INSTRUCTION, insn); return true; }
+                if (c->csr.priv == PRV_S && (c->csr.mstatus & MSTATUS_TVM)) {
+                    do_trap(c, CAUSE_ILLEGAL_INSTRUCTION, insn); return true;   /* TVM=1 时 S 模式非法 */
+                }
                 break;                                  /* 无 TLB，NOP */
             }
             do_trap(c, CAUSE_ILLEGAL_INSTRUCTION, insn); return true;
