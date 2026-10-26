@@ -2,9 +2,12 @@
 #include <stdlib.h>
 #include <string.h>
 #include <signal.h>
+#include <unistd.h>
+#include <fcntl.h>
 #include "include/cpu.h"
 #include "include/bus.h"
 #include "include/loader.h"
+#include "include/bus.h"
 
 static volatile sig_atomic_t g_stop = 0;
 static void on_sigint(int s) { (void)s; g_stop = 1; }
@@ -42,7 +45,7 @@ static int check_tohost(cpu_t *c, u32 tohost)
 int main(int argc, char **argv)
 {
     const char *elf = NULL, *image = NULL, *dtb = NULL;
-    u32 dtb_addr = 0x87E00000u;
+    u32 dtb_addr = 0x83E00000u;   /* 60 MB 处，避开内核且不超 64 MB RAM */
     u32 tohost_override = 0;
     bool trace = false;
     u64 max_cycles = 50000000ull;
@@ -60,6 +63,9 @@ int main(int argc, char **argv)
     if (!elf && !image) { usage(argv[0]); return 2; }
 
     signal(SIGINT, on_sigint);
+    /* stdin 非阻塞，供 UART 输入 */
+    int flags = fcntl(STDIN_FILENO, F_GETFL, 0);
+    if (flags >= 0) fcntl(STDIN_FILENO, F_SETFL, flags | O_NONBLOCK);
     bus_init();
 
     cpu_t cpu;
@@ -104,6 +110,21 @@ int main(int argc, char **argv)
         if ((steps & 63) == 0) {
             int r = check_tohost(&cpu, tohost);
             if (r != 0) { result = r; cpu.halted = true; break; }
+        }
+        /* 检测到登录提示符后，自动输入 root */
+        if (g_login_seen) {
+            static bool fed = false;
+            if (!fed) {
+                fed = true;
+                const char *cred = "root\n";
+                for (const char *q = cred; *q; q++) uart_push_rx((u8)*q);
+            }
+        }
+        /* 每 4096 步从 stdin 读一次，喂给 UART */
+        if ((steps & 4095) == 0) {
+            u8 buf[64];
+            ssize_t n = read(STDIN_FILENO, buf, sizeof(buf));
+            for (ssize_t k = 0; k < n; k++) uart_push_rx(buf[k]);
         }
         /* syscon 关机 */
         if (g_syscon.poweroff || g_syscon.reboot) {

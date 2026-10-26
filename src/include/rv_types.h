@@ -39,8 +39,8 @@ typedef int64_t  s64;
 #define PLIC_PRIORITY_BASE   0x0000000u
 #define PLIC_PENDING_BASE    0x0001000u
 #define PLIC_ENABLE_BASE     0x0002000u
-#define PLIC_THRESHOLD_BASE  0x0200000u
-#define PLIC_CLAIM_BASE      0x0200000u
+#define PLIC_THRESHOLD_BASE  0x0200000u   /* context 块：+0x0 threshold, +0x4 claim/complete */
+#define PLIC_CLAIM_BASE      0x0200004u
 
 #define PLIC_UART_IRQ        10u
 #define PLIC_NDEV            31u

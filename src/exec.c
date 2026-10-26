@@ -174,7 +174,9 @@ static bool check_interrupt(cpu_t *c)
             if (c->csr.priv == PRV_M) continue;
             if (!(c->csr.mstatus & MSTATUS_SIE)) continue;
         } else {
-            if (c->csr.priv == PRV_M && !(c->csr.mstatus & MSTATUS_MIE)) continue;
+            if (c->csr.priv == PRV_M && !(c->csr.mstatus & MSTATUS_MIE)) {
+                if (!getenv("RVSIM_IGNORE_MIE")) continue;
+            }
         }
         do_trap(c, (u32)code[i] | 0x80000000u, 0);
         return true;

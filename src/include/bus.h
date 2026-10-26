@@ -10,13 +10,16 @@ typedef struct {
     u32 msip;
 } clint_t;
 
+#define UART_RX_FIFO 256
 typedef struct {
-    u8  rbr;        /* 接收缓冲 */
-    u8  ier;        /* 中断使能 */
+    u8  rbr;        /* 当前接收字节 */
+    u8  ier;
     u8  lcr;
     u8  mcr;
     u8  lsr;        /* bit5=THRE, bit0=DR */
     bool rx_pending;
+    u8   fifo[UART_RX_FIFO];
+    u32  fifo_head, fifo_tail;
 } uart_t;
 
 typedef struct {
@@ -37,6 +40,10 @@ extern clint_t  g_clint;
 extern uart_t   g_uart;
 extern plic_t   g_plic;
 extern syscon_t g_syscon;
+
+/* 检测到登录提示符后置位，供宿主喂入凭据 */
+extern bool g_login_seen;
+extern bool g_shell_prompt_seen;
 
 void  bus_init(void);
 u8   *bus_ram(void);

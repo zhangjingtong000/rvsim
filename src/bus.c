@@ -1,11 +1,16 @@
 #include <stdio.h>
 #include <string.h>
+#include <stdlib.h>
 #include "include/bus.h"
 
 clint_t  g_clint;
 uart_t   g_uart;
 plic_t   g_plic;
 syscon_t g_syscon;
+bool g_login_seen = false;
+bool g_shell_prompt_seen = false;
+
+static char g_out_win[9] = {0};
 
 static u8 g_ram[RAM_SIZE] __attribute__((aligned(4096)));
 
@@ -63,9 +68,22 @@ static bool uart_read(u32 off, int len, u32 *val)
 {
     u8 v = 0;
     switch (off) {
-    case 0: v = g_uart.rbr; g_uart.lsr &= ~0x01u; break;   /* RBR */
+    case 0:                                                /* RBR：从 FIFO 取 */
+        if (g_uart.fifo_head != g_uart.fifo_tail) {
+            v = g_uart.fifo[g_uart.fifo_head];
+            g_uart.fifo_head = (g_uart.fifo_head + 1) % UART_RX_FIFO;
+        } else {
+            v = g_uart.rbr;
+        }
+        if (g_uart.fifo_head == g_uart.fifo_tail) g_uart.lsr &= ~0x01u;
+        break;
     case 1: v = g_uart.ier; break;
-    case 2: v = 0xC1; break;                                /* IIR: FIFO enabled, no pending */
+    case 2:                                                 /* IIR */
+        if ((g_uart.ier & 0x02) && (g_plic.pending & (1u << PLIC_UART_IRQ)))
+            v = 0xC2;                                       /* FIFO enabled + THR empty */
+        else
+            v = 0xC1;                                       /* FIFO enabled + no pending */
+        break;
     case 3: v = g_uart.lcr; break;
     case 4: v = g_uart.mcr; break;
     case 5: v = g_uart.lsr; break;
@@ -80,7 +98,22 @@ static bool uart_read(u32 off, int len, u32 *val)
 static bool uart_write(u32 off, int len, u32 val)
 {
     switch (off) {
-    case 0: putchar((int)(val & 0xFF)); fflush(stdout); break;   /* THR */
+    case 0: {                                                    /* THR */
+        char ch = (char)(val & 0xFF);
+        putchar(ch); fflush(stdout);
+        /* 滚动窗口，检测 "login:" 与 "# " 提示符 */
+        memmove(g_out_win, g_out_win + 1, 7);
+        g_out_win[7] = ch;
+        if (strstr(g_out_win, "login:")) g_login_seen = true;
+        if (g_login_seen && (ch == '#')) g_shell_prompt_seen = true;
+        /* 模拟 TX 完成中断：驱动靠它继续写剩余数据 */
+        if (g_uart.ier & 0x02) {
+            g_plic.pending |= (1u << PLIC_UART_IRQ);
+            g_plic.enable  |= (1u << PLIC_UART_IRQ);
+            if (g_plic.priority[PLIC_UART_IRQ] == 0) g_plic.priority[PLIC_UART_IRQ] = 1;
+        }
+        break;
+    }
     case 1: g_uart.ier = (u8)val; break;
     case 3: g_uart.lcr = (u8)val; break;
     case 4: g_uart.mcr = (u8)val; break;
@@ -94,7 +127,10 @@ static bool uart_write(u32 off, int len, u32 val)
 /* 让模拟器把内核的串口输入喂进来 */
 void uart_push_rx(u8 byte)
 {
-    g_uart.rbr = byte;
+    u32 next = (g_uart.fifo_tail + 1) % UART_RX_FIFO;
+    if (next == g_uart.fifo_head) return;   /* FIFO 满，丢弃 */
+    g_uart.fifo[g_uart.fifo_tail] = byte;
+    g_uart.fifo_tail = next;
     g_uart.lsr |= 0x01u;
     g_uart.rx_pending = true;
     g_plic.pending |= (1u << PLIC_UART_IRQ);
@@ -123,7 +159,7 @@ static bool plic_read(u32 off, int len, u32 *val)
         *val = g_plic.threshold;
         return true;
     }
-    if (off == PLIC_CLAIM_BASE) {
+    if (off == PLIC_THRESHOLD_BASE + 4) {   /* claim：context 块内偏移 0x4 */
         /* claim：返回当前最高优先级的 pending 且已使能的中断 */
         u32 pend = g_plic.pending & g_plic.enable;
         if (pend) {
@@ -157,7 +193,7 @@ static bool plic_write(u32 off, int len, u32 val)
         return true;
     }
     if (off == PLIC_THRESHOLD_BASE) { g_plic.threshold = val; return true; }
-    if (off == PLIC_CLAIM_BASE) {
+    if (off == PLIC_THRESHOLD_BASE + 4) {   /* complete */
         /* complete：清 claimed 对应的 pending（已在 claim 时清了） */
         g_plic.claimed = 0;
         return true;
