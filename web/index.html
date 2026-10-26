@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>rvsim · RISC-V 模拟器可视化</title>
+<style>
+  :root {
+    --bg:#0e1116; --panel:#161b22; --line:#21262d; --fg:#e6edf3;
+    --dim:#8b949e; --acc:#58a6ff; --ok:#3fb950; --warn:#d29922; --err:#f85149;
+    --mono: ui-monospace, "SF Mono", Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg);
+         font-family: -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif; }
+  header { padding:12px 18px; border-bottom:1px solid var(--line);
+           display:flex; align-items:center; gap:16px; flex-wrap:wrap; }
+  h1 { font-size:15px; margin:0; font-weight:600; letter-spacing:.02em; }
+  .tag { font-size:11px; color:var(--dim); border:1px solid var(--line);
+         padding:2px 7px; border-radius:10px; }
+  main { display:grid; grid-template-columns: 300px 1fr 300px; gap:1px;
+         background:var(--line); height:calc(100vh - 53px); }
+  section { background:var(--panel); padding:12px 14px; overflow:auto; }
+  h2 { font-size:11px; text-transform:uppercase; letter-spacing:.08em;
+       color:var(--dim); margin:0 0 9px; font-weight:600; }
+  .row { display:flex; justify-content:space-between; font-family:var(--mono);
+         font-size:12px; padding:2px 0; }
+  .row .k { color:var(--dim); }
+  .row .v { color:var(--fg); }
+  .row.hl .v { color:var(--acc); }
+  .grid2 { display:grid; grid-template-columns:1fr 1fr; gap:0 14px; }
+  .btns { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:12px; }
+  button { background:#21262d; color:var(--fg); border:1px solid #30363d;
+           padding:6px 13px; border-radius:6px; font-size:12px; cursor:pointer; }
+  button:hover { background:#30363d; }
+  button.primary { background:#1f6feb; border-color:#1f6feb; }
+  button.primary:hover { background:#388bfd; }
+  button:disabled { opacity:.4; cursor:not-allowed; }
+  #status { font-family:var(--mono); font-size:12px; padding:6px 10px;
+            border-radius:6px; background:#0d1117; border:1px solid var(--line); }
+  .ok { color:var(--ok); } .err { color:var(--err); } .warn { color:var(--warn); }
+  table { width:100%; border-collapse:collapse; font-family:var(--mono); font-size:12px; }
+  td { padding:2px 4px; }
+  td.k { color:var(--dim); width:42px; }
+  td.v { color:var(--fg); }
+  .mem { font-family:var(--mono); font-size:11px; line-height:1.55;
+         white-space:pre; color:var(--dim); }
+  .mem b { color:var(--fg); font-weight:400; }
+  .bar { height:4px; background:var(--line); border-radius:2px; overflow:hidden; margin-top:8px; }
+  .bar > i { display:block; height:100%; background:var(--acc); width:0; transition:width .1s; }
+</style>
+</head>
+<body>
+<header>
+  <h1>rvsim</h1>
+  <span class="tag">RV32IMA · M/S/U · Sv32 · WASM</span>
+  <span id="status">初始化中…</span>
+</header>
+
+<main>
+  <section>
+    <h2>控制</h2>
+    <div class="btns">
+      <button class="primary" id="btnRun">运行</button>
+      <button id="btnStep">单步</button>
+      <button id="btnReset">复位</button>
+    </div>
+    <div class="btns">
+      <input type="file" id="fileElf" accept=".elf,*" style="font-size:11px;color:var(--dim)">
+    </div>
+    <div class="bar"><i id="prog"></i></div>
+
+    <h2 style="margin-top:18px">机器状态</h2>
+    <div class="row hl"><span class="k">PC</span><span class="v" id="vPc">—</span></div>
+    <div class="row"><span class="k">指令</span><span class="v" id="vInsn">—</span></div>
+    <div class="row"><span class="k">特权级</span><span class="v" id="vPriv">—</span></div>
+    <div class="row"><span class="k">周期</span><span class="v" id="vCycles">0</span></div>
+    <div class="row"><span class="k">tohost</span><span class="v" id="vTo">—</span></div>
+  </section>
+
+  <section>
+    <h2>寄存器堆</h2>
+    <div class="grid2" id="regs"></div>
+    <h2 style="margin-top:18px">关键 CSR</h2>
+    <div class="grid2" id="csrs"></div>
+  </section>
+
+  <section>
+    <h2>内存（PC 附近）</h2>
+    <div class="mem" id="mem">—</div>
+  </section>
+</main>
+
+<script src="rvsim.js"></script>
+<script>
+const ABI = ["zero","ra","sp","gp","tp","t0","t1","t2","s0","s1",
+             "a0","a1","a2","a3","a4","a5","a6","a7",
+             "s2","s3","s4","s5","s6","s7","s8","s9","s10","s11",
+             "t3","t4","t5","t6"];
+const PRIV = ["U","S","?","M"];
+const CSRS = [
+  [0x300,"mstatus"],[0x341,"mepc"],[0x342,"mcause"],[0x343,"mtval"],
+  [0x301,"misa"],[0x180,"satp"],[0x100,"sstatus"],[0x142,"scause"],
+];
+
+let M = null, running = false, timer = null, loaded = false;
+
+function hex(v, w = 8) {
+  return "0x" + (v >>> 0).toString(16).padStart(w, "0");
+}
+
+function refresh() {
+  if (!M) return;
+  const pc = M._rv_pc();
+  document.getElementById("vPc").textContent = hex(pc);
+  document.getElementById("vInsn").textContent = hex(M._rv_insn());
+  document.getElementById("vPriv").textContent = PRIV[M._rv_priv()] ?? "?";
+  document.getElementById("vCycles").textContent = M._rv_cycles().toLocaleString();
+  document.getElementById("vTo").textContent = hex(M._rv_tohost());
+
+  let rg = "";
+  for (let i = 0; i < 32; i++) {
+    const v = M._rv_reg(i) >>> 0;
+    rg += `<tr><td class="k">${ABI[i]}</td><td class="v">${hex(v)}</td></tr>`;
+  }
+  document.getElementById("regs").innerHTML = `<table>${rg}</table>`;
+
+  let cs = "";
+  for (const [a, n] of CSRS) {
+    cs += `<tr><td class="k">${n}</td><td class="v">${hex(M._rv_csr(a) >>> 0)}</td></tr>`;
+  }
+  document.getElementById("csrs").innerHTML = `<table>${cs}</table>`;
+
+  // 内存：PC 前后各 8 行，每行 4 字节
+  let mem = "";
+  const base = (pc - 16) >>> 0;
+  for (let r = 0; r < 8; r++) {
+    const a = (base + r * 4) >>> 0;
+    let bytes = "";
+    for (let b = 0; b < 4; b++) {
+      bytes += (M._rv_mem((a + b) >>> 0) & 0xFF).toString(16).padStart(2, "0") + " ";
+    }
+    const mark = (a === (pc & ~3)) ? "<b>" : "";
+    mem += `${mark}${hex(a)}  ${bytes}${mark ? "</b>" : ""}\n`;
+  }
+  document.getElementById("mem").innerHTML = mem;
+}
+
+function setStatus(text, cls) {
+  const el = document.getElementById("status");
+  el.textContent = text;
+  el.className = cls || "";
+}
+
+function stop() {
+  running = false;
+  if (timer) { clearTimeout(timer); timer = null; }
+  document.getElementById("btnRun").textContent = "运行";
+}
+
+function runChunk() {
+  if (!running || !M) return;
+  const CHUNK = 2000;
+  for (let i = 0; i < CHUNK; i++) {
+    if (M._rv_step() !== 0) {
+      stop();
+      const r = M._rv_result();
+      if (r === 1) setStatus("PASS", "ok");
+      else if (r === -1) setStatus("FAIL", "err");
+      else setStatus("已停机", "warn");
+      refresh();
+      return;
+    }
+  }
+  refresh();
+  timer = setTimeout(runChunk, 0);
+}
+
+async function boot() {
+  setStatus("加载 WASM…", "warn");
+  M = await createRvsim();
+  M._rv_reset();
+  setStatus("就绪：请选择 ELF 文件", "warn");
+  refresh();
+
+  document.getElementById("btnRun").onclick = () => {
+    if (!loaded) return;
+    if (running) { stop(); return; }
+    running = true;
+    document.getElementById("btnRun").textContent = "暂停";
+    runChunk();
+  };
+  document.getElementById("btnStep").onclick = () => {
+    if (!loaded || running) return;
+    if (M._rv_step() !== 0) {
+      const r = M._rv_result();
+      setStatus(r === 1 ? "PASS" : r === -1 ? "FAIL" : "已停机", r === 1 ? "ok" : r === -1 ? "err" : "warn");
+    }
+    refresh();
+  };
+  document.getElementById("btnReset").onclick = () => {
+    stop(); M._rv_reset();
+    if (loaded) M._rv_load(window.__elfPtr, window.__elfLen);
+    setStatus("已复位", "warn"); refresh();
+  };
+  document.getElementById("fileElf").onchange = async (e) => {
+    const f = e.target.files[0];
+    if (!f) return;
+    stop();
+    const buf = new Uint8Array(await f.arrayBuffer());
+    const ptr = M._malloc(buf.length);
+    M.HEAPU8.set(buf, ptr);
+    M._rv_reset();
+    const okLoad = M._rv_load(ptr, buf.length);
+    if (!okLoad) { setStatus("ELF 加载失败", "err"); M._free(ptr); return; }
+    window.__elfPtr = ptr; window.__elfLen = buf.length;
+    loaded = true;
+    setStatus(`已加载 ${f.name} (${buf.length} 字节)`, "ok");
+    refresh();
+  };
+}
+
+boot().catch(err => setStatus("启动失败：" + err, "err"));
+</script>
+</body>
+</html>
