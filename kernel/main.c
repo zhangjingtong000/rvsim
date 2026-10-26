@@ -91,6 +91,19 @@ u32 s_trap_handler(u32 cause, u32 epc, u32 tval, u32 *regs)
     return epc + 4;
 }
 
+int g_run_flag = 0;
+
+/* 供 shell 的 ps 命令调用 */
+void shell_ps_hook(void)
+{
+    kprintf("PID  STATE  NRUN  PC\n");
+    for (int i = 0; i < NPROC; i++) {
+        const char *st = procs[i].state == PROC_RUN ? "RUN  " :
+                         procs[i].state == PROC_READY ? "READY" : "EXIT ";
+        kprintf(" %d   %s  %d     %x\n", i, st, (int)procs[i].nrun, procs[i].pc);
+    }
+}
+
 void kmain(void)
 {
     kprintf("\n=== rvsim mini-kernel (multiproc) ===\n");
@@ -141,9 +154,20 @@ void s_main(void)
     proc_t *first = proc_schedule();
     if (!first) { kprintf("[S] 无进程\n"); for(;;){} }
 
-    kprintf("[S] 启动 proc %d，入口 %x\n", first->pid, first->pc);
-    kprintf("[S] --- 用户输出（定时器每 30 万周期切换进程）---\n");
+    (void)first;
+    shell_start();
 
-    enter_u_mode(first->pc, first->sp, first->pid);
-    for (;;) { }
+    volatile u8 *lsr = (volatile u8 *)(UART_BASE + 5);
+    volatile u8 *rbr = (volatile u8 *)(UART_BASE + 0);
+
+    for (;;) {
+        if (*lsr & 0x01) shell_input((char)*rbr);
+        /* run 命令通过 g_run_flag 触发 */
+        if (g_run_flag) {
+            g_run_flag = 0;
+            kprintf("[S] 启动 3 个用户进程（yield 轮转）...\n");
+            proc_t *p0 = proc_schedule();
+            if (p0) enter_u_mode(p0->pc, p0->sp, p0->pid);
+        }
+    }
 }

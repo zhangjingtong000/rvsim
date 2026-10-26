@@ -12,7 +12,7 @@ SRCS = $(SRCDIR)/main.c $(SRCDIR)/exec.c $(SRCDIR)/csr.c $(SRCDIR)/bus.c \
        $(SRCDIR)/loader.c $(SRCDIR)/mmu.c
 OBJS = $(patsubst $(SRCDIR)/%.c,$(OBJDIR)/%.o,$(SRCS))
 
-KSRCS = kernel/main.c kernel/vm.c kernel/uart.c kernel/proc.c
+KSRCS = kernel/main.c kernel/vm.c kernel/uart.c kernel/proc.c kernel/shell.c
 KASMS = kernel/start.S kernel/s_entry.S kernel/user_prog.S
 
 all: $(TARGET) $(OBJDIR)/kernel.elf

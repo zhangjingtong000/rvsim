@@ -65,6 +65,8 @@ void uart_puts(const char *s);
 void uart_hex(u32 v);
 void uart_dec(int v);
 void kprintf(const char *fmt, ...);
+void shell_input(char ch);
+void shell_start(void);
 
 void *memset(void *d, int c, size_t n);
 void *memcpy(void *d, const void *s, size_t n);
