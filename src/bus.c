@@ -9,6 +9,7 @@ plic_t   g_plic;
 syscon_t g_syscon;
 bool g_login_seen = false;
 bool g_shell_prompt_seen = false;
+bool g_password_seen = false;
 
 static char g_out_win[9] = {0};
 
@@ -79,10 +80,12 @@ static bool uart_read(u32 off, int len, u32 *val)
         break;
     case 1: v = g_uart.ier; break;
     case 2:                                                 /* IIR */
-        if ((g_uart.ier & 0x02) && (g_plic.pending & (1u << PLIC_UART_IRQ)))
-            v = 0xC2;                                       /* FIFO enabled + THR empty */
+        if ((g_uart.lsr & 0x01) && (g_uart.ier & 0x01))
+            v = 0xC4;                                       /* RX data available */
+        else if (g_uart.ier & 0x02)
+            v = 0xC2;                                       /* THR empty（THRI 使能即认为可写） */
         else
-            v = 0xC1;                                       /* FIFO enabled + no pending */
+            v = 0xC1;                                       /* no interrupt pending */
         break;
     case 3: v = g_uart.lcr; break;
     case 4: v = g_uart.mcr; break;
@@ -105,8 +108,9 @@ static bool uart_write(u32 off, int len, u32 val)
         memmove(g_out_win, g_out_win + 1, 7);
         g_out_win[7] = ch;
         if (strstr(g_out_win, "login:")) g_login_seen = true;
+        if (strstr(g_out_win, "assword:")) g_password_seen = true;
         if (g_login_seen && (ch == '#')) g_shell_prompt_seen = true;
-        /* 模拟 TX 完成中断：驱动靠它继续写剩余数据 */
+        /* TX 完成：THR 为空，若 THRI 使能则触发中断让驱动继续写 */
         if (g_uart.ier & 0x02) {
             g_plic.pending |= (1u << PLIC_UART_IRQ);
             g_plic.enable  |= (1u << PLIC_UART_IRQ);
@@ -114,7 +118,14 @@ static bool uart_write(u32 off, int len, u32 val)
         }
         break;
     }
-    case 1: g_uart.ier = (u8)val; break;
+    case 1:
+        g_uart.ier = (u8)val;
+        if (g_uart.ier & 0x02) {   /* 使能 TX 中断时立即触发一次（THR 为空） */
+            g_plic.pending |= (1u << PLIC_UART_IRQ);
+            g_plic.enable  |= (1u << PLIC_UART_IRQ);
+            if (g_plic.priority[PLIC_UART_IRQ] == 0) g_plic.priority[PLIC_UART_IRQ] = 1;
+        }
+        break;
     case 3: g_uart.lcr = (u8)val; break;
     case 4: g_uart.mcr = (u8)val; break;
     case 5: break;                                              /* FCR */

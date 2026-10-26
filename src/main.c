@@ -111,13 +111,30 @@ int main(int argc, char **argv)
             int r = check_tohost(&cpu, tohost);
             if (r != 0) { result = r; cpu.halted = true; break; }
         }
-        /* 检测到登录提示符后，自动输入 root */
-        if (g_login_seen) {
-            static bool fed = false;
-            if (!fed) {
-                fed = true;
-                const char *cred = "root\n";
-                for (const char *q = cred; *q; q++) uart_push_rx((u8)*q);
+        /* 检测到 shell 提示符后，依次执行几条命令 */
+        if (g_shell_prompt_seen) {
+            g_shell_prompt_seen = false;
+            static int idx = 0;
+            static const char *cmds[] = {
+                "uname -a\n", "ls /\n", "cat /proc/cpuinfo\n", "free\n", "ps\n"
+            };
+            if (idx < (int)(sizeof(cmds)/sizeof(cmds[0]))) {
+                for (const char *q = cmds[idx]; *q; q++) uart_push_rx((u8)*q);
+                idx++;
+            }
+        }
+        /* 检测到登录提示符后，自动输入用户名与密码 */
+        {
+            static bool fed_user = false, fed_pass = false;
+            if (g_login_seen && !fed_user) {
+                fed_user = true;
+                const char *u2 = "root\n";
+                for (const char *q = u2; *q; q++) uart_push_rx((u8)*q);
+            }
+            if (g_password_seen && !fed_pass) {
+                fed_pass = true;
+                const char *p2 = "root\n";
+                for (const char *q = p2; *q; q++) uart_push_rx((u8)*q);
             }
         }
         /* 每 4096 步从 stdin 读一次，喂给 UART */

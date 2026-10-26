@@ -44,6 +44,7 @@ extern syscon_t g_syscon;
 /* 检测到登录提示符后置位，供宿主喂入凭据 */
 extern bool g_login_seen;
 extern bool g_shell_prompt_seen;
+extern bool g_password_seen;
 
 void  bus_init(void);
 u8   *bus_ram(void);
