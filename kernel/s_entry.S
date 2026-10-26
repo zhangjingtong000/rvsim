@@ -17,6 +17,9 @@ enter_s_mode:
     la      t2, s_kstack_top
     csrw    sscratch, t2
     csrc    mstatus, 2
+    /* MPIE=1：保证 mret 后 MIE=1，否则定时器中断被永久关闭 */
+    li      t1, 0x80
+    csrs    mstatus, t1
     mret
 
 # ── S 模式 trap：帧布局 = 32 个通用寄存器 + 用户 sp（共 132 字节） ──
@@ -110,9 +113,11 @@ enter_u_mode:
     mv      sp, a1
     mv      a0, a2          # a0 = pid（用户程序靠它区分自己）
     li      t0, 0x100
-    csrc    sstatus, t0
+    csrc    sstatus, t0     # SPP = 0 -> U
     li      t0, 0x40000
-    csrs    sstatus, t0
+    csrs    sstatus, t0     # SUM = 1
+    li      t0, 0x20
+    csrs    sstatus, t0     # SPIE = 1，保证 sret 后 SIE = 1，否则定时器中断被永久关闭
     sret
 
 .section .bss

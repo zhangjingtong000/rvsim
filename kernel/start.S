@@ -6,16 +6,17 @@ _start:
     csrw    mstatus, zero
     csrw    mie, zero
     la      sp, stack_top
-    csrw    mscratch, sp          # M 模式 trap 换栈用
+    csrw    mscratch, sp
     la      t0, m_trap_entry
     csrw    mtvec, t0
 
-    # 委托异常（中断不委托，M 模式自己处理定时器）
-    li      t0, 0x0000B3FF
+    # 委派常见异常给 S 模式，但不委派 ecall from S（留给 SBI）
+    li      t0, 0x0000B1FF
     csrw    medeleg, t0
-    csrw    mideleg, zero
+    # 委派 S 模式中断：SSIP | STIP | SEIP
+    li      t0, 0x00000222
+    csrw    mideleg, t0
 
-    # 清 bss
     la      t0, _bss_start
     la      t1, _bss_end
 1:  bgeu    t0, t1, 2f
@@ -26,32 +27,45 @@ _start:
     call    kmain
 3:  j       3b
 
-# M 模式 trap：用 mscratch 换到内核栈
+# M 模式 trap：帧布局与 S 模式一致 = xN 在 (N-1)*4，共 128 字节
 .align 4
 .globl m_trap_entry
 m_trap_entry:
-    csrrw   sp, mscratch, sp      # sp <- 内核栈，mscratch <- 用户 sp
+    csrrw   sp, mscratch, sp
     addi    sp, sp, -128
-    sw      ra, 0(sp)
-    sw      t0, 4(sp)
-    sw      t1, 8(sp)
-    sw      t2, 12(sp)
-    sw      a0, 16(sp)
-    sw      a1, 20(sp)
-    sw      a2, 24(sp)
-    sw      a3, 28(sp)
-    sw      a4, 32(sp)
-    sw      a5, 36(sp)
-    sw      a6, 40(sp)
-    sw      a7, 44(sp)
-    sw      t3, 48(sp)
-    sw      t4, 52(sp)
-    sw      t5, 56(sp)
-    sw      t6, 60(sp)
-    sw      s0, 64(sp)
-    sw      s1, 68(sp)
-    csrr    t0, sscratch
-    sw      t0, 72(sp)            # 用户 sp（如果来自 S 模式）
+    sw      x1,   0(sp)
+    sw      x2,   4(sp)
+    sw      x3,   8(sp)
+    sw      x4,  12(sp)
+    sw      x5,  16(sp)
+    sw      x6,  20(sp)
+    sw      x7,  24(sp)
+    sw      x8,  28(sp)
+    sw      x9,  32(sp)
+    sw      x10, 36(sp)
+    sw      x11, 40(sp)
+    sw      x12, 44(sp)
+    sw      x13, 48(sp)
+    sw      x14, 52(sp)
+    sw      x15, 56(sp)
+    sw      x16, 60(sp)
+    sw      x17, 64(sp)
+    sw      x18, 68(sp)
+    sw      x19, 72(sp)
+    sw      x20, 76(sp)
+    sw      x21, 80(sp)
+    sw      x22, 84(sp)
+    sw      x23, 88(sp)
+    sw      x24, 92(sp)
+    sw      x25, 96(sp)
+    sw      x26,100(sp)
+    sw      x27,104(sp)
+    sw      x28,108(sp)
+    sw      x29,112(sp)
+    sw      x30,116(sp)
+    sw      x31,120(sp)
+    csrr    t0, mscratch
+    sw      t0,   4(sp)          # 用户 sp 存到 x2 槽位
 
     csrr    a0, mcause
     csrr    a1, mepc
@@ -60,26 +74,39 @@ m_trap_entry:
     call    m_trap_handler
     csrw    mepc, a0
 
-    lw      ra, 0(sp)
-    lw      t0, 4(sp)
-    lw      t1, 8(sp)
-    lw      t2, 12(sp)
-    lw      a0, 16(sp)
-    lw      a1, 20(sp)
-    lw      a2, 24(sp)
-    lw      a3, 28(sp)
-    lw      a4, 32(sp)
-    lw      a5, 36(sp)
-    lw      a6, 40(sp)
-    lw      a7, 44(sp)
-    lw      t3, 48(sp)
-    lw      t4, 52(sp)
-    lw      t5, 56(sp)
-    lw      t6, 60(sp)
-    lw      s0, 64(sp)
-    lw      s1, 68(sp)
+    lw      x1,   0(sp)
+    lw      x3,   8(sp)
+    lw      x4,  12(sp)
+    lw      x5,  16(sp)
+    lw      x6,  20(sp)
+    lw      x7,  24(sp)
+    lw      x8,  28(sp)
+    lw      x9,  32(sp)
+    lw      x10, 36(sp)
+    lw      x11, 40(sp)
+    lw      x12, 44(sp)
+    lw      x13, 48(sp)
+    lw      x14, 52(sp)
+    lw      x15, 56(sp)
+    lw      x16, 60(sp)
+    lw      x17, 64(sp)
+    lw      x18, 68(sp)
+    lw      x19, 72(sp)
+    lw      x20, 76(sp)
+    lw      x21, 80(sp)
+    lw      x22, 84(sp)
+    lw      x23, 88(sp)
+    lw      x24, 92(sp)
+    lw      x25, 96(sp)
+    lw      x26,100(sp)
+    lw      x27,104(sp)
+    lw      x28,108(sp)
+    lw      x29,112(sp)
+    lw      x30,116(sp)
+    lw      x31,120(sp)
+    lw      t0,   4(sp)
     addi    sp, sp, 128
-    csrrw   sp, mscratch, sp      # 恢复用户 sp，mscratch <- 内核栈
+    csrrw   sp, mscratch, sp
     mret
 
 .section .bss

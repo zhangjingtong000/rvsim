@@ -1,19 +1,19 @@
-# 用户程序：每个进程用自己的 buf（base + pid*4），打印自己的字母后 yield
+# 用户程序：纯忙等 + 打印，不主动 yield —— 用来验证定时器抢占
 .section .text
 .globl _start
 _start:
     li      a7, 3              # getpid
     ecall
-    mv      s0, a0             # s0 = pid
+    mv      s0, a0
 
     addi    a0, s0, 65         # 'A' + pid
-    mv      s1, a0             # s1 = 要打印的字符
+    mv      s1, a0
 
     slli    t0, s0, 2
     la      t1, buf
-    add     t0, t1, t0         # 本进程的 buf 地址
+    add     t0, t1, t0
     sb      s1, 0(t0)
-    mv      s2, t0             # s2 = buf 地址
+    mv      s2, t0
 
 1:
     li      a7, 1              # write(buf, 1)
@@ -21,10 +21,7 @@ _start:
     li      a1, 1
     ecall
 
-    li      a7, 4              # yield
-    ecall
-
-    li      t1, 5000
+    li      t1, 8000           # 忙等（不 yield，靠定时器抢占）
 2:  addi    t1, t1, -1
     bnez    t1, 2b
     j       1b

@@ -37,6 +37,14 @@ static void map_identity_1g(u32 *root)
         l1dev[j] = (u32)(((pa >> 12) << 10) | PTE_V | PTE_R | PTE_W | PTE_A | PTE_D);
     }
 
+    /* CLINT：定时器与软件中断 */
+    u32 *l1clint = page_alloc();
+    root[VPN2(CLINT_BASE)] = ((u32)l1clint >> 12 << 10) | PTE_V;
+    for (u32 j = 0; j < 1024; j++) {
+        u32 pa = (CLINT_BASE & ~0x3FFFFFu) + j * 4096u;
+        l1clint[j] = (u32)(((pa >> 12) << 10) | PTE_V | PTE_R | PTE_W | PTE_A | PTE_D);
+    }
+
     u32 *l1sys = page_alloc();
     root[VPN2(SYSCON_BASE)] = ((u32)l1sys >> 12 << 10) | PTE_V;
     for (u32 j = 0; j < 1024; j++) {
