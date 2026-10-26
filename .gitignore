@@ -1,0 +1,10 @@
+build/
+*.o
+*.elf
+*.bin
+*.dtb
+third_party/capstone/
+third_party/linux-image/
+refs/repos/
+__pycache__/
+*.log
