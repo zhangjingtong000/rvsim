@@ -44,7 +44,11 @@ void shell_input(char ch)
                 g_run_flag = 1;
             }
             else if (streq(g_line, "mem")) {
+                extern u32 g_pf_count;
                 uart_puts("物理内存 64 MB @ 0x80000000\n");
+                uart_puts("缺页次数 = ");
+                uart_dec((int)g_pf_count);
+                uart_putc('\n');
             }
             else uart_puts("未知命令，试 help\n");
         }

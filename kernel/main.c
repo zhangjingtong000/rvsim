@@ -12,7 +12,7 @@ extern void enter_u_mode(u32 entry, u32 stack, u32 pid);
 extern const u8 user_prog_start[];
 extern const u8 user_prog_end[];
 
-static u32 *g_kroot;
+u32 *g_kroot;   /* 供 vm.c 的按需分页使用 */
 static u32  g_user_base = 0x80400000u;
 static u32  g_kstack_top;   /* M 模式内核栈（mscratch 用） */
 
@@ -92,6 +92,18 @@ u32 s_trap_handler(u32 cause, u32 epc, u32 tval, u32 *regs)
         return g_retpc;
     }
 
+    /* 缺页异常：按需分配 */
+    if (cause == 13 || cause == 15) {
+        if (vm_handle_page_fault(tval, cause == 15))
+            return epc;          /* 重试出错的指令 */
+        kprintf("[S] proc %d 非法访存 va=%x\n", cur_proc, tval);
+        procs[cur_proc].state = PROC_EXIT;
+        proc_t *nx = proc_schedule();
+        if (nx) return nx->pc;
+        *(volatile u32 *)SYSCON_BASE = 0x5555u;
+        for (;;) { }
+    }
+
     if (cause == 8) {   /* ecall from U */
         u32 a7 = regs[R_A7];
         u32 a0 = regs[R_A0];
@@ -167,14 +179,16 @@ void kmain(void)
     memcpy((void *)g_user_base, user_prog_start, len);
     kprintf("[M] 用户程序 %d 字节\n", (int)len);
 
-    /* 建用户页表：1 个 4MB 超页覆盖 0x80400000-0x807FFFFF（U 权限） */
+    /* 用户页表：只映射代码页；数据页与栈页留给缺页异常按需分配 */
     u32 uvpn2 = VPN2(g_user_base);
     u32 *ul1 = page_alloc();
     g_kroot[uvpn2] = ((u32)ul1 >> 12 << 10) | PTE_V;
-    for (u32 j = 0; j < 1024; j++) {
-        u32 pa = (g_user_base & ~0x3FFFFFu) + j * 4096u;
-        ul1[j] = (u32)(((pa >> 12) << 10) | PTE_V | PTE_R | PTE_W | PTE_X | PTE_U | PTE_A | PTE_D);
+    {
+        u32 code_pa = g_user_base & ~0xFFFu;      /* 代码页物理地址 */
+        ul1[VPN1(g_user_base)] = (u32)(((code_pa >> 12) << 10)
+                                     | PTE_V | PTE_R | PTE_W | PTE_X | PTE_U | PTE_A | PTE_D);
     }
+    kprintf("[M] 用户页表只映射代码页，其余按需分配（缺页处理）\n");
 
     /* 创建 3 个进程，每个 4KB 用户栈 */
     proc_init();

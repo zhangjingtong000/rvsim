@@ -73,6 +73,8 @@ void *memcpy(void *d, const void *s, size_t n);
 
 /* 页表 */
 u32 *page_alloc(void);
+int vm_handle_page_fault(u32 va, int is_store);
+extern u32 g_pf_count;
 void map_page(u32 *root, u32 va, u32 pa, u32 flags);
 u32 *build_user_pgtbl(u32 prog_va, const u8 *prog, u32 prog_len, u32 stack_top);
 
