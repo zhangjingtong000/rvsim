@@ -3,42 +3,34 @@
 .globl _start
 
 _start:
-    # 关中断，清 mstatus
     csrw    mstatus, zero
     csrw    mie, zero
-
-    # 设置栈
     la      sp, stack_top
-
-    # 设置 M 模式 trap 入口
+    csrw    mscratch, sp          # M 模式 trap 换栈用
     la      t0, m_trap_entry
     csrw    mtvec, t0
 
-    # 委托异常与中断给 S 模式
-    li      t0, 0x0000B3FF          # 常见异常
+    # 委托异常（中断不委托，M 模式自己处理定时器）
+    li      t0, 0x0000B3FF
     csrw    medeleg, t0
-    li      t0, 0x00000222          # SSIP | STIP | SEIP
-    csrw    mideleg, t0
+    csrw    mideleg, zero
 
     # 清 bss
     la      t0, _bss_start
     la      t1, _bss_end
-1:
-    bgeu    t0, t1, 2f
+1:  bgeu    t0, t1, 2f
     sw      zero, 0(t0)
     addi    t0, t0, 4
     j       1b
 2:
-
-    # 跳 C 主函数
     call    kmain
-
 3:  j       3b
 
-# ── M 模式 trap 入口 ──
+# M 模式 trap：用 mscratch 换到内核栈
 .align 4
 .globl m_trap_entry
 m_trap_entry:
+    csrrw   sp, mscratch, sp      # sp <- 内核栈，mscratch <- 用户 sp
     addi    sp, sp, -128
     sw      ra, 0(sp)
     sw      t0, 4(sp)
@@ -56,10 +48,15 @@ m_trap_entry:
     sw      t4, 52(sp)
     sw      t5, 56(sp)
     sw      t6, 60(sp)
+    sw      s0, 64(sp)
+    sw      s1, 68(sp)
+    csrr    t0, sscratch
+    sw      t0, 72(sp)            # 用户 sp（如果来自 S 模式）
 
     csrr    a0, mcause
     csrr    a1, mepc
     csrr    a2, mtval
+    mv      a3, sp
     call    m_trap_handler
     csrw    mepc, a0
 
@@ -79,7 +76,10 @@ m_trap_entry:
     lw      t4, 52(sp)
     lw      t5, 56(sp)
     lw      t6, 60(sp)
+    lw      s0, 64(sp)
+    lw      s1, 68(sp)
     addi    sp, sp, 128
+    csrrw   sp, mscratch, sp      # 恢复用户 sp，mscratch <- 内核栈
     mret
 
 .section .bss

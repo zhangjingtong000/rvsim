@@ -1,45 +1,91 @@
 #include "kernel.h"
+#include "proc.h"
+
+/* s_trap_entry 帧布局：xN 存在偏移 (N-1)*4 */
+#define R_A0 9    /* x10 */
+#define R_A1 10   /* x11 */
+#define R_A7 16   /* x17 */
 #include <stdarg.h>
 
 extern u32 *kernel_pgtbl(void);
-extern void enter_u_mode(u32 entry, u32 stack);
-
-/* 用户程序（由 user_prog.S 生成，链接进内核镜像） */
+extern void enter_u_mode(u32 entry, u32 stack, u32 pid);
 extern const u8 user_prog_start[];
 extern const u8 user_prog_end[];
 
 static u32 *g_kroot;
+static u32  g_user_base = 0x80400000u;
+static u32  g_kstack_top;   /* M 模式内核栈（mscratch 用） */
 
-/* M 模式 trap 处理器，返回新的 mepc */
-u32 m_trap_handler(u32 cause, u32 epc, u32 tval)
+/* 每个进程的用户栈（物理页） */
+static u32 g_ustack[NPROC];
+
+/* ── M 模式 trap：只处理定时器，切进程 ── */
+u32 m_trap_handler(u32 cause, u32 epc, u32 tval, u32 *regs)
 {
-    kprintf("[M-trap] cause=%x epc=%x tval=%x\n", cause, epc, tval);
-    return epc + 4;
+    if ((cause & 0x80000000u) && ((cause & 0x7FFFFFFFu) == 7)) {
+        /* 保存当前进程状态 */
+        if (cur_proc >= 0) {
+            procs[cur_proc].pc = epc;
+            procs[cur_proc].sp = regs[18];   /* 保存的 sp（暂不用） */
+        }
+        proc_t *next = proc_schedule();
+        if (!next) return epc;
+
+        /* 重新装填定时器 */
+        proc_set_timer(20000);
+
+        /* a0 = pid，供用户程序识别自己 */
+        regs[R_A0] = next->pid;
+        return next->pc;
+    }
+    return epc;
 }
 
-/* S 模式 trap 处理器，返回新的 sepc */
+/* ── S 模式 trap：系统调用 ── */
 u32 s_trap_handler(u32 cause, u32 epc, u32 tval, u32 *regs)
 {
     if (cause == 8) {   /* ecall from U */
-        u32 a7 = regs[11];   /* a7 在保存偏移 44 -> 索引 11 */
-        u32 a0 = regs[4];    /* a0 偏移 16 -> 索引 4 */
-        if (a7 == 1) {       /* write(buf, len)：a0=buf, a1=len */
-            u32 buf = regs[4];   /* a0 */
-            u32 len = regs[5];   /* a1 */
+        u32 a7 = regs[R_A7];
+        u32 a0 = regs[R_A0];
+
+
+        if (a7 == 1) {           /* write(buf, len) */
+            u32 buf = regs[R_A0];
+            u32 len = regs[R_A1];
             for (u32 i = 0; i < len; i++) uart_putc((char)((volatile u8 *)buf)[i]);
-            regs[4] = len;
-            epc += 4;
-            return epc;
+            regs[R_A0] = len;
+            return epc + 4;
         }
-        if (a7 == 0) {       /* exit */
-            kprintf("\n[U] 进程退出 (code=%d)\n", a0);
-            kprintf("[S] 用户进程全部结束，内核关机\n");
-            *(volatile u32 *)SYSCON_BASE = 0x5555u;   /* poweroff */
-            for (;;) { }
+        if (a7 == 0) {           /* exit */
+            kprintf("\n[U] proc %d exit(%d)\n", cur_proc, a0);
+            procs[cur_proc].state = PROC_EXIT;
+            proc_t *next = proc_schedule();
+            if (!next) {
+                kprintf("[S] 所有进程结束，关机\n");
+                *(volatile u32 *)SYSCON_BASE = 0x5555u;
+                for (;;) { }
+            }
+            for (int i = 0; i < 32; i++) regs[i] = next->regs[i];
+            return next->pc;
         }
-        regs[4] = (u32)-1;
-        epc += 4;
-        return epc;
+        if (a7 == 3) {           /* getpid */
+            regs[R_A0] = (u32)cur_proc;
+            return epc + 4;
+        }
+        if (a7 == 4) {           /* yield */
+            if (cur_proc >= 0) {
+                for (int i = 0; i < 32; i++) procs[cur_proc].regs[i] = regs[i];
+                procs[cur_proc].pc = epc + 4;
+            }
+            proc_t *next = proc_schedule();
+            if (next) {
+                for (int i = 0; i < 32; i++) regs[i] = next->regs[i];
+                return next->pc;
+            }
+            return epc + 4;
+        }
+        regs[R_A0] = (u32)-1;
+        return epc + 4;
     }
     kprintf("[S-trap] cause=%x epc=%x tval=%x\n", cause, epc, tval);
     return epc + 4;
@@ -47,61 +93,57 @@ u32 s_trap_handler(u32 cause, u32 epc, u32 tval, u32 *regs)
 
 void kmain(void)
 {
-    kprintf("\n=== rvsim mini-kernel ===\n");
-    kprintf("[M] 启动，特权级 = M\n");
-    kprintf("[M] 用户程序 %d 字节\n", (int)(user_prog_end - user_prog_start));
+    kprintf("\n=== rvsim mini-kernel (multiproc) ===\n");
+    kprintf("[M] 启动\n");
 
-    /* 建恒等页表 */
     g_kroot = kernel_pgtbl();
-    kprintf("[M] 页表 @ %x\n", (u32)g_kroot);
-
-    /* 设置 satp 进 Sv32 */
     u32 satp = SATP_SV32 | ((u32)g_kroot >> 12);
-    __asm__ volatile("csrw satp, %0" : : "r"(satp));
-    __asm__ volatile("sfence.vma" ::: "memory");
-    kprintf("[M] satp=%x（Sv32 已开）\n", satp);
+    __asm__ volatile("csrw satp, %0; sfence.vma" : : "r"(satp) : "memory");
+    kprintf("[M] Sv32 已开 satp=%x\n", satp);
 
-    /* 用户程序加载到 0x80400000（4MB 处，避开内核） */
-    u32 uprog_pa = 0x80400000u;
-    u32 uprog_len = (u32)(user_prog_end - user_prog_start);
-    memcpy((void *)uprog_pa, user_prog_start, uprog_len);
+    /* 加载用户程序镜像到 0x80400000 */
+    u32 len = (u32)(user_prog_end - user_prog_start);
+    memcpy((void *)g_user_base, user_prog_start, len);
+    kprintf("[M] 用户程序 %d 字节\n", (int)len);
 
-    /* 映射用户页到 0x80400000（U 权限） */
-    u32 uvpn2 = VPN2(0x80400000u);
+    /* 建用户页表：1 个 4MB 超页覆盖 0x80400000-0x807FFFFF（U 权限） */
+    u32 uvpn2 = VPN2(g_user_base);
     u32 *ul1 = page_alloc();
     g_kroot[uvpn2] = ((u32)ul1 >> 12 << 10) | PTE_V;
-    for (u32 j = 0; j < 4; j++) {
-        u32 pa = 0x80400000u + j * 4096u;
-        ul1[VPN1(pa)] = (u32)(((pa >> 12) << 10) | PTE_V | PTE_R | PTE_W | PTE_X | PTE_U | PTE_A | PTE_D);
+    for (u32 j = 0; j < 1024; j++) {
+        u32 pa = (g_user_base & ~0x3FFFFFu) + j * 4096u;
+        ul1[j] = (u32)(((pa >> 12) << 10) | PTE_V | PTE_R | PTE_W | PTE_X | PTE_U | PTE_A | PTE_D);
     }
-    /* 用户栈 */
-    for (u32 j = 4; j < 8; j++) {
-        u32 pa = 0x80400000u + j * 4096u;
-        ul1[VPN1(pa)] = (u32)(((pa >> 12) << 10) | PTE_V | PTE_R | PTE_W | PTE_U | PTE_A | PTE_D);
+
+    /* 创建 3 个进程，每个 4KB 用户栈 */
+    proc_init();
+    for (u32 i = 0; i < NPROC; i++) {
+        g_ustack[i] = g_user_base + 0x10000u + i * 0x2000u;   /* 64KB 之后，间隔 8KB */
+        memset((void *)g_ustack[i], 0, 4096);
+        proc_create(i, g_user_base, g_ustack[i]);
     }
-    memset((void *)(0x80400000u + 4 * 4096u), 0, 4 * 4096u);
+    kprintf("[M] 创建 %d 个进程\n", NPROC);
 
-    kprintf("[M] 用户程序映射在 0x80400000，栈顶 0x80408000\n");
-    kprintf("[M] 交给 S 模式\n\n");
+    /* 定时器：默认关闭（yield 已足够验证轮转；打开见 RVSIM_TIMER 环境无对应，
+       如需启用改成 1）。保留代码路径以便后续完善。 */
+    proc_set_timer(200000);
 
-    /* M -> S */
-    extern void s_main(u32 u_entry, u32 u_stack);
+    /* 进 S 模式 */
+    extern void s_main(void);
     enter_s_mode((u32)s_main, 0x803FF000u);
 }
 
-/* S 模式主函数 */
-void s_main(u32 u_entry_ignored, u32 u_stack_ignored)
+void s_main(void)
 {
-    (void)u_entry_ignored; (void)u_stack_ignored;
-    kprintf("[S] 已进入 S 模式\n");
+    kprintf("[S] 进入 S 模式\n");
 
-    extern void enter_u_mode(u32 entry, u32 stack);
+    /* 调度第一个进程 */
+    proc_t *first = proc_schedule();
+    if (!first) { kprintf("[S] 无进程\n"); for(;;){} }
 
-    kprintf("[S] 切换到 U 模式，入口 0x80400000\n");
-    kprintf("[S] --- 以下为用户程序输出 ---\n");
+    kprintf("[S] 启动 proc %d，入口 %x\n", first->pid, first->pc);
+    kprintf("[S] --- 用户输出（定时器每 30 万周期切换进程）---\n");
 
-    enter_u_mode(0x80400000u, 0x80408000u);
-
-    kprintf("[S] 用户程序返回（不应到此）\n");
+    enter_u_mode(first->pc, first->sp, first->pid);
     for (;;) { }
 }

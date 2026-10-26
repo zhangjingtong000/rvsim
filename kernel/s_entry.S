@@ -1,55 +1,63 @@
-# M -> S 切换、S 模式 trap（用 sscratch 换栈）、S -> U 切换
+# M -> S 切换、S 模式 trap（mscratch 换栈 + 保存全部 32 个寄存器）、S -> U 切换
 
 .section .text
 .globl enter_s_mode
 enter_s_mode:
-    # a0 = S 入口地址, a1 = S 栈顶
     mv      t0, a0
     mv      sp, a1
     csrw    mepc, t0
-    # 清 MPP，设为 S
     li      t1, 0x1800
     csrc    mstatus, t1
     li      t1, 0x0800
     csrs    mstatus, t1
-    # 清 MPRV
     li      t1, 0x20000
     csrc    mstatus, t1
-    # 设置 S 模式 trap 入口
     la      t2, s_trap_entry
     csrw    stvec, t2
-    # 初始化 sscratch 为 S 模式内核栈（trap 时换栈用，必须非 0）
     la      t2, s_kstack_top
     csrw    sscratch, t2
     csrc    mstatus, 2
     mret
 
-# ── S 模式 trap：用 sscratch 换到内核栈 ──
+# ── S 模式 trap：帧布局 = 32 个通用寄存器 + 用户 sp（共 132 字节） ──
 .align 4
 .globl s_trap_entry
 s_trap_entry:
     csrrw   sp, sscratch, sp        # sp <- 内核栈，sscratch <- 用户 sp
-    addi    sp, sp, -128
-    sw      ra, 0(sp)
-    sw      t0, 4(sp)
-    sw      t1, 8(sp)
-    sw      t2, 12(sp)
-    sw      a0, 16(sp)
-    sw      a1, 20(sp)
-    sw      a2, 24(sp)
-    sw      a3, 28(sp)
-    sw      a4, 32(sp)
-    sw      a5, 36(sp)
-    sw      a6, 40(sp)
-    sw      a7, 44(sp)
-    sw      t3, 48(sp)
-    sw      t4, 52(sp)
-    sw      t5, 56(sp)
-    sw      t6, 60(sp)
-    csrr    t0, sscratch            # 用户 sp
-    sw      t0, 64(sp)
-    sw      s0, 68(sp)
-    sw      s1, 72(sp)
+    addi    sp, sp, -132
+    sw      x1,  0(sp)
+    sw      x2,  4(sp)              # 占位，稍后填用户 sp
+    sw      x3,  8(sp)
+    sw      x4, 12(sp)
+    sw      x5, 16(sp)
+    sw      x6, 20(sp)
+    sw      x7, 24(sp)
+    sw      x8, 28(sp)
+    sw      x9, 32(sp)
+    sw      x10,36(sp)
+    sw      x11,40(sp)
+    sw      x12,44(sp)
+    sw      x13,48(sp)
+    sw      x14,52(sp)
+    sw      x15,56(sp)
+    sw      x16,60(sp)
+    sw      x17,64(sp)
+    sw      x18,68(sp)
+    sw      x19,72(sp)
+    sw      x20,76(sp)
+    sw      x21,80(sp)
+    sw      x22,84(sp)
+    sw      x23,88(sp)
+    sw      x24,92(sp)
+    sw      x25,96(sp)
+    sw      x26,100(sp)
+    sw      x27,104(sp)
+    sw      x28,108(sp)
+    sw      x29,112(sp)
+    sw      x30,116(sp)
+    sw      x31,120(sp)
+    csrr    t0, sscratch
+    sw      t0, 4(sp)               # 用户 sp 存到 x2 槽位
 
     csrr    a0, scause
     csrr    a1, sepc
@@ -58,39 +66,51 @@ s_trap_entry:
     call    s_trap_handler
     csrw    sepc, a0
 
-    lw      ra, 0(sp)
-    lw      t0, 4(sp)
-    lw      t1, 8(sp)
-    lw      t2, 12(sp)
-    lw      a0, 16(sp)
-    lw      a1, 20(sp)
-    lw      a2, 24(sp)
-    lw      a3, 28(sp)
-    lw      a4, 32(sp)
-    lw      a5, 36(sp)
-    lw      a6, 40(sp)
-    lw      a7, 44(sp)
-    lw      t3, 48(sp)
-    lw      t4, 52(sp)
-    lw      t5, 56(sp)
-    lw      t6, 60(sp)
-    lw      s0, 68(sp)
-    lw      s1, 72(sp)
-    addi    sp, sp, 128
-    csrrw   sp, sscratch, sp        # 恢复：sp <- 用户 sp，sscratch <- 内核栈
+    lw      x1,  0(sp)
+    lw      x3,  8(sp)
+    lw      x4, 12(sp)
+    lw      x5, 16(sp)
+    lw      x6, 20(sp)
+    lw      x7, 24(sp)
+    lw      x8, 28(sp)
+    lw      x9, 32(sp)
+    lw      x10,36(sp)
+    lw      x11,40(sp)
+    lw      x12,44(sp)
+    lw      x13,48(sp)
+    lw      x14,52(sp)
+    lw      x15,56(sp)
+    lw      x16,60(sp)
+    lw      x17,64(sp)
+    lw      x18,68(sp)
+    lw      x19,72(sp)
+    lw      x20,76(sp)
+    lw      x21,80(sp)
+    lw      x22,84(sp)
+    lw      x23,88(sp)
+    lw      x24,92(sp)
+    lw      x25,96(sp)
+    lw      x26,100(sp)
+    lw      x27,104(sp)
+    lw      x28,108(sp)
+    lw      x29,112(sp)
+    lw      x30,116(sp)
+    lw      x31,120(sp)
+    lw      t0, 4(sp)               # 用户 sp
+    addi    sp, sp, 132
+    csrrw   sp, sscratch, sp        # 恢复用户 sp
     sret
 
 .globl enter_u_mode
 enter_u_mode:
-    # a0 = 用户入口, a1 = 用户栈顶
+    # a0 = entry, a1 = sp, a2 = pid
     la      t0, s_kstack_top
-    csrw    sscratch, t0            # 内核栈存进 sscratch
+    csrw    sscratch, t0
     csrw    sepc, a0
     mv      sp, a1
-    # SPP = 0 -> U
+    mv      a0, a2          # a0 = pid（用户程序靠它区分自己）
     li      t0, 0x100
     csrc    sstatus, t0
-    # SUM = 1：让 S 模式能读用户内存（syscall 需要）
     li      t0, 0x40000
     csrs    sstatus, t0
     sret

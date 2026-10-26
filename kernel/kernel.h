@@ -12,6 +12,7 @@ typedef uint64_t u64;
 
 #define UART_BASE   0x10000000u
 #define SYSCON_BASE 0x00100000u
+#define CLINT_BASE  0x02000000u
 #define RAM_BASE    0x80000000u
 #define RAM_SIZE    (64u * 1024u * 1024u)
 
@@ -28,6 +29,14 @@ typedef uint64_t u64;
 #define MSTATUS_MPRV  0x00020000u
 #define MSTATUS_SUM   0x00040000u
 #define MSTATUS_MXR   0x00080000u
+
+#define MIP_SSIP  0x00000002u
+#define MIP_STIP  0x00000020u
+#define MIP_MTIP  0x00000080u
+
+#define MIE_MTIE  0x00000080u
+#define MIE_STIE  0x00000020u
+#define SIE_STIE  0x00000020u
 
 #define SSTATUS_SIE   MSTATUS_SIE
 #define SSTATUS_SPIE  MSTATUS_SPIE

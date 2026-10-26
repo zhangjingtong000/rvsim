@@ -1,4 +1,3 @@
-# 把用户程序二进制嵌入内核镜像
 .section .rodata
 .globl user_prog_start
 .globl user_prog_end
