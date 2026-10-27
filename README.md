@@ -134,6 +134,8 @@ dtc -I dts -O dtb -o /tmp/alt.dtb /tmp/alt.dts
 
 无 `--dtb` 时回退到编译期默认值（QEMU virt 布局），所以 riscv-tests、CoreMark、Linux 都不受影响。
 
+**边界（如实说明）**：`g_ram[]` 是编译期静态数组，所以 dtb 里 `memory` 节点的 **size 不会被采用**（只采用 base）；改 RAM 大小需要重新编译。设备大小（`UART_SIZE`/`PLIC_SIZE`/`CLINT_SIZE`）也仍是编译期常量，dtb 只覆盖基址。这样做的理由是：RISC-V 的 MMIO 窗口大小在外设实现里是固定的，dtb 的 size 通常只是声明范围。
+
 ### 必须在论文/演示里如实说明的三条
 
 **一、`pmpaddr` 是假 PASS。** `rv32mi-p-*` 里涉及 PMP 的用例在 `G=0` 配置下不真正检查权限，属于"通过但没验证到"。**不要说"PMP 已验证"。**
