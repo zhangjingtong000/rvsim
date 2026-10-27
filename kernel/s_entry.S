@@ -26,7 +26,11 @@ enter_s_mode:
 .align 4
 .globl s_trap_entry
 s_trap_entry:
-    csrrw   sp, sscratch, sp        # sp <- 内核栈，sscratch <- 用户 sp
+    # 把 csrrw 拆成三条独立指令：既能绕开“csrrw 在 rd==rs1 时是否先读后写”的
+    # 实现差异，也便于单独验证 csrw sscratch 是否真的写进去了。
+    csrr    t0, sscratch            # t0 = 内核栈顶（enter_u_mode 设的）
+    csrw    sscratch, sp            # sscratch = 用户 sp（这一次是独立的 csrw）
+    mv      sp, t0                  # sp = 内核栈
     addi    sp, sp, -132
     sw      x1,  0(sp)
     sw      x2,  4(sp)              # 占位，稍后填用户 sp
