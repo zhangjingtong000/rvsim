@@ -6,6 +6,7 @@
 #include <fcntl.h>
 #include "include/cpu.h"
 #include "include/bus.h"
+#include "include/fdt.h"
 #include "include/loader.h"
 #include "include/disasm.h"
 #include "include/bus.h"
@@ -30,6 +31,7 @@ static void usage(const char *p)
 /* 检查 tohost：1=PASS，奇数>1=FAIL，否则 = 0（未结束） */
 static int check_tohost(cpu_t *c, u32 tohost)
 {
+    (void)c;
     if (!tohost) return 0;
     if (tohost < RAM_BASE || tohost >= RAM_BASE + RAM_SIZE) return 0;
     u32 v = 0;
@@ -76,6 +78,9 @@ int main(int argc, char **argv)
     }
     if (!elf && !image) { usage(argv[0]); return 2; }
 
+    /* 先填编译期默认值；若随后成功解析 dtb，会被覆盖（FR-2.8） */
+    devmap_defaults();
+
     signal(SIGINT, on_sigint);
     /* stdin 非阻塞，供 UART 输入 */
     int flags = fcntl(STDIN_FILENO, F_GETFL, 0);
@@ -101,13 +106,17 @@ int main(int argc, char **argv)
         printf("[rvsim] Image=%s entry=0x%08x 大小=%u 字节\n", image, entry, sz);
         /* Linux M 模式启动约定：a0=hartid, a1=dtb 物理地址 */
         cpu.x[10] = 0;
-        if (dtb) {
-            u32 dsz = 0, dent = 0;
-            if (!loader_load_raw(dtb, dtb_addr, &dent, &dsz)) return 1;
-            cpu.x[11] = dtb_addr;
-            printf("[rvsim] dtb 已装入 0x%08x (%u 字节)\n", dtb_addr, dsz);
-        }
         cpu.x[2] = RAM_BASE + RAM_SIZE - 16;   /* sp */
+    }
+
+    /* FR-2.8：设备地址从 dtb 读取。无论加载 ELF 还是 Image，只要给了 --dtb 就解析。
+       解析结果覆盖 devmap_defaults() 填的编译期默认值。 */
+    if (dtb) {
+        u32 dsz = 0, dent = 0;
+        if (!loader_load_raw(dtb, dtb_addr, &dent, &dsz)) return 1;
+        cpu.x[11] = dtb_addr;
+        printf("[rvsim] dtb 已装入 0x%08x (%u 字节)\n", dtb_addr, dsz);
+        fdt_apply(dtb_addr);
     }
 
     printf("[rvsim] 开始执行，max_cycles=%llu\n", (unsigned long long)max_cycles);

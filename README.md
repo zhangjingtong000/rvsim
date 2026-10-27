@@ -27,8 +27,8 @@
 
 | 项 | 值 |
 |---|---|
-| 模拟器源码 | 2,005 行（`src/`，含 capstone 调用适配层） |
-| 迷你内核 | 1,141 行（`kernel/`） |
+| 模拟器源码 | 2,270 行（`src/`，含 FDT 解析 197 行） |
+| 迷你内核 | 1,131 行（`kernel/`） |
 | 解释速度 | **32 MIPS**（1000 万条 0.31 秒） |
 | WASM 体积 | 90 KB |
 | Linux 启动 | 6.1.14，约 3 亿条指令到 shell |
@@ -105,7 +105,34 @@ cd web && python3 -m http.server 8777
 4. PMP 不做强制（`rv32mi-p-pmpaddr` 在 G=0 时直接 pass，验证强度为零）
 5. 不做 `-v` 测试变体（需 newlib）
 6. QEMU 对照只做语义一致，不做逐字节
-7. FR-2.8「设备地址从 dtb 读取」未实现——设备基址仍是硬编码，`--dtb` 只把文件装进内存
+
+### FR-2.8：设备地址从 dtb 读取（2026-10-27 实现）
+
+`src/fdt.c`（197 行）解析 FDT：校验 header magic，遍历 structure block，按 `compatible` 属性识别节点（不是按节点名——plic 的节点名是 `interrupt-controller@c000000`，按名字匹配会漏），从 `reg` 读 <base,size>，写进运行时表 `g_devmap`。所有外设访问都走这张表。
+
+**验证方法（可复现）**：
+
+```bash
+# 正常 dtb：解析出 5 个设备
+./build/rvsim --elf tests/riscv-tests/isa/rv32ui-p-add --dtb dts/minimal.dtb --max-cycles 200
+# [fdt] memory/clint/plic/uart/syscon … 从 dtb 应用了 5 个设备项
+
+# 改一份 dtb 把 plic 挪到 0x0D000000、uart 挪到 0x11000000
+sed -e 's/0x0C000000 0x400000/0x0D000000 0x400000/' \
+    -e 's/serial@10000000/serial@11000000/' \
+    -e 's/0x10000000 0x100/0x11000000 0x100/' dts/minimal.dts > /tmp/alt.dts
+dtc -I dts -O dtb -o /tmp/alt.dtb /tmp/alt.dts
+
+# 解析结果跟着变
+./build/rvsim --elf ... --dtb /tmp/alt.dtb --max-cycles 200
+# [fdt] plic : base=0x0d000000 / uart : base=0x11000000
+
+# 实际访问也变：内核硬编码访问 0x10000000，UART 被挪走后应完全无输出
+./build/rvsim --elf build/kernel.elf --dtb dts/minimal.dtb --max-cycles 500000   # 有输出
+./build/rvsim --elf build/kernel.elf --dtb /tmp/alt.dtb    --max-cycles 500000   # 无输出
+```
+
+无 `--dtb` 时回退到编译期默认值（QEMU virt 布局），所以 riscv-tests、CoreMark、Linux 都不受影响。
 
 ### 必须在论文/演示里如实说明的三条
 

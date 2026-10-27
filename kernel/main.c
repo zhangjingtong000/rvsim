@@ -28,7 +28,6 @@ extern const u8 user_prog_end[];
 
 u32 *g_kroot;   /* 供 vm.c 的按需分页使用 */
 static u32  g_user_base = 0x80400000u;
-static u32  g_kstack_top;   /* M 模式内核栈（mscratch 用） */
 
 /* 每个进程的用户栈（物理页） */
 static u32 g_ustack[NPROC];
@@ -310,16 +309,6 @@ void kmain(void)
     __asm__ volatile("csrs mstatus, %0" : : "r"(0x8u)); /* MIE */
     proc_set_timer(20000);
 
-    {
-        volatile u32 *mt  = (volatile u32 *)(CLINT_BASE + 0xBFF8u);
-        volatile u32 *mth = (volatile u32 *)(CLINT_BASE + 0xBFFCu);
-        volatile u32 *mc  = (volatile u32 *)(CLINT_BASE + 0x4000u);
-        volatile u32 *mch = (volatile u32 *)(CLINT_BASE + 0x4004u);
-        u32 mie, mip, mst;
-        __asm__ volatile("csrr %0, mie" : "=r"(mie));
-        __asm__ volatile("csrr %0, mip" : "=r"(mip));
-        __asm__ volatile("csrr %0, mstatus" : "=r"(mst));
-    }
 
     /* 进 S 模式 */
     extern void s_main(void);

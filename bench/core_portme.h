@@ -84,4 +84,11 @@ ee_u32 portme_clock(void);
 ee_u32 time_in_secs(ee_u32 ticks);
 ee_u32 time_in_msecs(ee_u32 ticks);
 
+
+/* ── 本移植层提供的函数声明 ──
+   官方 CoreMark 在 barebones 移植里由 core_portme.h 提供这些原型；
+   缺了会退化成隐式声明（C 默认返回 int），ee_printf 的返回值被截断、参数不检查。 */
+int  ee_printf(const char *fmt, ...);
+void *align_mem(void *p);
+
 #endif

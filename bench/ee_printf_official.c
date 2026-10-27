@@ -587,6 +587,7 @@ ee_vsprintf(char *buf, const char *fmt, va_list args)
 
             case 'A':
                 flags |= UPPERCASE;
+                /* fall through（官方逻辑：大写标记后继续走小写分支） */
 
             case 'a':
                 if (qualifier == 'l')
@@ -610,6 +611,7 @@ ee_vsprintf(char *buf, const char *fmt, va_list args)
 
             case 'X':
                 flags |= UPPERCASE;
+                /* fall through（官方逻辑） */
 
             case 'x':
                 base = 16;

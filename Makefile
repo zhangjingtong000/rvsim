@@ -9,7 +9,7 @@ OBJDIR    = build
 TARGET    = $(OBJDIR)/rvsim
 
 SRCS = $(SRCDIR)/main.c $(SRCDIR)/exec.c $(SRCDIR)/csr.c $(SRCDIR)/bus.c \
-       $(SRCDIR)/loader.c $(SRCDIR)/mmu.c $(SRCDIR)/disasm.c
+       $(SRCDIR)/loader.c $(SRCDIR)/mmu.c $(SRCDIR)/disasm.c $(SRCDIR)/fdt.c
 OBJS = $(patsubst $(SRCDIR)/%.c,$(OBJDIR)/%.o,$(SRCS))
 
 # capstone 5.0.7（仅 RISC-V，源码内置）
@@ -69,7 +69,7 @@ CM_OBJS = $(OBJDIR)/coremark.o
 
 $(OBJDIR)/coremark.elf: $(CM_SRCS) bench/core_portme.h kernel/uart.c kernel/vm.c kernel/start.S kernel/linker.ld
 	@mkdir -p $(OBJDIR)
-	$(CROSS)gcc $(KCFLAGS) -DSTANDALONE=1 -DPERFORMANCE_RUN=1 -Ibench -Ikernel -T kernel/linker.ld -o $@ \
+	$(CROSS)gcc -Wno-implicit-fallthrough -Wno-unused-parameter $(KCFLAGS) -DSTANDALONE=1 -DPERFORMANCE_RUN=1 -Ibench -Ikernel -T kernel/linker.ld -o $@ \
 		bench/start_cm.S bench/cm_stubs.c kernel/uart.c $(CM_SRCS) -lgcc
 
 clean:

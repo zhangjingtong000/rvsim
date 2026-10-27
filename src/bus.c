@@ -2,6 +2,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include "include/bus.h"
+#include "include/fdt.h"
 
 clint_t  g_clint;
 uart_t   g_uart;
@@ -67,6 +68,8 @@ static bool clint_write(u32 off, int len, u32 val)
 /* ── UART 16550A ── */
 static bool uart_read(u32 off, int len, u32 *val)
 {
+    (void)len;
+
     u8 v = 0;
     switch (off) {
     case 0:                                                /* RBR：从 FIFO 取 */
@@ -100,6 +103,8 @@ static bool uart_read(u32 off, int len, u32 *val)
 
 static bool uart_write(u32 off, int len, u32 val)
 {
+    (void)len;
+
     switch (off) {
     case 0: {                                                    /* THR */
         char ch = (char)(val & 0xFF);
@@ -153,7 +158,7 @@ void uart_push_rx(u8 byte)
 static bool plic_read(u32 off, int len, u32 *val)
 {
     (void)len;
-    if (off >= PLIC_PRIORITY_BASE && off < PLIC_PRIORITY_BASE + 4 * (PLIC_NDEV + 1)) {
+    if (off < PLIC_PRIORITY_BASE + 4 * (PLIC_NDEV + 1)) {
         u32 id = (off - PLIC_PRIORITY_BASE) / 4;
         *val = g_plic.priority[id];
         return true;
@@ -195,7 +200,8 @@ static bool plic_read(u32 off, int len, u32 *val)
 
 static bool plic_write(u32 off, int len, u32 val)
 {
-    if (off >= PLIC_PRIORITY_BASE && off < PLIC_PRIORITY_BASE + 4 * (PLIC_NDEV + 1)) {
+    (void)len;
+    if (off < PLIC_PRIORITY_BASE + 4 * (PLIC_NDEV + 1)) {
         g_plic.priority[(off - PLIC_PRIORITY_BASE) / 4] = val;
         return true;
     }
@@ -257,13 +263,13 @@ bool bus_read(u32 addr, int len, u32 *val)
         return true;
     }
     /* 不变量 2：逐设备判断区间，绝不按高位折叠 */
-    if (addr >= CLINT_BASE && addr < CLINT_BASE + CLINT_SIZE)
-        return clint_read(addr - CLINT_BASE, len, val);
-    if (addr >= UART_BASE && addr < UART_BASE + UART_SIZE)
-        return uart_read(addr - UART_BASE, len, val);
-    if (addr >= PLIC_BASE && addr < PLIC_BASE + PLIC_SIZE)
-        return plic_read(addr - PLIC_BASE, len, val);
-    if (addr >= SYSCON_BASE && addr < SYSCON_BASE + SYSCON_SIZE) { *val = 0; return true; }
+    if (addr >= g_devmap.clint_base && addr < g_devmap.clint_base + CLINT_SIZE)
+        return clint_read(addr - g_devmap.clint_base, len, val);
+    if (addr >= g_devmap.uart_base && addr < g_devmap.uart_base + UART_SIZE)
+        return uart_read(addr - g_devmap.uart_base, len, val);
+    if (addr >= g_devmap.plic_base && addr < g_devmap.plic_base + PLIC_SIZE)
+        return plic_read(addr - g_devmap.plic_base, len, val);
+    if (addr >= g_devmap.syscon_base && addr < g_devmap.syscon_base + SYSCON_SIZE) { *val = 0; return true; }
     return false;
 }
 
@@ -278,19 +284,21 @@ bool bus_write(u32 addr, int len, u32 val)
                g_ram[off+2] = (u8)(val >> 16); g_ram[off+3] = (u8)(val >> 24); }
         return true;
     }
-    if (addr >= CLINT_BASE && addr < CLINT_BASE + CLINT_SIZE)
-        return clint_write(addr - CLINT_BASE, len, val);
-    if (addr >= UART_BASE && addr < UART_BASE + UART_SIZE)
-        return uart_write(addr - UART_BASE, len, val);
-    if (addr >= PLIC_BASE && addr < PLIC_BASE + PLIC_SIZE)
-        return plic_write(addr - PLIC_BASE, len, val);
-    if (addr >= SYSCON_BASE && addr < SYSCON_BASE + SYSCON_SIZE)
-        return syscon_write(addr - SYSCON_BASE, val);
+    if (addr >= g_devmap.clint_base && addr < g_devmap.clint_base + CLINT_SIZE)
+        return clint_write(addr - g_devmap.clint_base, len, val);
+    if (addr >= g_devmap.uart_base && addr < g_devmap.uart_base + UART_SIZE)
+        return uart_write(addr - g_devmap.uart_base, len, val);
+    if (addr >= g_devmap.plic_base && addr < g_devmap.plic_base + PLIC_SIZE)
+        return plic_write(addr - g_devmap.plic_base, len, val);
+    if (addr >= g_devmap.syscon_base && addr < g_devmap.syscon_base + SYSCON_SIZE)
+        return syscon_write(addr - g_devmap.syscon_base, val);
     return false;
 }
 
 void bus_tick(csr_t *csr, u64 cycles)
 {
+    (void)cycles;
+
     static u64 acc = 0;
     acc++;
     if (acc >= MTIME_DIV) { acc = 0; g_mtime++; }

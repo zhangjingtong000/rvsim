@@ -393,8 +393,11 @@ bool cpu_step(cpu_t *c)
             case 2: wr(c, rd, ((s32)a < (s32)b) ? 1u : 0u); break;
             case 3: wr(c, rd, (a < b) ? 1u : 0u); break;
             case 4: wr(c, rd, a ^ b); break;
-            case 5: if (funct7 & 0x20) wr(c, rd, (u32)((s32)a >> (b & 0x1F)));
-                    else               wr(c, rd, a >> (b & 0x1F)); break;
+            case 5: {
+                if (funct7 & 0x20) wr(c, rd, (u32)((s32)a >> (b & 0x1F)));
+                else               wr(c, rd, a >> (b & 0x1F));
+                break;
+            }
             case 6: wr(c, rd, a | b); break;
             case 7: wr(c, rd, a & b); break;
             }
