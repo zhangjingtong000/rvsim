@@ -4,6 +4,10 @@
 #include "../src/include/cpu.h"
 #include "../src/include/bus.h"
 #include "../src/include/loader.h"
+#include "../src/include/disasm.h"
+extern unsigned bus_hot_read(unsigned page);
+extern unsigned bus_hot_write(unsigned page);
+extern void bus_hot_clear(void);
 
 static cpu_t g_cpu;
 static int   g_last_result = 0;
@@ -51,3 +55,16 @@ EMSCRIPTEN_KEEPALIVE int rv_insn(void)    { return (int)g_cpu.cur_instr; }
 EMSCRIPTEN_KEEPALIVE int rv_csr(int a)    { u32 v = 0; csr_read_priv(&g_cpu.csr, (u32)a, &v); return (int)v; }
 EMSCRIPTEN_KEEPALIVE int rv_mem(int a)    { u32 v = 0; bus_read((u32)a, 1, &v); return (int)v; }
 EMSCRIPTEN_KEEPALIVE int rv_tohost(void)  { return (int)g_cpu.img.tohost_addr; }
+/* ── 可视化扩展接口 ── */
+EMSCRIPTEN_KEEPALIVE
+int rv_disasm_at(unsigned pc, char *buf, int bufsz)
+{
+    u32 insn = 0;
+    bus_read((u32)pc, 4, &insn);
+    return rv_disasm((u32)pc, insn, buf, bufsz);
+}
+
+EMSCRIPTEN_KEEPALIVE int rv_class(void)  { return rv_insn_class((u32)g_cpu.cur_instr); }
+EMSCRIPTEN_KEEPALIVE int rv_hot_r(int pg) { return (int)bus_hot_read((u32)pg); }
+EMSCRIPTEN_KEEPALIVE int rv_hot_w(int pg) { return (int)bus_hot_write((u32)pg); }
+EMSCRIPTEN_KEEPALIVE void rv_hot_clr(void) { bus_hot_clear(); }

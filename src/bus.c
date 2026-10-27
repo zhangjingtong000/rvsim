@@ -224,8 +224,29 @@ static bool syscon_write(u32 off, u32 val)
 }
 
 /* ── 总线入口 ── */
+/* ── 内存热图：4KB 页粒度的访问计数（只统计 RAM 前 8MB） ── */
+#define HOT_PAGES 2048
+static u32 g_hot_read[HOT_PAGES];
+static u32 g_hot_write[HOT_PAGES];
+
+void bus_record_access(u32 addr, int is_write)
+{
+    if (addr >= RAM_BASE && (u64)addr < (u64)RAM_BASE + (u64)HOT_PAGES * 4096u) {
+        u32 pg = (addr - RAM_BASE) >> 12;
+        if (is_write) g_hot_write[pg]++; else g_hot_read[pg]++;
+    }
+}
+
+u32 bus_hot_read(u32 page)  { return page < HOT_PAGES ? g_hot_read[page] : 0; }
+u32 bus_hot_write(u32 page) { return page < HOT_PAGES ? g_hot_write[page] : 0; }
+void bus_hot_clear(void)
+{
+    for (u32 i = 0; i < HOT_PAGES; i++) { g_hot_read[i] = 0; g_hot_write[i] = 0; }
+}
+
 bool bus_read(u32 addr, int len, u32 *val)
 {
+    bus_record_access(addr, 0);
     /* 不变量 1：RAM 优先（0x8000_0000 与 UART 的槽号冲突） */
     if (addr >= RAM_BASE && (u64)addr + len <= (u64)RAM_BASE + RAM_SIZE) {
         u32 off = addr - RAM_BASE;
@@ -248,6 +269,7 @@ bool bus_read(u32 addr, int len, u32 *val)
 
 bool bus_write(u32 addr, int len, u32 val)
 {
+    bus_record_access(addr, 1);
     if (addr >= RAM_BASE && (u64)addr + len <= (u64)RAM_BASE + RAM_SIZE) {
         u32 off = addr - RAM_BASE;
         if (len == 1)      g_ram[off] = (u8)val;

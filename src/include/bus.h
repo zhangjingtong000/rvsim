@@ -58,3 +58,6 @@ void  bus_tick(csr_t *csr, u64 cycles);
 void  bus_update_irqs(csr_t *csr);
 
 #endif
+u32  bus_hot_read(u32 page);
+u32  bus_hot_write(u32 page);
+void bus_hot_clear(void);
