@@ -129,9 +129,18 @@ int fdt_apply(u32 dtb_phys)
             if (have_reg) {
                 switch (kind) {
                 case NODE_MEMORY:
-                    g_devmap.ram_base = reg_base; g_devmap.ram_size = reg_size;
-                    g_devmap.ram_from_dtb = 1; applied++;
-                    printf("[fdt]   memory: base=0x%08x size=0x%08x\n", reg_base, reg_size);
+                    /* RAM 的物理布局由编译期静态数组 g_ram[RAM_SIZE] 决定，运行时不能改基址。
+                       所以这里不做"采用"，只做一致性校验：dtb 说的 RAM 与编进模拟器的
+                       不一致时明确警告，避免出现"dtb 改了但程序照旧"的静默不一致。 */
+                    applied++;
+                    printf("[fdt]   memory: base=0x%08x size=0x%08x", reg_base, reg_size);
+                    if (reg_base != RAM_BASE || reg_size != RAM_SIZE) {
+                        printf("  [警告] 与编译期 (%08x/%08x) 不一致；"
+                               "RAM 基址与容量是编译期常量，不会被 dtb 覆盖\n",
+                               RAM_BASE, RAM_SIZE);
+                    } else {
+                        printf("（与编译期一致）\n");
+                    }
                     break;
                 case NODE_PLIC:
                     g_devmap.plic_base = reg_base; g_devmap.plic_from_dtb = 1; applied++;

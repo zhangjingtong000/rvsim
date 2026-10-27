@@ -237,9 +237,9 @@ void csr_raise(csr_t *c, u32 cause, u32 tval)
 }
 
 /* ── mret / sret 公共返回逻辑 ── */
-void csr_return(csr_t *c)
+void csr_return(csr_t *c, int is_mret)
 {
-    if (c->priv == PRV_M) {
+    if (is_mret) {
         u32 m = c->mstatus;
         u8 pp = (u8)((m & MSTATUS_MPP) >> 11);
         m = (m & ~MSTATUS_MIE) | ((m & MSTATUS_MPIE) ? MSTATUS_MIE : 0);

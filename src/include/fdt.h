@@ -15,7 +15,6 @@ typedef struct {
     u8  clint_from_dtb;
     u8  plic_from_dtb;
     u8  uart_from_dtb;
-    u8  ram_from_dtb;
 } devmap_t;
 
 extern devmap_t g_devmap;

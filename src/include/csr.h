@@ -24,7 +24,7 @@
 
 /* 注意：不含 FS(13:14) / XS(15:16)——本机无 F/D 扩展，FS 必须 read-only 0。
    原值 0x800DE122 含 0x1E000（FS+XS），导致 M 模式写 sstatus.FS 能生效。 */
-#define SSTATUS_MASK  0x800C0122u
+#define SSTATUS_MASK  0x000C0122u   /* 不含 SD(31)：无 F/D 时 SD 恒 0 */
 
 #define MIP_SSIP      0x00000002u
 #define MIP_MSIP      0x00000008u
@@ -126,7 +126,9 @@ void csr_reset(csr_t *c);
 bool csr_read_priv(csr_t *c, u32 addr, u32 *out);
 bool csr_write_priv(csr_t *c, u32 addr, u32 val);
 void csr_raise(csr_t *c, u32 cause, u32 tval);
-void csr_return(csr_t *c);
+/* is_mret=1 表示 MRET，0 表示 SRET。SRET 在 M 模式下也必须按 SPP 返回
+   （此前只按当前特权级分支，导致 M 模式执行 SRET 走了 MRET 语义）。 */
+void csr_return(csr_t *c, int is_mret);
 
 extern u64 g_mtime;   /* CLINT 的 mtime，供 time CSR 使用 */
 

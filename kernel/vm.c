@@ -10,6 +10,14 @@ u32 *page_alloc(void)
     if (!g_next_page) {
         g_next_page = ((u32)_kernel_end + 4095u) & ~4095u;
     }
+    /* 上限检查：越过 RAM 末端就返回 NULL，避免把页分配到 g_ram 之外 */
+    if (g_next_page + 4096u > 0x84000000u) {
+        /* 物理页耗尽：直接关机。继续跑只会空指针解引用，崩得更难看。 */
+        extern void uart_puts(const char *);
+        uart_puts("\n[kernel] 物理页耗尽，关机\n");
+        *(volatile u32 *)0x00100000u = 0x5555u;
+        for (;;) { }
+    }
     u32 *p = (u32 *)g_next_page;
     g_next_page += 4096;
     memset(p, 0, 4096);

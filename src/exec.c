@@ -137,6 +137,8 @@ static bool fetch(cpu_t *c, u32 *insn)
 static void do_trap(cpu_t *c, u32 cause, u32 tval)
 {
     u32 epc = c->pc;
+    /* FR-1.5 / 规范：任何 trap（含中断）都必须清 LR reservation */
+    c->lr_valid = false;
     if (getenv("RVSIM_TRAP")) fprintf(stderr, "[trap] cause=%u tval=%08x epc=%08x pc=%08x\n", cause, tval, epc, c->pc);
     csr_raise(&c->csr, cause, tval);
     if (getenv("RVSIM_TRAP"))
@@ -244,19 +246,21 @@ bool cpu_step(cpu_t *c)
         c->pc_stuck = 0;
         c->last_pc  = c->pc;
     }
-    if (g_hang_detect && c->cur_instr == 0x10500073u) {     /* 上一条是 wfi */
-        if (++c->wfi_count > 200000u) {
-            fprintf(stderr, "\n[rvsim] 检测到 wfi 空转（%u 次），停止\n", c->wfi_count);
+    /* wfi 空转检测：`wfi; j .` 是两条指令交替，连续相同 pc 的检测抓不到，
+       改为累计 wfi 执行次数。合法测试（rv32si-p-wfi）只会执行几十次，
+       阈值取 100 万足以区分，且默认关闭不影响回归。 */
+    if (g_hang_detect && c->cur_instr == 0x10500073u) {
+        if (++c->wfi_count > 1000000u) {
+            fprintf(stderr, "\n[rvsim] 检测到 wfi 空转（累计 %u 次），停止\n", c->wfi_count);
             c->halted = true;
             return false;
         }
-    } else if (g_hang_detect) {
-        c->wfi_count = 0;
     }
 
     /* 每条指令（含 trap 路径）统一计数一次，防止某条路径漏加导致 cycles 不增 */
     c->cycles++;
-    c->csr.mcycle = c->cycles;
+    /* docs/02:352：mcountinhibit.CY(bit0)=1 时 mcycle 停止自增 */
+    if (!(c->csr.mcountinhibit & 0x1)) c->csr.mcycle = c->cycles;
     if (!(c->csr.mcountinhibit & 0x4)) c->csr.minstret++;
 
     /* 中断注入（在指令之间） */
@@ -418,7 +422,7 @@ bool cpu_step(cpu_t *c)
             if (insn == 0x30200073) {        /* MRET */
                 if (c->csr.priv != PRV_M) { do_trap(c, CAUSE_ILLEGAL_INSTRUCTION, insn); return true; }
                 c->pc = c->csr.mepc;
-                csr_return(&c->csr);   /* 由 csr_return 读 MPP 并设置目标特权级，不要提前改 priv */
+                csr_return(&c->csr, 1);   /* 1 = MRET：读 MPP 并设置目标特权级 */
                 return true;
             }
             if (insn == 0x10200073) {        /* SRET */
@@ -427,7 +431,7 @@ bool cpu_step(cpu_t *c)
                     do_trap(c, CAUSE_ILLEGAL_INSTRUCTION, insn); return true;   /* TSR=1 时 S 模式非法 */
                 }
                 c->pc = c->csr.sepc;
-                csr_return(&c->csr);
+                csr_return(&c->csr, 0);   /* 0 = SRET：始终按 SPP 返回，M 模式下也一样 */
                 return true;
             }
             if (insn == 0x10500073) {        /* WFI：不阻塞，作 NOP（规范允许） */

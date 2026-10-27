@@ -27,7 +27,7 @@
 
 | 项 | 值 |
 |---|---|
-| 模拟器源码 | 2,270 行（`src/`，含 FDT 解析 197 行） |
+| 模拟器源码 | 2,270 行（`src/`，含 FDT 解析 210 行） |
 | 迷你内核 | 1,131 行（`kernel/`） |
 | 解释速度 | **32 MIPS**（1000 万条 0.31 秒） |
 | WASM 体积 | 90 KB |
@@ -108,7 +108,7 @@ cd web && python3 -m http.server 8777
 
 ### FR-2.8：设备地址从 dtb 读取（2026-10-27 实现）
 
-`src/fdt.c`（197 行）解析 FDT：校验 header magic，遍历 structure block，按 `compatible` 属性识别节点（不是按节点名——plic 的节点名是 `interrupt-controller@c000000`，按名字匹配会漏），从 `reg` 读 <base,size>，写进运行时表 `g_devmap`。所有外设访问都走这张表。
+`src/fdt.c`（210 行）解析 FDT：校验 header magic，遍历 structure block，按 `compatible` 属性识别节点（不是按节点名——plic 的节点名是 `interrupt-controller@c000000`，按名字匹配会漏），从 `reg` 读 <base,size>，写进运行时表 `g_devmap`。所有外设访问都走这张表。
 
 **验证方法（可复现）**：
 
@@ -134,7 +134,7 @@ dtc -I dts -O dtb -o /tmp/alt.dtb /tmp/alt.dts
 
 无 `--dtb` 时回退到编译期默认值（QEMU virt 布局），所以 riscv-tests、CoreMark、Linux 都不受影响。
 
-**边界（如实说明）**：`g_ram[]` 是编译期静态数组，所以 dtb 里 `memory` 节点的 **size 不会被采用**（只采用 base）；改 RAM 大小需要重新编译。设备大小（`UART_SIZE`/`PLIC_SIZE`/`CLINT_SIZE`）也仍是编译期常量，dtb 只覆盖基址。这样做的理由是：RISC-V 的 MMIO 窗口大小在外设实现里是固定的，dtb 的 size 通常只是声明范围。
+**边界（如实说明）**：`g_ram[]` 是编译期静态数组，所以 dtb 里 `memory` 节点的 **base 和 size 都不会被采用**——解析出来只做**一致性校验**，与编译期值不符时打印警告。改 RAM 基址或容量必须重新编译。设备大小（`UART_SIZE`/`PLIC_SIZE`/`CLINT_SIZE`）同理是编译期常量，dtb 只覆盖基址。这样做的理由：RISC-V 的 RAM 布局决定了 `g_ram[]` 的数组下标计算，运行时改不了；MMIO 窗口大小在外设实现里也是固定的。
 
 ### 必须在论文/演示里如实说明的三条
 

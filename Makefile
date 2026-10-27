@@ -76,3 +76,26 @@ clean:
 	rm -rf $(OBJDIR)
 
 .PHONY: all clean
+
+# ── 定向测试（tests/directed/*.S -> *.elf） ──
+# 这些 ELF 是构建产物（被 .gitignore），所以必须在干净克隆里能重建，
+# 否则 run_tests.sh 会静默少跑这几条。
+DIRECTED_SRCS := $(wildcard tests/directed/*.S)
+DIRECTED_ELFS := $(patsubst %.S,%.elf,$(DIRECTED_SRCS))
+
+$(DIRECTED_ELFS): %.elf: %.S tests/directed/link.ld
+	$(CROSS)gcc -march=rv32ima_zicsr_zifencei -mabi=ilp32 -mcmodel=medany \
+		-nostdlib -nostartfiles -T tests/directed/link.ld -o $@ $<
+
+directed: $(DIRECTED_ELFS)
+
+# ── 设备树（dts/*.dts -> *.dtb） ──
+DTS_SRCS := $(wildcard dts/*.dts)
+DTS_DTBS := $(patsubst %.dts,%.dtb,$(DTS_SRCS))
+
+$(DTS_DTBS): %.dtb: %.dts
+	dtc -I dts -O dtb -o $@ $<
+
+dts: $(DTS_DTBS)
+
+.PHONY: directed dts

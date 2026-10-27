@@ -39,6 +39,14 @@ for p in $PREFIXES; do
   printf "%-8s %2d/%-2d\n" "$p" "$sub_pass" "$sub_total"
 done
 
+# 官方用例数为 0 视为环境错误（不能因为定向测试凑够数就宣布"全部通过"）
+if [ "$total" -eq 0 ]; then
+  echo "------------------------------"
+  echo "总计 0/0 通过  ← 未找到任何 riscv-tests 官方用例！"
+  echo "检查 ISA_DIR=$ISA_DIR 是否有 rv32*-p-* 文件（先跑 ./scripts/fetch_deps.sh 并编译 riscv-tests）"
+  exit 1
+fi
+
 # 定向测试（tests/directed/，针对 FR 条目的断言，不是 riscv-tests 官方用例）
 DIRECTED_DIR="$REPO_ROOT/tests/directed"
 if [ "$SUITE" = "all" ] && ls "$DIRECTED_DIR"/*.elf >/dev/null 2>&1; then

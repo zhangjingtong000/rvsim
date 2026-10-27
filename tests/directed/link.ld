@@ -8,6 +8,6 @@ SECTIONS
   .data : { *(.data*) }
   .bss : { *(.bss*) *(COMMON) }
   /* riscv-tests 约定的通过标记：写入 1 表示 PASS */
-  . = 0x80001000;
+  . = 0x80010000;
   .tohost : { *(.tohost) }
 }

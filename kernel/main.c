@@ -127,8 +127,19 @@ u32 s_trap_handler(u32 cause, u32 epc, u32 tval, u32 *regs)
         if (a7 == 1) {           /* write(buf, len) */
             u32 buf = regs[R_A0];
             u32 len = regs[R_A1];
-            for (u32 i = 0; i < len; i++) uart_putc((char)((volatile u8 *)buf)[i]);
-            regs[R_A0] = len;
+            /* 用户指针校验（相当于 copy_from_user 的最小实现）：
+               1) 只允许用户地址区间——否则用户程序能 write(0x80000000) 把内核 .text 打到串口
+               2) 长度设上限——否则 len=0x7FFFFFFF 会长时间占死模拟器
+               3) 逐字节判断，越界即截断（跨页时不会去读内核页） */
+            if (len > 4096u) len = 4096u;
+            u32 n = 0;
+            for (; n < len; n++) {
+                u32 va = buf + n;
+                if (va < 0x80400000u || va >= 0x80800000u) break;
+                uart_putc((char)((volatile u8 *)va)[0]);
+            }
+            /* 一个字节都没写出去说明指针整体非法，返回 -1 让用户程序能察觉 */
+            regs[R_A0] = (n == 0 && len > 0) ? (u32)-1 : n;
             return epc + 4;
         }
         if (a7 == 0) {           /* exit */
@@ -171,9 +182,11 @@ u32 s_trap_handler(u32 cause, u32 epc, u32 tval, u32 *regs)
                 regs[R_A0] = (u32)-1;
                 return epc + 4;
             }
-            /* 按需映射新增的页 */
+            /* 按需映射新增的页到【本进程】页表（用 vm_handle_page_fault 会错映射进 g_kroot，
+               预映射对进程不可见，只能靠缺页兜底再分配一页，白占物理内存） */
+            u32 *pt = pc->pgtbl ? pc->pgtbl : g_kroot;
             for (u32 a = oldbrk & ~0xFFFu; a < newbrk; a += 4096u)
-                vm_handle_page_fault(a, 1);
+                vm_page_fault_on(pt, a, 1);
             pc->brk = newbrk;
             regs[R_A0] = oldbrk;
             return epc + 4;
