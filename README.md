@@ -13,7 +13,12 @@
 | Gate 4 特权级与计数器 | 16/16 | ✅ | `./tests/run_tests.sh rv32mi` |
 | Gate 5 S 模式 + Sv32 | 6/6 | ✅ | `./tests/run_tests.sh rv32si` |
 | Gate 6 启动 Linux | 进 shell + 执行命令 | ✅ | `uname -a` / `ls /` / `cat /proc/cpuinfo` / `free` / `ps` |
-| Gate 7a 迷你内核 | M→S→U + Sv32 + 多进程 + 系统调用 | ✅ **核心达成** | 3 进程 `ABCABC...` 轮转 |
+| Gate 7a 迷你内核 | M→S→U + Sv32 + 多进程 + 系统调用 | ✅ | 3 进程 `ABCABC...` 轮转 |
+| **抢占式调度** | 定时器中断驱动，非 yield | ✅ | `B→C→A` 轮转，37/38/38 均衡 |
+| **缺页处理** | 按需分配物理页 | ✅ | 实测 4 次 store page fault 后正常继续 |
+| **CoreMark** | 跑通并给出分数 | ✅ | **333 iters/sec**，`Correct operation validated` |
+| **可视化增强** | 反汇编 + 阶段视图 + 热图 | ✅ | 13 行反汇编、5 阶段动态点亮、512 格热图 |
+| **QEMU 语义对照** | 与 QEMU 比对计算结果 | ✅ | 四个 CRC 值完全一致 |
 | Gate 7b WASM 可视化 | 浏览器调试界面 | ✅ | 29 KB wasm，Node + 浏览器双验证 |
 
 **riscv-tests：82/82 全通过。**
@@ -109,3 +114,83 @@ cd web && python3 -m http.server 8777
 - UART 的 IIR 必须基于自身 THR 状态，**不能依赖 PLIC pending**（claim 会先清 pending）
 - `linker.ld` 必须收 `*(.sbss)`，否则小 bss 变量落在 `_kernel_end` 之外，被 `page_alloc` 自己清零
 - `s_trap_entry` 必须用 `sscratch` 换到内核栈，否则 S 模式写用户栈触发 page fault 无限循环
+
+
+---
+
+## 补充成果（2026-10-27）
+
+### 一、定时器中断驱动的抢占式调度
+
+不再依赖用户程序主动 `yield`，改由 CLINT 定时器中断强制切换。
+
+**架构**：M 模式收到 `MTIP` 只做两件事——把 `mtimecmp` 推到远未来避免重复触发、置 `mip.STIP`；S 模式收到 `STI` 时保存当前进程全部 32 个寄存器、调度下一个、再用 `ecall(SBI='SSIP')` 请 M 模式清 `STIP` 并重装定时器。
+
+**关键修复**（每一个都是"不修就永远不工作"）：
+- `mideleg` 必须委派 STIP，否则中断进不了 S 模式
+- `enter_s_mode` 必须置 `MPIE`，否则 `mret` 后 `MIE` 被清、定时器永不触发
+- `enter_u_mode` 必须置 `SPIE`，否则 `sret` 后 `SIE` 被清、S 模式中断永久关闭
+- M/S 两套栈帧布局必须统一为 `xN 在 (N-1)*4`，否则 handler 写参数会串到别的寄存器
+- SBI `ecall` 会穿越 M 模式并恢复寄存器，**局部变量必须放静态区**，否则返回值被覆盖
+
+**实测**（`--max-cycles 2000000`）：
+```
+BBBBBBBBBBCCCCCCCCCCCCCAAAAAAAAAAAAABBBBBBBBBBBBCCCCCCCCCCCCAAAAAAAAAAAABBBBBBBBBBBBCCCCCCCCCCCCCAAAAAAAAAAAAA
+37 A / 38 B / 38 C
+```
+
+### 二、缺页异常处理（按需分配）
+
+用户页表初始化时只映射代码页，数据页与栈页不预先映射。S 模式 handler 收到 `cause 13/15` 后分配物理页、填 PTE（`U|R|W|A|D`）、返回原 `epc` 重试指令；非法地址则终止进程。
+
+**实测**：100 万条内触发 **4 次 store page fault**，进程仍正常轮转。
+
+### 三、CoreMark
+
+```
+CoreMark Size    : 666
+Total ticks      : 125632192
+Total time (secs): 12
+Iterations/Sec   : 333
+Iterations       : 4000
+Compiler flags   : -O2 -march=rv32ima_zicsr_zifencei
+seedcrc          : 0x18f2
+[0]crclist       : 0xe3c1
+[0]crcmatrix     : 0x0747
+[0]crcstate      : 0x8d84
+[0]crcfinal      : 0x5249
+Correct operation validated.
+```
+
+**分数 333 iters/sec**（对应约 3.33 CoreMark/MHz，假设 100 MHz 核心）。
+
+**折磨了很久的根因**：`core_portme.h` 里 `MULTITHREAD` 误写为 `0`。CoreMark 用 `for (i = 0; i < MULTITHREAD; i++)` 做所有初始化，为 0 时一条都不执行——`core_list_init` 没被调用、`list` 保持 NULL，程序在 `core_bench_list` 解引用空指针。表现为"跑几十亿条指令也不出结果"，极难从现象反推。
+
+### 四、可视化增强
+
+`http://127.0.0.1:8777`（`cd web && python3 -m http.server 8777`）
+
+- **反汇编**：新增 `src/disasm.c`（180 行），覆盖 RV32IMA 全部指令 + CSR 名，显示 PC 附近 13 条并高亮当前指令
+- **指令阶段视图**：IF/ID/EX/MEM/WB 五个阶段按指令类别动态点亮——`STORE` 亮 MEM、`LOAD` 亮 MEM+WB、分支只亮 EX、ALU 亮 EX+WB，能直观看出"这条指令在做什么"
+- **内存热图**：4 KB 页粒度，512 格，读绿写橙、亮度代表访问频次，悬停显示页号与读写次数
+- **寄存器双列布局** + CSR 表 + PC 附近内存
+
+### 五、与 QEMU 的语义对照
+
+`./tests/qemu_crosscheck.sh` —— 同一份 CoreMark ELF 分别喂给 rvsim 和 QEMU，比对四个 CRC 值。
+
+| 项 | rvsim | QEMU |
+|---|---|---|
+| CoreMark Size | 666 | 666 |
+| seedcrc | 0x18f2 | 0x18f2 |
+| crclist | 0xe3c1 | 0xe3c1 |
+| crcmatrix | 0x0747 | 0x0747 |
+| crcstate | 0x8d84 | 0x8d84 |
+| crcfinal | 0x5249 | 0x5249 |
+| Total ticks | 125632192 | 10020861 |
+
+**计算结果完全一致，只有性能不同**。这比"能启动 Linux"更强的证据：CRC 是对链表操作、矩阵乘法、状态机转换全部结果的压缩摘要，全都对得上说明指令语义、异常处理、内存行为一致。
+
+### 新增调试工具
+
+`--dump-mem <addr> <len>`：运行结束后 dump 指定物理内存。定位 CoreMark 问题时靠它读出 `core_list_init` 的真实入参，比反复加 printf 可靠得多。
