@@ -232,7 +232,7 @@ int krestart(void)
         procs[k].state = PROC_READY;
         procs[k].brk   = 0;
         memset(procs[k].regs, 0, sizeof(procs[k].regs));
-        procs[k].regs[2]  = procs[k].sp;
+        procs[k].regs[1]  = procs[k].sp;
         procs[k].regs[10] = k;
     }
     for (u32 k = NPROC_INIT; k < NPROC; k++) procs[k].state = PROC_EXIT;
@@ -277,7 +277,6 @@ void kmain(void)
     proc_init();
     for (u32 i = NPROC_INIT; i < NPROC; i++) procs[i].state = PROC_EXIT;
     for (u32 i = 0; i < NPROC_INIT; i++) {
-        kprintf("[M] ustack=%x\n", g_user_base + 0x10000u + i * 0x2000u);
         g_ustack[i] = g_user_base + 0x10000u + i * 0x2000u;   /* 64KB 之后，间隔 8KB */
         memset((void *)g_ustack[i], 0, 4096);
         proc_create(i, g_user_base, g_ustack[i]);
@@ -315,19 +314,19 @@ void s_main(void)
 {
     kprintf("[S] 进入 S 模式\n");
 
-    /* 调度第一个进程 */
-    proc_t *first = proc_schedule();
-    if (!first) { kprintf("[S] 无进程\n"); for(;;){} }
-
-    (void)first;
     /* 使能 S 模式定时器中断 */
     __asm__ volatile("csrs sie, %0" : : "r"(0x20u));      /* STIE */
     __asm__ volatile("csrs sstatus, %0" : : "r"(0x2u));    /* SIE */
 
     proc_t *p0 = proc_schedule();
     if (!p0) { kprintf("[S] 无进程\n"); for (;;) { } }
-    kprintf("[S] 启动 proc %d\n", p0->pid);
-    if (p0->pgtbl) proc_switch_satp(p0->pgtbl);
+    kprintf("[S] 启动 proc %d pc=%x sp=%x pt=%x\n", p0->pid, p0->pc, p0->sp, (u32)p0->pgtbl);
+    if (p0->pgtbl) {
+        proc_switch_satp(p0->pgtbl);
+        u32 satp_now = 0;
+        __asm__ volatile("csrr %0, satp" : "=r"(satp_now));
+        kprintf("[S] satp 实际=%x\n", satp_now);
+    }
     enter_u_mode(p0->pc, p0->sp, p0->pid);
     for (;;) { }
 }

@@ -99,9 +99,10 @@ s_trap_entry:
     lw      x29,112(sp)
     lw      x30,116(sp)
     lw      x31,120(sp)
-    lw      t0, 4(sp)               # 用户 sp
+    lw      t0, 4(sp)               # 下一个进程（或本进程）的用户 sp
+    csrw    sscratch, t0            # 先写进 sscratch：这是真正发生上下文切换的地方
     addi    sp, sp, 132
-    csrrw   sp, sscratch, sp        # 恢复用户 sp
+    csrrw   sp, sscratch, sp        # sp <- 用户 sp，sscratch <- 内核栈
     sret
 
 .globl enter_u_mode
