@@ -91,3 +91,48 @@ int vm_handle_page_fault(u32 va, int is_store)
     }
     return 1;
 }
+
+/* 为进程创建独立页表：内核映射共享，用户 L1 独立 */
+extern u32 *g_kroot;
+#define USER_BASE_ 0x80400000u
+
+u32 *vm_proc_pgtbl(void)
+{
+    u32 *root = page_alloc();
+    memcpy(root, g_kroot, 4096);          /* 复制内核映射（共享） */
+    u32 uvpn2 = (USER_BASE_ >> 22) & 0x3FFu;
+    u32 *ul1 = page_alloc();              /* 独立的用户 L1 */
+    root[uvpn2] = ((u32)ul1 >> 12 << 10) | PTE_V;
+    return root;
+}
+
+/* 把代码页映射进指定进程的页表 */
+void vm_map_code(u32 *root, u32 va, u32 pa)
+{
+    u32 uvpn2 = (va >> 22) & 0x3FFu;
+    u32 *ul1 = (u32 *)(((u32)root[uvpn2] >> 10) << 12);
+    u32 idx = (va >> 12) & 0x3FFu;
+    ul1[idx] = (u32)(((pa >> 12) << 10) | PTE_V | PTE_R | PTE_W | PTE_X | PTE_U | PTE_A | PTE_D);
+}
+
+/* 按需分页改为作用于指定页表 */
+int vm_page_fault_on(u32 *root, u32 va, int is_store)
+{
+    (void)is_store;
+    if (va < 0x80400000u || va >= 0x80800000u) return 0;
+    u32 uvpn2 = (va >> 22) & 0x3FFu;
+    u32 *ul1;
+    if (!(root[uvpn2] & PTE_V)) {
+        ul1 = page_alloc();
+        root[uvpn2] = ((u32)ul1 >> 12 << 10) | PTE_V;
+    } else {
+        ul1 = (u32 *)(((u32)root[uvpn2] >> 10) << 12);
+    }
+    u32 idx = (va >> 12) & 0x3FFu;
+    if (!(ul1[idx] & PTE_V)) {
+        u32 *pa = page_alloc();
+        memset(pa, 0, 4096);
+        ul1[idx] = (u32)(((u32)pa >> 12 << 10) | PTE_V | PTE_R | PTE_W | PTE_U | PTE_A | PTE_D);
+    }
+    return 1;
+}

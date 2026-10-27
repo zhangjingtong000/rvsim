@@ -7,6 +7,14 @@
 #define R_A7 16   /* x17 */
 #include <stdarg.h>
 
+/* 切换到指定页表（S 模式，切完刷 TLB） */
+static void proc_switch_satp(u32 *pgtbl)
+{
+    u32 satp = SATP_SV32 | ((u32)pgtbl >> 12);
+    __asm__ volatile("csrw satp, %0; sfence.vma" : : "r"(satp) : "memory");
+}
+
+
 extern u32 *kernel_pgtbl(void);
 extern void enter_u_mode(u32 entry, u32 stack, u32 pid);
 extern const u8 user_prog_start[];
@@ -84,6 +92,7 @@ u32 s_trap_handler(u32 cause, u32 epc, u32 tval, u32 *regs)
         if (next) {
             for (int i = 0; i < 32; i++) regs[i] = next->regs[i];
             g_retpc = next->pc;
+            if (next->pgtbl) proc_switch_satp(next->pgtbl);
         }
         /* 2) 通过 ecall 让 M 模式清 STIP 并重装定时器（EID='SSIP'）
               注意：ecall 会穿越 M 模式并恢复寄存器，局部变量必须放静态区 */
@@ -94,9 +103,10 @@ u32 s_trap_handler(u32 cause, u32 epc, u32 tval, u32 *regs)
 
     /* 缺页异常：按需分配 */
     if (cause == 13 || cause == 15) {
-        if (vm_handle_page_fault(tval, cause == 15))
+        u32 *pt = (cur_proc >= 0 && procs[cur_proc].pgtbl)
+                  ? procs[cur_proc].pgtbl : g_kroot;
+        if (vm_page_fault_on(pt, tval, cause == 15))
             return epc;          /* 重试出错的指令 */
-        kprintf("[S] proc %d 非法访存 va=%x\n", cur_proc, tval);
         procs[cur_proc].state = PROC_EXIT;
         proc_t *nx = proc_schedule();
         if (nx) return nx->pc;
@@ -121,7 +131,6 @@ u32 s_trap_handler(u32 cause, u32 epc, u32 tval, u32 *regs)
             procs[cur_proc].state = PROC_EXIT;
             proc_t *next = proc_schedule();
             if (!next) {
-                kprintf("[S] 所有进程结束，关机\n");
                 *(volatile u32 *)SYSCON_BASE = 0x5555u;
                 for (;;) { }
             }
@@ -147,6 +156,40 @@ u32 s_trap_handler(u32 cause, u32 epc, u32 tval, u32 *regs)
             regs[R_A0] = oldbrk;
             return epc + 4;
         }
+        if (a7 == 6) {           /* fork：复制当前进程 */
+            int child = -1;
+            for (int i = 0; i < NPROC; i++) {
+                if (procs[i].state == PROC_EXIT) { child = i; break; }
+            }
+            if (child < 0) { regs[R_A0] = (u32)-1; return epc + 4; }
+
+            proc_t *pp = &procs[cur_proc];
+            proc_t *cc = &procs[child];
+            *cc = *pp;
+            cc->pid   = child;
+            cc->state = PROC_READY;
+            /* 复制当前寄存器（不是上次保存的快照） */
+            for (int k = 0; k < 32; k++) cc->regs[k] = regs[k];
+
+            /* 子进程独立页表 + 复制已映射的用户页 */
+            u32 *root = vm_proc_pgtbl();
+            cc->pgtbl = root;
+            u32 uvpn2 = VPN2(g_user_base);
+            u32 *src_l1 = (u32 *)(((u32)pp->pgtbl[uvpn2] >> 10) << 12);
+            u32 *dst_l1 = (u32 *)(((u32)root[uvpn2] >> 10) << 12);
+            for (u32 i = 0; i < 1024; i++) {
+                if (!(src_l1[i] & PTE_V)) continue;
+                u32 *src_pa = (u32 *)(((u32)src_l1[i] >> 10) << 12);
+                u32 *dst_pa = page_alloc();
+                memcpy(dst_pa, src_pa, 4096);
+                dst_l1[i] = ((u32)dst_pa >> 12 << 10) | (src_l1[i] & 0x3FFu);
+            }
+            /* 子进程返回 0，父进程返回子 pid */
+            cc->regs[R_A0] = 0;
+            cc->pc = epc + 4;
+            regs[R_A0] = (u32)child;
+            return epc + 4;
+        }
         if (a7 == 3) {           /* getpid */
             regs[R_A0] = (u32)cur_proc;
             return epc + 4;
@@ -159,6 +202,7 @@ u32 s_trap_handler(u32 cause, u32 epc, u32 tval, u32 *regs)
             proc_t *next = proc_schedule();
             if (next) {
                 for (int i = 0; i < 32; i++) regs[i] = next->regs[i];
+                if (next->pgtbl) proc_switch_satp(next->pgtbl);
                 return next->pc;
             }
             return epc + 4;
@@ -186,17 +230,14 @@ void shell_ps_hook(void)
 void kmain(void)
 {
     kprintf("\n=== rvsim mini-kernel (multiproc) ===\n");
-    kprintf("[M] 启动\n");
 
     g_kroot = kernel_pgtbl();
     u32 satp = SATP_SV32 | ((u32)g_kroot >> 12);
     __asm__ volatile("csrw satp, %0; sfence.vma" : : "r"(satp) : "memory");
-    kprintf("[M] Sv32 已开 satp=%x\n", satp);
 
     /* 加载用户程序镜像到 0x80400000 */
     u32 len = (u32)(user_prog_end - user_prog_start);
     memcpy((void *)g_user_base, user_prog_start, len);
-    kprintf("[M] 用户程序 %d 字节\n", (int)len);
 
     /* 用户页表：只映射代码页；数据页与栈页留给缺页异常按需分配 */
     u32 uvpn2 = VPN2(g_user_base);
@@ -207,16 +248,19 @@ void kmain(void)
         ul1[VPN1(g_user_base)] = (u32)(((code_pa >> 12) << 10)
                                      | PTE_V | PTE_R | PTE_W | PTE_X | PTE_U | PTE_A | PTE_D);
     }
-    kprintf("[M] 用户页表只映射代码页，其余按需分配（缺页处理）\n");
 
     /* 创建 3 个进程，每个 4KB 用户栈 */
     proc_init();
-    for (u32 i = 0; i < NPROC; i++) {
+    for (u32 i = NPROC_INIT; i < NPROC; i++) procs[i].state = PROC_EXIT;
+    for (u32 i = 0; i < NPROC_INIT; i++) {
+        kprintf("[M] ustack=%x\n", g_user_base + 0x10000u + i * 0x2000u);
         g_ustack[i] = g_user_base + 0x10000u + i * 0x2000u;   /* 64KB 之后，间隔 8KB */
         memset((void *)g_ustack[i], 0, 4096);
         proc_create(i, g_user_base, g_ustack[i]);
+        /* 每个进程独立的页表，只映射代码页 */
+        procs[i].pgtbl = vm_proc_pgtbl();
+        vm_map_code(procs[i].pgtbl, g_user_base, g_user_base);
     }
-    kprintf("[M] 创建 %d 个进程\n", NPROC);
 
     /* 定时器：默认关闭（yield 已足够验证轮转；打开见 RVSIM_TIMER 环境无对应，
        如需启用改成 1）。保留代码路径以便后续完善。 */
@@ -232,12 +276,10 @@ void kmain(void)
         volatile u32 *mth = (volatile u32 *)(CLINT_BASE + 0xBFFCu);
         volatile u32 *mc  = (volatile u32 *)(CLINT_BASE + 0x4000u);
         volatile u32 *mch = (volatile u32 *)(CLINT_BASE + 0x4004u);
-        kprintf("[M] mtime=%x.%x mtimecmp=%x.%x\n", *mth, *mt, *mch, *mc);
         u32 mie, mip, mst;
         __asm__ volatile("csrr %0, mie" : "=r"(mie));
         __asm__ volatile("csrr %0, mip" : "=r"(mip));
         __asm__ volatile("csrr %0, mstatus" : "=r"(mst));
-        kprintf("[M] mie=%x mip=%x mstatus=%x\n", mie, mip, mst);
     }
 
     /* 进 S 模式 */
@@ -257,11 +299,11 @@ void s_main(void)
     /* 使能 S 模式定时器中断 */
     __asm__ volatile("csrs sie, %0" : : "r"(0x20u));      /* STIE */
     __asm__ volatile("csrs sstatus, %0" : : "r"(0x2u));    /* SIE */
-    kprintf("[S] 定时器中断已启用（抢占式调度）\n");
 
     proc_t *p0 = proc_schedule();
     if (!p0) { kprintf("[S] 无进程\n"); for (;;) { } }
-    kprintf("[S] 启动 proc %d（定时器每 2 万 mtime 单位抢占）\n", p0->pid);
+    kprintf("[S] 启动 proc %d\n", p0->pid);
+    if (p0->pgtbl) proc_switch_satp(p0->pgtbl);
     enter_u_mode(p0->pc, p0->sp, p0->pid);
     for (;;) { }
 }

@@ -3,7 +3,8 @@
 
 #include "kernel.h"
 
-#define NPROC      3
+#define NPROC      5
+#define NPROC_INIT 3
 #define PROC_READY 0
 #define PROC_RUN   1
 #define PROC_EXIT  2
@@ -16,6 +17,7 @@ typedef struct {
     u32 stack_pa;        /* 用户栈物理页 */
     u32 nrun;
     u32 brk;             /* 用户堆顶（sbrk 用） */
+    u32 *pgtbl;          /* 独立页表根 */
     u32 regs[32];        /* 完整用户上下文 */
 } proc_t;
 
