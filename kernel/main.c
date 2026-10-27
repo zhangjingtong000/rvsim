@@ -131,8 +131,15 @@ u32 s_trap_handler(u32 cause, u32 epc, u32 tval, u32 *regs)
             procs[cur_proc].state = PROC_EXIT;
             proc_t *next = proc_schedule();
             if (!next) {
-                *(volatile u32 *)SYSCON_BASE = 0x5555u;
-                for (;;) { }
+                kprintf("\n[S] 所有进程结束，进入 shell\n");
+                extern void shell_start(void);
+                extern void shell_input(char);
+                shell_start();
+                volatile u8 *lsr2 = (volatile u8 *)(UART_BASE + 5);
+                volatile u8 *rbr2 = (volatile u8 *)(UART_BASE + 0);
+                for (;;) {
+                    if (*lsr2 & 0x01) shell_input((char)*rbr2);
+                }
             }
             for (int i = 0; i < 32; i++) regs[i] = next->regs[i];
             return next->pc;
@@ -215,6 +222,23 @@ u32 s_trap_handler(u32 cause, u32 epc, u32 tval, u32 *regs)
 }
 
 int g_run_flag = 0;
+
+/* 重置所有进程到入口（shell 的 run 命令用） */
+int krestart(void)
+{
+    for (u32 k = 0; k < NPROC_INIT; k++) {
+        procs[k].pc    = g_user_base;
+        procs[k].sp    = g_ustack[k] + 4096u - 16u;
+        procs[k].state = PROC_READY;
+        procs[k].brk   = 0;
+        memset(procs[k].regs, 0, sizeof(procs[k].regs));
+        procs[k].regs[2]  = procs[k].sp;
+        procs[k].regs[10] = k;
+    }
+    for (u32 k = NPROC_INIT; k < NPROC; k++) procs[k].state = PROC_EXIT;
+    cur_proc = -1;
+    return (int)NPROC_INIT;
+}
 
 /* 供 shell 的 ps 命令调用 */
 void shell_ps_hook(void)

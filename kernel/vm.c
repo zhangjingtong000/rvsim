@@ -119,6 +119,7 @@ void vm_map_code(u32 *root, u32 va, u32 pa)
 int vm_page_fault_on(u32 *root, u32 va, int is_store)
 {
     (void)is_store;
+    g_pf_count++;
     if (va < 0x80400000u || va >= 0x80800000u) return 0;
     u32 uvpn2 = (va >> 22) & 0x3FFu;
     u32 *ul1;
