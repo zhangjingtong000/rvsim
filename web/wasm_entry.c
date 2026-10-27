@@ -68,3 +68,43 @@ EMSCRIPTEN_KEEPALIVE int rv_class(void)  { return rv_insn_class((u32)g_cpu.cur_i
 EMSCRIPTEN_KEEPALIVE int rv_hot_r(int pg) { return (int)bus_hot_read((u32)pg); }
 EMSCRIPTEN_KEEPALIVE int rv_hot_w(int pg) { return (int)bus_hot_write((u32)pg); }
 EMSCRIPTEN_KEEPALIVE void rv_hot_clr(void) { bus_hot_clear(); }
+
+/* ── 断点（最多 64 个） ── */
+#define MAX_BP 64
+static unsigned g_bp[MAX_BP];
+static int g_bp_n = 0;
+
+EMSCRIPTEN_KEEPALIVE
+int rv_bp_add(unsigned addr)
+{
+    for (int i = 0; i < g_bp_n; i++) if (g_bp[i] == addr) return 1;
+    if (g_bp_n >= MAX_BP) return 0;
+    g_bp[g_bp_n++] = addr;
+    return 1;
+}
+
+EMSCRIPTEN_KEEPALIVE
+int rv_bp_del(unsigned addr)
+{
+    for (int i = 0; i < g_bp_n; i++) {
+        if (g_bp[i] == addr) {
+            for (int k = i; k + 1 < g_bp_n; k++) g_bp[k] = g_bp[k + 1];
+            g_bp_n--;
+            return 1;
+        }
+    }
+    return 0;
+}
+
+EMSCRIPTEN_KEEPALIVE void rv_bp_clear(void) { g_bp_n = 0; }
+EMSCRIPTEN_KEEPALIVE int  rv_bp_count(void) { return g_bp_n; }
+EMSCRIPTEN_KEEPALIVE int  rv_bp_at(int i)   { return (i >= 0 && i < g_bp_n) ? (int)g_bp[i] : -1; }
+
+/* 当前 PC 是否命中断点 */
+EMSCRIPTEN_KEEPALIVE
+int rv_bp_hit(void)
+{
+    unsigned pc = (unsigned)g_cpu.pc;
+    for (int i = 0; i < g_bp_n; i++) if (g_bp[i] == pc) return 1;
+    return 0;
+}

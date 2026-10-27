@@ -7,6 +7,7 @@
 #include "include/cpu.h"
 #include "include/bus.h"
 #include "include/loader.h"
+#include "include/disasm.h"
 #include "include/bus.h"
 
 static volatile sig_atomic_t g_stop = 0;
@@ -51,8 +52,14 @@ int main(int argc, char **argv)
     u64 max_cycles = 50000000ull;
 
     u32 dump_addr = 0, dump_len = 0;
+    u32 dis_addr = 0, dis_count = 0;
 
     for (int i = 1; i < argc; i++) {
+        if (!strcmp(argv[i], "--disasm") && i + 2 < argc) {
+            dis_addr  = (u32)strtoul(argv[++i], NULL, 0);
+            dis_count = (u32)strtoul(argv[++i], NULL, 0);
+            continue;
+        }
         if (!strcmp(argv[i], "--dump-mem") && i + 2 < argc) {
             dump_addr = (u32)strtoul(argv[++i], NULL, 0);
             dump_len  = (u32)strtoul(argv[++i], NULL, 0);
@@ -171,6 +178,17 @@ int main(int argc, char **argv)
     if (result == 1) printf("[rvsim] 结果：PASS\n");
     else if (result == -1) printf("[rvsim] 结果：FAIL\n");
     else printf("[rvsim] 结果：未判定（tohost 未写入终值）\n");
+
+    if (dis_count) {
+        printf("\n[rvsim] 反汇编 @ 0x%08x（%u 条）\n", dis_addr, dis_count);
+        for (u32 k = 0; k < dis_count; k++) {
+            u32 a = dis_addr + k * 4, insn = 0;
+            bus_read(a, 4, &insn);
+            char txt[96];
+            rv_disasm(a, insn, txt, sizeof txt);
+            printf("  %08x: %08x  %s\n", a, insn, txt);
+        }
+    }
 
     if (dump_len) {
         printf("\n[rvsim] 内存 dump @ 0x%08x (%u 字节)\n", dump_addr, dump_len);

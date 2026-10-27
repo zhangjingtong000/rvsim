@@ -18,6 +18,7 @@ void proc_create(u32 pid, u32 entry, u32 stack_pa)
     procs[pid].state    = PROC_READY;
     procs[pid].stack_pa = stack_pa;
     procs[pid].nrun     = 0;
+    procs[pid].brk      = 0;
     memset(procs[pid].regs, 0, sizeof(procs[pid].regs));
     procs[pid].regs[2] = procs[pid].sp;   /* x2 = sp */
     procs[pid].regs[10] = pid;            /* x10 = a0 = pid */

@@ -128,6 +128,25 @@ u32 s_trap_handler(u32 cause, u32 epc, u32 tval, u32 *regs)
             for (int i = 0; i < 32; i++) regs[i] = next->regs[i];
             return next->pc;
         }
+        if (a7 == 5) {           /* sbrk(inc)：扩展用户堆，返回旧堆顶 */
+            u32 inc = regs[R_A0];
+            proc_t *pc = &procs[cur_proc];
+            if (pc->brk == 0) pc->brk = USER_HEAP_BASE + (u32)cur_proc * 0x10000u;
+            u32 oldbrk = pc->brk;
+            s32 delta = (s32)inc;
+            u32 newbrk = (u32)((s32)oldbrk + delta);
+            u32 base = USER_HEAP_BASE + (u32)cur_proc * 0x10000u;
+            if (newbrk < base || newbrk > USER_HEAP_END) {
+                regs[R_A0] = (u32)-1;
+                return epc + 4;
+            }
+            /* 按需映射新增的页 */
+            for (u32 a = oldbrk & ~0xFFFu; a < newbrk; a += 4096u)
+                vm_handle_page_fault(a, 1);
+            pc->brk = newbrk;
+            regs[R_A0] = oldbrk;
+            return epc + 4;
+        }
         if (a7 == 3) {           /* getpid */
             regs[R_A0] = (u32)cur_proc;
             return epc + 4;

@@ -8,11 +8,14 @@
 typedef uint8_t  u8;
 typedef uint16_t u16;
 typedef uint32_t u32;
+typedef int32_t  s32;
 typedef uint64_t u64;
 
 #define UART_BASE   0x10000000u
 #define SYSCON_BASE 0x00100000u
 #define CLINT_BASE  0x02000000u
+#define USER_HEAP_BASE 0x80600000u
+#define USER_HEAP_END  0x80800000u
 #define RAM_BASE    0x80000000u
 #define RAM_SIZE    (64u * 1024u * 1024u)
 

@@ -40,6 +40,9 @@
   td.k{color:var(--dim);width:44px}
   #disasm{font-family:var(--mono);font-size:12px;line-height:1.7}
   #disasm .ln{display:flex;gap:10px;padding:0 6px;border-radius:3px}
+  #disasm .ln.bp{background:#f8514922;border-left:2px solid var(--err);padding-left:4px}
+  #disasm .ln{cursor:pointer}
+  #disasm .ln:hover{background:#ffffff08}
   #disasm .ln.cur{background:#1f6feb33;border-left:2px solid var(--acc);padding-left:4px}
   #disasm .addr{color:var(--dim)}
   #disasm .hex{color:#6e7681}
@@ -126,6 +129,7 @@ const CSRS=[[0x300,"mstatus"],[0x341,"mepc"],[0x342,"mcause"],[0x343,"mtval"],
             [0x301,"misa"],[0x180,"satp"],[0x100,"sstatus"],[0x142,"scause"]];
 let M=null,running=false,timer=null,loaded=false,disBufPtr=0;
 const hex=(v,w=8)=>"0x"+(v>>>0).toString(16).padStart(w,"0");
+function isBp(a){const n=M._rv_bp_count();for(let i=0;i<n;i++)if((M._rv_bp_at(i)>>>0)===(a>>>0))return true;return false;}
 function readCStr(p){let s="";for(let i=0;i<64;i++){const c=M.HEAPU8[p+i];if(!c)break;s+=String.fromCharCode(c);}return s;}
 function refresh(){
   if(!M)return;
@@ -140,7 +144,8 @@ function refresh(){
     const txt=readCStr(disBufPtr);
     let raw=0; for(let b=0;b<4;b++) raw|=(M._rv_mem((a+b)>>>0)&0xFF)<<(b*8);
     const cur=(a===(pc&~3))?" cur":"";
-    d+=`<div class="ln${cur}"><span class="addr">${hex(a)}</span>`+
+    const bp=isBp(a)?" bp":"";
+    d+=`<div class="ln${cur}${bp}" data-addr="${a}"><span class="addr">${hex(a)}</span>`+
        `<span class="hex">${hex(raw>>>0)}</span>`+
        `<span class="txt">${txt||".word ?"}</span></div>`;
   }
@@ -167,6 +172,13 @@ function refresh(){
     mem+=`${mk}${hex(a)}  ${bs}${mk?"</b>":""}\n`;
   }
   document.getElementById("mem").innerHTML=mem;
+  document.querySelectorAll("#disasm .ln").forEach(el=>{
+    el.onclick=()=>{
+      const a=parseInt(el.dataset.addr,10)>>>0;
+      if(isBp(a)) M._rv_bp_del(a); else M._rv_bp_add(a);
+      refresh();
+    };
+  });
   drawHeat();
 }
 function drawHeat(){
@@ -194,6 +206,11 @@ function stop(){running=false;if(timer){clearTimeout(timer);timer=null;}
 function runChunk(){
   if(!running||!M)return;
   for(let i=0;i<1500;i++){
+    if(M._rv_bp_hit()){
+      stop();
+      setStatus("断点命中 @ "+hex(M._rv_pc()),"warn");
+      refresh(); return;
+    }
     if(M._rv_step()!==0){
       stop();const r=M._rv_result();
       setStatus(r===1?"PASS":r===-1?"FAIL":"已停机",r===1?"ok":r===-1?"err":"warn");

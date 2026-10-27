@@ -1,4 +1,4 @@
-# 用户程序：纯忙等 + 打印，不主动 yield —— 用来验证定时器抢占
+# 用户程序：验证 sbrk + 打印 + 抢占轮转
 .section .text
 .globl _start
 _start:
@@ -9,14 +9,15 @@ _start:
     addi    a0, s0, 65         # 'A' + pid
     mv      s1, a0
 
-    slli    t0, s0, 2
-    la      t1, buf
-    add     t0, t1, t0
-    sb      s1, 0(t0)
-    mv      s2, t0
+    li      a7, 5              # sbrk(16)：申请堆空间
+    li      a0, 16
+    ecall
+    mv      s2, a0             # s2 = 堆地址
+
+    sb      s1, 0(s2)          # 把字符写到堆上（验证堆可写）
 
 1:
-    li      a7, 1              # write(buf, 1)
+    li      a7, 1              # write(堆地址, 1)
     mv      a0, s2
     li      a1, 1
     ecall
@@ -25,8 +26,3 @@ _start:
 2:  addi    t1, t1, -1
     bnez    t1, 2b
     j       1b
-
-.section .data
-.align 4
-buf:
-    .space 64

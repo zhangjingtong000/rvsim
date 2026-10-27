@@ -15,6 +15,7 @@ typedef struct {
     u32 state;
     u32 stack_pa;        /* 用户栈物理页 */
     u32 nrun;
+    u32 brk;             /* 用户堆顶（sbrk 用） */
     u32 regs[32];        /* 完整用户上下文 */
 } proc_t;
 
