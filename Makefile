@@ -44,6 +44,12 @@ $(OBJDIR)/%.o: $(SRCDIR)/%.c
 	$(CC) $(CFLAGS) -I$(SRCDIR)/include $(CS_CFLAGS) -c -o $@ $<
 
 # 用户程序：链接到 0x80400000，转成裸二进制
+$(OBJDIR)/fork_prog.bin: kernel/user/fork.S
+	@mkdir -p $(OBJDIR)
+	$(CROSS)gcc -march=rv32ima_zicsr_zifencei -mabi=ilp32 -mcmodel=medany -nostdlib -nostartfiles \
+		-Ttext=0x80400000 -o $(OBJDIR)/fork_prog.elf kernel/user/fork.S
+	$(CROSS)objcopy -O binary $(OBJDIR)/fork_prog.elf $@
+
 $(OBJDIR)/user_prog.bin: kernel/user/hello.S
 	@mkdir -p $(OBJDIR)
 	$(CROSS)gcc -march=rv32ima_zicsr_zifencei -mabi=ilp32 -mcmodel=medany -nostdlib -nostartfiles \
@@ -51,7 +57,7 @@ $(OBJDIR)/user_prog.bin: kernel/user/hello.S
 	$(CROSS)objcopy -O binary $(OBJDIR)/user_prog.elf $@
 
 # 内核
-$(OBJDIR)/kernel.elf: $(KSRCS) $(KASMS) $(OBJDIR)/user_prog.bin kernel/linker.ld
+$(OBJDIR)/kernel.elf: $(KSRCS) $(KASMS) $(OBJDIR)/user_prog.bin $(OBJDIR)/fork_prog.bin kernel/linker.ld
 	@mkdir -p $(OBJDIR)
 	$(CROSS)gcc $(KCFLAGS) -T kernel/linker.ld -o $@ \
 		$(KASMS) $(KSRCS) -lgcc
