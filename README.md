@@ -27,8 +27,8 @@
 
 | 项 | 值 |
 |---|---|
-| 模拟器源码 | 1,944 行（`src/`） |
-| 迷你内核 | 1,099 行（`kernel/`） |
+| 模拟器源码 | 2,005 行（`src/`，含 capstone 调用适配层） |
+| 迷你内核 | 1,141 行（`kernel/`） |
 | 解释速度 | **32 MIPS**（1000 万条 0.31 秒） |
 | WASM 体积 | 90 KB |
 | Linux 启动 | 6.1.14，约 3 亿条指令到 shell |
@@ -101,12 +101,22 @@ cd web && python3 -m http.server 8777
 
 1. 不做 C/F/D/B/V 扩展
 2. 不做 JIT（32 MIPS 解释执行）
+3. 单 hart
+4. PMP 不做强制（`rv32mi-p-pmpaddr` 在 G=0 时直接 pass，验证强度为零）
+5. 不做 `-v` 测试变体（需 newlib）
+6. QEMU 对照只做语义一致，不做逐字节
+7. FR-2.8「设备地址从 dtb 读取」未实现——设备基址仍是硬编码，`--dtb` 只把文件装进内存
 
 ### 必须在论文/演示里如实说明的三条
 
 **一、`pmpaddr` 是假 PASS。** `rv32mi-p-*` 里涉及 PMP 的用例在 `G=0` 配置下不真正检查权限，属于"通过但没验证到"。**不要说"PMP 已验证"。**
 
-**二、CoreMark 的分数不可作为性能结论。** `MTIME_DIV=10` 意味着每 10 条指令 `mtime+1`，guest 时钟比真实时间快 3–5 倍。`333 iters/sec` 和由它推算的 CoreMark/MHz 都建立在"假设 100MHz"上，**没有真实硬件时钟依据**。可信的是四个 CRC 值（与官方校验值和 QEMU 完全一致），它证明的是**功能正确**，不是性能。
+**二、CoreMark 的分数不可作为性能结论。** `MTIME_DIV=10` 意味着每 10 条指令 `mtime+1`，所以 **guest 认为的 1 秒 ≠ 真实 1 秒**。实测：CoreMark 12.57 亿条指令，guest 报 `Total time : 12 secs`，而墙钟跑了约 **49.5 秒**——guest 时钟比真实时间**慢约 4 倍**（不是快）。因此：
+
+- `333 iters/sec` 是按 guest 时间算的，**虚高约 4 倍**（按墙钟折算约 80 iters/sec）
+- 由它推算的 `3.33 CoreMark/MHz（假设 100MHz）` 没有真实硬件时钟依据
+
+**可信的只有四个 CRC 值**（与官方校验值、与 QEMU 完全一致），它证明的是**功能正确**，不是性能。论文里如果要给性能数字，必须说明时间基准来自 `mtime` 而非墙钟。
 
 **三、QEMU 对照脚本只比 CRC，不比时间。** QEMU 侧会打印 `ERROR! Must execute for at least 10 secs for a valid result!` 和 `Errors detected`（因为它跑得比 10 秒门槛快），脚本靠 `timeout 280` 结束。这不影响 CRC 一致性结论，但要在文档里说清楚。
 
@@ -123,10 +133,9 @@ cd web && python3 -m http.server 8777
 | `sstatus.FS` 可写（无 F 扩展应 read-only 0） | `SSTATUS_MASK` 去掉 FS/XS | `tests/directed/t_sstatus_fs` → N |
 | `mcycle` 写入被执行循环覆盖 | 写后同步 `c->cycles` | `tests/directed/t_mcycle` → Y |
 | commit 声称 FR-7.5 完成但 shell 没有 `run` | 真正实现 `run`（重置+调度+进 U） | 敲 `run` 后第二轮 A/B/C 各 20 次 |
-3. 单 hart
-4. PMP 不做强制（`rv32mi-p-pmpaddr` 在 G=0 时直接 pass，验证强度为零）
-5. 不做 `-v` 测试变体（需 newlib）
-6. QEMU 对照只做语义一致，不做逐字节
+| trap 返回把 x5 覆盖成 sp（`lw t0,4(sp)` 覆写刚恢复的 t0） | 读 sp 后再 `lw t0,16(sp)` 补回；M 模式删掉多余的那行 | 用户程序埋 `t0=0x0BADF00D` 哨兵跨 ecall 校验 → 20/20/20 无 `X` |
+| `run_tests.sh` 硬编码 `/home/rvsim`，且 0 个用例也打印"全部通过" | 路径按脚本位置推导；`total==0` 直接报错退出 1 | `ISA_DIR=/tmp/nonexistent` → 报错 exit 1 |
+| CoreMark 跑完 `j .` 空转到 max_cycles，"未判定" + exit 1 | `start_cm.S` 改为写 syscon 关机；主程序把 syscon 关机视为正常结束 | CoreMark 32 秒退出、exit 0、"程序主动关机" |
 
 ## 踩过的坑（值得记录）
 

@@ -101,6 +101,7 @@ s_trap_entry:
     lw      x31,120(sp)
     lw      t0, 4(sp)               # 下一个进程（或本进程）的用户 sp
     csrw    sscratch, t0            # 先写进 sscratch：这是真正发生上下文切换的地方
+    lw      t0, 16(sp)              # 必须补回 x5：上面那行已把刚恢复的 x5 覆盖成 sp
     addi    sp, sp, 132
     csrrw   sp, sscratch, sp        # sp <- 用户 sp，sscratch <- 内核栈
     sret

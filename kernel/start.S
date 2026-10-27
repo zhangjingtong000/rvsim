@@ -104,7 +104,8 @@ m_trap_entry:
     lw      x29,112(sp)
     lw      x30,116(sp)
     lw      x31,120(sp)
-    lw      t0,   4(sp)
+    # 注意：不能在这里 lw 到 t0！x5 上面刚恢复好，再写 t0 会把它覆盖成栈里的旧 sp。
+    # M 模式返回不需要读栈帧里的 sp——mscratch 恒为 M 栈顶，csrrw 自会换回来。
     addi    sp, sp, 128
     csrrw   sp, mscratch, sp
     mret

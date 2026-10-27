@@ -11,6 +11,7 @@
 extern int  g_run_flag;
 extern int  g_exec_flag;
 extern char g_exec_name[32];
+int krestart(void);
 
 /* 切换到指定页表（S 模式，切完刷 TLB） */
 static void proc_switch_satp(u32 *pgtbl)

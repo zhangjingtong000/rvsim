@@ -61,3 +61,5 @@ void  bus_update_irqs(csr_t *csr);
 u32  bus_hot_read(u32 page);
 u32  bus_hot_write(u32 page);
 void bus_hot_clear(void);
+
+void uart_push_rx(u8 byte);

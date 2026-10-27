@@ -15,6 +15,11 @@ _start:
     j       1b
 2:
     call    main
+    /* main 正常返回：写 syscon 关机。
+       原来这里是 j . 自循环，会一直空转到 --max-cycles，导致退出码为「未判定」。 */
+    li      t0, 0x00100000      /* syscon */
+    li      t1, 0x5555
+    sw      t1, 0(t0)
 3:  j       3b
 
 cm_trap:

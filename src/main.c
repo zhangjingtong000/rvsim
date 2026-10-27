@@ -177,7 +177,10 @@ int main(int argc, char **argv)
 
     if (result == 1) printf("[rvsim] 结果：PASS\n");
     else if (result == -1) printf("[rvsim] 结果：FAIL\n");
-    else printf("[rvsim] 结果：未判定（tohost 未写入终值）\n");
+    else if (g_syscon.poweroff)
+        printf("[rvsim] 结果：程序主动关机（syscon poweroff，视为正常结束）\n");
+    else
+        printf("[rvsim] 结果：未判定（tohost 未写入终值）\n");
 
     if (dis_count) {
         printf("\n[rvsim] 反汇编 @ 0x%08x（%u 条）\n", dis_addr, dis_count);
@@ -203,5 +206,11 @@ int main(int argc, char **argv)
         }
     }
 
-    return (result == 1) ? 0 : 1;
+    /* 退出码约定：0 = 成功。
+       - tohost==1（riscv-tests PASS）
+       - 或程序主动 syscon poweroff（CoreMark 等以关机表示跑完）
+       其余（失败、超 max_cycles 仍未结束）返回 1。 */
+    if (result == 1) return 0;
+    if (g_syscon.poweroff) return 0;
+    return 1;
 }

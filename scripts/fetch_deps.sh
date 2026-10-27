@@ -48,9 +48,14 @@ fetch_riscv_tests() {
     fi
     tar xzf "$tmp/t.tgz" -C "$tmp"
     mv "$tmp/riscv-tests-master" tests/riscv-tests
-    echo "源码已就位；需要自行用 riscv64-unknown-elf-gcc 编译出 isa/rv32*-p-* 的 ELF"
-    echo "参考：make -C tests/riscv-tests/isa XLEN=32"
     rm -rf "$tmp"
+    echo "源码已就位，开始编译 rv32 的 p 测试..."
+    if ( cd tests/riscv-tests/isa && make XLEN=32 rv32ui rv32um rv32ua rv32mi rv32si ) >/dev/null 2>&1; then
+        echo "编译完成：$(ls tests/riscv-tests/isa/rv32*-p-* 2>/dev/null | grep -v '\.' | wc -l) 个 ELF"
+    else
+        echo "编译失败。请确认 riscv64-unknown-elf-gcc 在 PATH 里，然后手动执行："
+        echo "  make -C tests/riscv-tests/isa XLEN=32 rv32ui rv32um rv32ua rv32mi rv32si"
+    fi
 }
 
 fetch_linux() {
