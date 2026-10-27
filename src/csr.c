@@ -18,6 +18,16 @@ void csr_reset(csr_t *c)
     /* （该值在 clint.c 里维护，这里只管 CSR） */
 }
 
+/* 计数器访问检查：M 总是允许；S 需 mcounteren；U 还需 scounteren。
+   bit: CY=0, TM=1, IR=2 */
+static bool counter_ok(csr_t *c, int bit)
+{
+    if (c->priv == PRV_M) return true;
+    if (!(c->mcounteren & (1u << bit))) return false;
+    if (c->priv == PRV_U && !(c->scounteren & (1u << bit))) return false;
+    return true;
+}
+
 /* ── 读取：返回 false 表示应触发 illegal instruction ── */
 bool csr_read_priv(csr_t *c, u32 addr, u32 *out)
 {
@@ -70,14 +80,20 @@ bool csr_read_priv(csr_t *c, u32 addr, u32 *out)
         v = c->satp; break;
 
     /* 只读影子计数器 */
-    case CSR_CYCLE:     v = (u32)(c->mcycle); break;
-    case CSR_CYCLEH:    v = (u32)(c->mcycle >> 32); break;
-    case CSR_INSTRET:   v = (u32)(c->minstret); break;
-    case CSR_INSTRETH:  v = (u32)(c->minstret >> 32); break;
+    case CSR_CYCLE:     if (!counter_ok(c, 0)) return false;
+                        v = (u32)(c->mcycle); break;
+    case CSR_CYCLEH:    if (!counter_ok(c, 0)) return false;
+                        v = (u32)(c->mcycle >> 32); break;
+    case CSR_INSTRET:   if (!counter_ok(c, 2)) return false;
+                        v = (u32)(c->minstret); break;
+    case CSR_INSTRETH:  if (!counter_ok(c, 2)) return false;
+                        v = (u32)(c->minstret >> 32); break;
     case CSR_TSELECT:   v = 0xFFFFFFFFu; break;   /* 硬连线：无触发器可选 */
     case CSR_TCONTROL:  v = 0; break;
-    case CSR_TIME:      v = (u32)g_mtime; break;
-    case CSR_TIMEH:     v = (u32)(g_mtime >> 32); break;
+    case CSR_TIME:      if (!counter_ok(c, 1)) return false;
+                        v = (u32)g_mtime; break;
+    case CSR_TIMEH:     if (!counter_ok(c, 1)) return false;
+                        v = (u32)(g_mtime >> 32); break;
 
     default:
         if (addr >= CSR_PMPADDR0 && addr < CSR_PMPADDR0 + 16) {

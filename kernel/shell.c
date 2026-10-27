@@ -15,7 +15,7 @@ static int streq(const char *a, const char *b)
 
 static void cmd_help(void)
 {
-    uart_puts("命令: help ps reset mem uptime\n");
+    uart_puts("命令: help ps run reset mem uptime\n");
 }
 
 static void cmd_ps(void)
@@ -38,6 +38,10 @@ void shell_input(char ch)
                 uart_puts("mtime = ");
                 uart_dec((int)(*mtime));
                 uart_putc('\n');
+            }
+            else if (streq(g_line, "run")) {
+                extern int g_run_flag;
+                g_run_flag = 1;
             }
             else if (streq(g_line, "reset")) {
                 extern int krestart(void);

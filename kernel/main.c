@@ -7,6 +7,11 @@
 #define R_A7 16   /* x17 */
 #include <stdarg.h>
 
+/* shell 与 trap 处理共享的标志（定义在下方） */
+extern int  g_run_flag;
+extern int  g_exec_flag;
+extern char g_exec_name[32];
+
 /* 切换到指定页表（S 模式，切完刷 TLB） */
 static void proc_switch_satp(u32 *pgtbl)
 {
@@ -139,6 +144,16 @@ u32 s_trap_handler(u32 cause, u32 epc, u32 tval, u32 *regs)
                 volatile u8 *rbr2 = (volatile u8 *)(UART_BASE + 0);
                 for (;;) {
                     if (*lsr2 & 0x01) shell_input((char)*rbr2);
+                    if (g_run_flag) {
+                        g_run_flag = 0;
+                        /* run = 重置所有进程 + 立即调度（不需要先敲 reset） */
+                        int n2 = krestart();
+                        kprintf("[S] run: 已重置 %d 个进程，重新调度\n", n2);
+                        proc_t *p = proc_schedule();
+                        if (!p) { kprintf("[S] 调度失败\n"); continue; }
+                        if (p->pgtbl) proc_switch_satp(p->pgtbl);
+                        enter_u_mode(p->pc, p->sp, p->pid);
+                    }
                 }
             }
             for (int i = 0; i < 32; i++) regs[i] = next->regs[i];

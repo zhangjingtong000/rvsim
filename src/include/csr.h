@@ -22,7 +22,9 @@
 #define MSTATUS_MPP_S (1u << 11)
 #define MSTATUS_MPP_M (3u << 11)
 
-#define SSTATUS_MASK  0x800DE122u
+/* 注意：不含 FS(13:14) / XS(15:16)——本机无 F/D 扩展，FS 必须 read-only 0。
+   原值 0x800DE122 含 0x1E000（FS+XS），导致 M 模式写 sstatus.FS 能生效。 */
+#define SSTATUS_MASK  0x800C0122u
 
 #define MIP_SSIP      0x00000002u
 #define MIP_MSIP      0x00000008u

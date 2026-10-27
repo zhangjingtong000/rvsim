@@ -435,6 +435,10 @@ bool cpu_step(cpu_t *c)
                 if (!csr_write_priv(&c->csr, csr_addr, nv)) {
                     do_trap(c, CAUSE_ILLEGAL_INSTRUCTION, insn); return true;
                 }
+                /* mcycle 写入必须同步回 cpu.cycles，否则下一步 c->csr.mcycle = c->cycles
+                   会把刚写入的值覆盖掉（这正是设计文档 §3.1 指出的"双份存储"错误） */
+                if (csr_addr == CSR_MCYCLE || csr_addr == CSR_MCYCLEH)
+                    c->cycles = c->csr.mcycle;
             }
             wr(c, rd, old);
         }
