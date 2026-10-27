@@ -50,7 +50,14 @@ int main(int argc, char **argv)
     bool trace = false;
     u64 max_cycles = 50000000ull;
 
+    u32 dump_addr = 0, dump_len = 0;
+
     for (int i = 1; i < argc; i++) {
+        if (!strcmp(argv[i], "--dump-mem") && i + 2 < argc) {
+            dump_addr = (u32)strtoul(argv[++i], NULL, 0);
+            dump_len  = (u32)strtoul(argv[++i], NULL, 0);
+            continue;
+        }
         if (!strcmp(argv[i], "--elf") && i + 1 < argc)       elf = argv[++i];
         else if (!strcmp(argv[i], "--image") && i + 1 < argc) image = argv[++i];
         else if (!strcmp(argv[i], "--dtb") && i + 1 < argc)   dtb = argv[++i];
@@ -164,6 +171,19 @@ int main(int argc, char **argv)
     if (result == 1) printf("[rvsim] 结果：PASS\n");
     else if (result == -1) printf("[rvsim] 结果：FAIL\n");
     else printf("[rvsim] 结果：未判定（tohost 未写入终值）\n");
+
+    if (dump_len) {
+        printf("\n[rvsim] 内存 dump @ 0x%08x (%u 字节)\n", dump_addr, dump_len);
+        for (u32 off = 0; off < dump_len; off += 16) {
+            printf("  %08x: ", dump_addr + off);
+            for (u32 k = 0; k < 16 && off + k < dump_len; k++) {
+                u32 v = 0;
+                bus_read(dump_addr + off + k, 1, &v);
+                printf("%02x ", v & 0xFF);
+            }
+            printf("\n");
+        }
+    }
 
     return (result == 1) ? 0 : 1;
 }

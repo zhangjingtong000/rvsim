@@ -60,7 +60,7 @@ u32 *kernel_pgtbl(void)
     return root;
 }
 /* ── 按需分页：缺页时分配物理页并建立映射 ── */
-extern u32 *g_kroot;
+u32 *g_kroot __attribute__((weak));
 
 /* 返回 1 表示映射成功，0 表示地址不合法 */
 u32 g_pf_count = 0;

@@ -38,6 +38,16 @@ $(OBJDIR)/kernel.elf: $(KSRCS) $(KASMS) $(OBJDIR)/user_prog.bin kernel/linker.ld
 	$(CROSS)gcc $(KCFLAGS) -T kernel/linker.ld -o $@ \
 		$(KASMS) $(KSRCS) -lgcc
 
+# CoreMark：与迷你内核共用 uart/vm，链接到 0x80000000
+CM_SRCS = bench/core_list_join.c bench/core_matrix.c bench/core_state.c \
+          bench/core_util.c bench/core_main.c bench/core_portme.c bench/ee_printf_official.c
+CM_OBJS = $(OBJDIR)/coremark.o
+
+$(OBJDIR)/coremark.elf: $(CM_SRCS) bench/core_portme.h kernel/uart.c kernel/vm.c kernel/start.S kernel/linker.ld
+	@mkdir -p $(OBJDIR)
+	$(CROSS)gcc $(KCFLAGS) -DSTANDALONE=1 -DPERFORMANCE_RUN=1 -Ibench -Ikernel -T kernel/linker.ld -o $@ \
+		bench/start_cm.S bench/cm_stubs.c kernel/uart.c $(CM_SRCS) -lgcc
+
 clean:
 	rm -rf $(OBJDIR)
 
