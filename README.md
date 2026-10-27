@@ -19,7 +19,7 @@
 | **CoreMark** | 跑通并给出分数 | ✅ | **333 iters/sec**，`Correct operation validated` |
 | **可视化增强** | 反汇编 + 阶段视图 + 热图 | ✅ | 13 行反汇编、5 阶段动态点亮、512 格热图 |
 | **QEMU 语义对照** | 与 QEMU 比对计算结果 | ✅ | 四个 CRC 值完全一致 |
-| Gate 7b WASM 可视化 | 浏览器调试界面 | ✅ | 29 KB wasm，Node + 浏览器双验证 |
+| Gate 7b WASM 可视化 | 浏览器调试界面 | ✅ | 90 KB wasm，Node + 浏览器双验证 |
 
 **riscv-tests：82/82 全通过。**
 
@@ -27,10 +27,10 @@
 
 | 项 | 值 |
 |---|---|
-| 模拟器源码 | 1,719 行（`src/`） |
-| 迷你内核 | 516 行（`kernel/`） |
+| 模拟器源码 | 1,944 行（`src/`） |
+| 迷你内核 | 1,099 行（`kernel/`） |
 | 解释速度 | **32 MIPS**（1000 万条 0.31 秒） |
-| WASM 体积 | 29 KB |
+| WASM 体积 | 90 KB |
 | Linux 启动 | 6.1.14，约 3 亿条指令到 shell |
 
 ## 目录
@@ -80,10 +80,13 @@ cd web && python3 -m http.server 8777
 - `sscratch` 换栈 + `SUM=1` 读用户内存
 - 优雅关机（syscon）
 
-**尚未做到**（设计文档 FR-7 的完整要求）：
-- 缺页异常处理（当前页表静态建好，未做按需分配）
-- 定时器中断驱动的抢占式调度（`m_trap_handler` 的 MTIP 逻辑已写，但为避免与 yield 抢 pc 保存而暂未启用）
-- 内核内 shell**
+**已实现**（本节此前写"尚未做到"，属于文档滞后；下列均已在 2026-10-27 完成并实测）：
+- 缺页异常处理：按需分配，`mem` 命令显示实测缺页次数
+- 定时器中断驱动的抢占式调度：M 模式 MTIP → 置 `mip.STIP` → S 模式 STI 切换进程
+- 每进程独立页表 + 切换 `satp`
+- 内核内 shell：`help` / `ps` / `run` / `reset` / `mem` / `uptime`
+- `fork` / `sbrk` 系统调用
+- **上下文切换的 `sp` 真正切到新进程**（2026-10-27 修复，见下）
 
 ## 代码结构要点
 
@@ -98,6 +101,28 @@ cd web && python3 -m http.server 8777
 
 1. 不做 C/F/D/B/V 扩展
 2. 不做 JIT（32 MIPS 解释执行）
+
+### 必须在论文/演示里如实说明的三条
+
+**一、`pmpaddr` 是假 PASS。** `rv32mi-p-*` 里涉及 PMP 的用例在 `G=0` 配置下不真正检查权限，属于"通过但没验证到"。**不要说"PMP 已验证"。**
+
+**二、CoreMark 的分数不可作为性能结论。** `MTIME_DIV=10` 意味着每 10 条指令 `mtime+1`，guest 时钟比真实时间快 3–5 倍。`333 iters/sec` 和由它推算的 CoreMark/MHz 都建立在"假设 100MHz"上，**没有真实硬件时钟依据**。可信的是四个 CRC 值（与官方校验值和 QEMU 完全一致），它证明的是**功能正确**，不是性能。
+
+**三、QEMU 对照脚本只比 CRC，不比时间。** QEMU 侧会打印 `ERROR! Must execute for at least 10 secs for a valid result!` 和 `Errors detected`（因为它跑得比 10 秒门槛快），脚本靠 `timeout 280` 结束。这不影响 CRC 一致性结论，但要在文档里说清楚。
+
+### 2026-10-27 修复记录（评审发现）
+
+外部评审（76/100）指出以下问题，均已修复：
+
+| 问题 | 修复 | 验证 |
+|---|---|---|
+| 上下文切换没真正切 `sp`（`lw t0,4(sp)` 读了却没用） | `s_entry.S` 加 `csrw sscratch, t0` | 新增栈校验测试：A/B/C 各 20 次、无破坏标记 |
+| `proc_create` 把 sp 写进 `regs[2]`（x3/gp），应为 `regs[1]`（x2/sp） | 改索引 | 同上；此前 sp 一直是 0，只因演示程序不用栈才没暴露 |
+| `proc_schedule()` 在 `s_main` 里被调两次，实际从 proc 1 起跑 | 删掉多余那次 | `[S] 启动 proc 0`，A/B/C 各 25 次完全均匀 |
+| `mcounteren` 只存不判 | 新增 `counter_ok()` | `tests/directed/t_mcounteren` → T |
+| `sstatus.FS` 可写（无 F 扩展应 read-only 0） | `SSTATUS_MASK` 去掉 FS/XS | `tests/directed/t_sstatus_fs` → N |
+| `mcycle` 写入被执行循环覆盖 | 写后同步 `c->cycles` | `tests/directed/t_mcycle` → Y |
+| commit 声称 FR-7.5 完成但 shell 没有 `run` | 真正实现 `run`（重置+调度+进 U） | 敲 `run` 后第二轮 A/B/C 各 20 次 |
 3. 单 hart
 4. PMP 不做强制（`rv32mi-p-pmpaddr` 在 G=0 时直接 pass，验证强度为零）
 5. 不做 `-v` 测试变体（需 newlib）

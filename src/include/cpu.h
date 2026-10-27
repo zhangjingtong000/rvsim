@@ -18,6 +18,9 @@ typedef struct {
     bool halted;
     u64  cycles;
     u64  max_cycles;
+    u32  last_pc;        /* 死循环检测：上一轮 pc */
+    u32  pc_stuck;       /* 连续停在同一 pc 的次数 */
+    u32  wfi_count;      /* 连续 wfi 次数 */
     /* 镜像信息（tohost 等） */
     loaded_t img;
     /* 中断标志（由 bus 置位） */

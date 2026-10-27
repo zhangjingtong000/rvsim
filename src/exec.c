@@ -218,6 +218,8 @@ static inline u32 imm_j(u32 i)
 }
 
 /* ── 单条执行 ── */
+static int g_hang_detect = -1;
+
 bool cpu_step(cpu_t *c)
 {
     if (!c->running || c->halted) return false;
@@ -225,6 +227,31 @@ bool cpu_step(cpu_t *c)
         fprintf(stderr, "\n[rvsim] 达到 max_cycles=%llu，停止\n", (unsigned long long)c->max_cycles);
         c->halted = true;
         return false;
+    }
+
+    /* 死循环检测（可选，默认关闭）：程序跑完后常见 j . 自循环或 wfi 空转，
+       不必干等到 max_cycles。默认关闭是因为 riscv-tests 的 wfi/scall 测试
+       会合法地连续执行大量 wfi，开启会误杀。用 RVSIM_HANG_DETECT=1 启用。 */
+    if (g_hang_detect < 0) g_hang_detect = getenv("RVSIM_HANG_DETECT") ? 1 : 0;
+    if (g_hang_detect && c->pc == c->last_pc) {
+        if (++c->pc_stuck > 2000000u) {
+            fprintf(stderr, "\n[rvsim] 检测到自循环（pc=%08x 已停留 %u 条指令），停止\n",
+                    c->pc, c->pc_stuck);
+            c->halted = true;
+            return false;
+        }
+    } else {
+        c->pc_stuck = 0;
+        c->last_pc  = c->pc;
+    }
+    if (g_hang_detect && c->cur_instr == 0x10500073u) {     /* 上一条是 wfi */
+        if (++c->wfi_count > 200000u) {
+            fprintf(stderr, "\n[rvsim] 检测到 wfi 空转（%u 次），停止\n", c->wfi_count);
+            c->halted = true;
+            return false;
+        }
+    } else if (g_hang_detect) {
+        c->wfi_count = 0;
     }
 
     /* 每条指令（含 trap 路径）统一计数一次，防止某条路径漏加导致 cycles 不增 */
