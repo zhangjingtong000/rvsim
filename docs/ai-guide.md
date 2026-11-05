@@ -180,7 +180,7 @@ apply 2                   # 真的执行
 | `ps -ef` / `grep` / 管道 | 直接用 `ps`，它已经是 JSON |
 | `run prog=badptr` | `run badptr`（参数直接跟在后面，不是键值对） |
 | 自己数 `log` 的行 | 读末尾的 `[summary]` 或 `assert` |
-| 以为 `snapshot` 会存事件流 | 只存进程状态；事件流 append-only |
+| 以为 `snapshot` 会存事件流 | 只存进程状态；事件流有界（2048 条），会被覆盖 |
 | 以为 `restore` 可撤销 | 标了 `irreversible: true`，执行前先 `snapshot` |
 | 以为 `run fork` 是 3 个进程 | fork 演示会多一个子进程，共 4 个 |
 | 用 `log` 被刷屏 | 默认只给 30 条，要全量用 `log all` |

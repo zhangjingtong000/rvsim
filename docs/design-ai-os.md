@@ -67,7 +67,7 @@
 ## 3. 核心决定：事件是真相
 
 ```
-        事件日志（append-only，不可篡改）
+        事件日志（有界环形缓冲 2048 条，覆盖后由 replay 的 complete 标记）
                  ↓ 投影
         当前状态（进程表 / 页表 / 文件树）
                  ↓ 渲染
@@ -84,7 +84,7 @@
 | 可断言 | 断言可作用于事件流 |
 | 可解释 | 「为什么变成这样」直接可答 |
 
-**注意：快照恢复的是状态，不是历史。** 事件流 append-only，回滚本身也要记一条事件——否则审计失真（系统看起来从没离开过那个状态，而实际上它被回滚过）。
+**注意：快照恢复的是状态，不是历史。** 事件流只追加、但缓冲有限会被覆盖；回滚本身也要记一条事件——否则审计失真（系统看起来从没离开过那个状态，而实际上它被回滚过）。
 
 ---
 
@@ -134,7 +134,7 @@ Unix 本来就这么干：内核 syscall 全集完整，shell 只给裁剪过的
 ```
 rvsh> manifest
 {"manifest":1,"caps":15}
-{"cap":"run","args":"prog=hello|fork|badptr","irreversible":false,"desc":"装载程序并调度三个进程"}
+{"cap":"run","usage":"run <prog>","values":"hello|fork|badptr","irreversible":true,"desc":"装载指定程序并启动 3 个初始进程"}
 ...
 ```
 
@@ -185,7 +185,7 @@ rvsh> status
 
 ```
 rvsh> plan run badptr
-{"plan":1,"intent":"run","prog":"badptr","will":"spawn 3 procs","irreversible":false}
+{"plan":1,"intent":"run","arg":"badptr","irreversible":false}
 rvsh> plans
 {"plans":[{"id":1,"intent":"run","prog":"badptr"}]}
 rvsh> apply 1
@@ -214,19 +214,19 @@ rvsh> restore 1
 一个**不知道 OS 有什么**的客户端，只靠 manifest 发现能力，走完整个闭环：
 
 ```
-[1] manifest 可解析          (15 项)
+[1] manifest 可解析          (24 项)
 [2] 所需元能力齐备            (6 项)
 [3] run 参数可枚举            (hello/fork/badptr)
 [4] 能创建快照                (id=1)
 [5] 初始状态可断言            nproc=3 ok
-[6] 能生成计划                prog=badptr
+[6] 能生成计划                arg=badptr
 [7] 能执行计划                plan=1
 [8] 执行后状态可断言          nproc=0, spawn=3 ok
 [9] 能回滚                    id=1
 [10] 回滚后状态复原           nproc=3 ok
 [11] 回滚本身被记录           restore=1 ok
 
-11/11 通过（迁移到 tests/contract.js，已并入 run_tests.sh）
+12/12 通过（迁移到 tests/contract.js，已并入 run_tests.sh）
 ```
 
 > **2026-11-05 更正**：原脚本 `web/e2e.js` 已过期（9/11 且崩溃），

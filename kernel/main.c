@@ -40,7 +40,23 @@ u32 *g_kroot;   /* 供 vm.c 的按需分页使用 */
    审计指出：assert 和 log 都读同一份 g_evts，事件流记错了也发现不了。
    这里在 trap 分派处单独计数，完全不经过 evt_emit。
    两边对不上，就说明事件流漏记或多记。 */
-static u32 g_trap_ecall, g_trap_exit, g_trap_fork, g_trap_sbrk;
+static u32 g_trap_ecall, g_trap_exit, g_trap_fork, g_trap_sbrk, g_trap_write;
+
+/* 进入用户态前的寄存器上下文。setreg/setpc 改的就是 procs[].regs，
+   但原来的 enter_u_mode 只设 sepc/sp/a0，其余寄存器保持内核值——
+   于是改写永远不生效。这里把整份上下文交给汇编去加载。 */
+extern void enter_u_mode_ctx(u32 *ctx, u32 entry);
+static u32 g_enter_ctx[32];
+
+static void enter_u_mode_with_regs(proc_t *p)
+{
+    for (int i = 0; i < 32; i++) g_enter_ctx[i] = p->regs[i];
+    g_enter_ctx[0]  = 0;          /* x0 恒零 */
+    g_enter_ctx[2]  = p->sp;      /* x2 = 用户 sp */
+    /* a0 = pid 由 krestart 写进 regs[10]，这里不再覆盖——
+       否则 setreg 改 a0 永远不会生效。 */
+    enter_u_mode_ctx(g_enter_ctx, p->pc);
+}
 static u32  g_user_base = 0x80400000u;
 
 /* 每个进程的用户栈（物理页） */
@@ -349,22 +365,27 @@ void cap_help(void)
 void verify_dump(void)
 {
     int ec = evt_count_named("ecall"), ex = evt_count_named("exit");
-    int sp = evt_count_named("spawn"), sb = evt_count_named("sbrk");
-    int ok_e = ((int)g_trap_ecall == ec);
-    int ok_x = ((int)g_trap_exit  == ex);
-    int ok_s = ((int)g_trap_sbrk  == sb);
-    int fk = evt_count_named("fork");
-    int ok_f = ((int)g_trap_fork == fk);
+    int sb = evt_count_named("sbrk"), fk = evt_count_named("fork");
 
-    /* 未能对应到任何事件记录的 ecall。
-       这不是 bug 本身——getpid/yield 这类高频无副作用的调用故意不记账，
-       但缺口必须能被量化，否则「事件是真相」就是一句空话。 */
-    (void)sp;
-    int unaccounted = (int)g_trap_ecall - ec - ex - sb - (int)g_trap_fork;
+    /* 关键：evt_count_named("ecall") 只统计 write（只有它记 EVT_ECALL），
+       所以必须拿 g_trap_write 去比，不能拿 g_trap_ecall。
+       之前拿总数比，导致任何含 exit 的负载 ok 恒为 false。 */
+    int ok_w  = ((int)g_trap_write == ec);
+    int ok_x  = ((int)g_trap_exit  == ex);
+    int ok_s  = ((int)g_trap_sbrk  == sb);
+    int ok_f  = ((int)g_trap_fork  == fk);
+
+    /* 未记账的 ecall：getpid/yield 一类，故意不记 */
+    int unaccounted = (int)g_trap_ecall - (int)g_trap_write
+                    - (int)g_trap_exit - (int)g_trap_sbrk - (int)g_trap_fork;
+
+    /* 回绕之后 evt 侧会被截断，此时一切比较都不可信 */
+    int complete = ((int)g_evt_seq == evt_count_all());
 
     kprintf("{\"verify\":{");
-    kprintf("\"ecall\":{\"trap\":%d,\"evt\":%d,\"ok\":%s},",
-            (int)g_trap_ecall, ec, ok_e ? "true" : "false");
+    kprintf("\"complete\":%s,", complete ? "true" : "false");
+    kprintf("\"write\":{\"trap\":%d,\"evt\":%d,\"ok\":%s},",
+            (int)g_trap_write, ec, ok_w ? "true" : "false");
     kprintf("\"exit\":{\"trap\":%d,\"evt\":%d,\"ok\":%s},",
             (int)g_trap_exit, ex, ok_x ? "true" : "false");
     kprintf("\"sbrk\":{\"trap\":%d,\"evt\":%d,\"ok\":%s},",
@@ -512,6 +533,7 @@ u32 s_trap_handler(u32 cause, u32 epc, u32 tval, u32 *regs)
         /* 独立计数：此处不做任何事件记录，纯计数 */
         g_trap_ecall++;
         if (a7 == 0) g_trap_exit++;
+        if (a7 == 1) g_trap_write++;   /* 只有 write 会记 EVT_ECALL */
         if (a7 == 5) g_trap_sbrk++;
         if (a7 == 6) g_trap_fork++;
 
@@ -591,7 +613,7 @@ u32 s_trap_handler(u32 cause, u32 epc, u32 tval, u32 *regs)
             /* 两条事件：一条是父进程视角的 fork，一条是子进程的 spawn。
                只有 spawn 的话，分不清这个进程是开机创建的还是 fork 出来的。 */
             evt_emit(EVT_FORK,  (u32)cur_proc, (u32)child, 0, 1);
-            evt_emit(EVT_SPAWN, (u32)child, pp->pc, pp->sp, 0);
+            evt_emit(EVT_SPAWN, (u32)child, cc->pc, cc->sp, 0);
             /* 复制当前寄存器（不是上次保存的快照） */
             for (int k = 0; k < 32; k++) cc->regs[k] = regs[k];
 
@@ -973,6 +995,9 @@ void proc_set_reg(int pid, int reg, u32 val)
         return;
     }
     procs[pid].regs[reg] = val;
+    /* x2 是栈指针，进程表里另有一份 sp 字段；不同步的话，
+       进入用户态时会用旧 sp 覆盖掉这次改写。 */
+    if (reg == 2) procs[pid].sp = val;
     evt_emit(EVT_SETREG, (u32)pid, (u32)reg, val, 1);
     kprintf("{\"setreg\":{\"pid\":%d,\"reg\":%d,\"val\":\"%x\"}}\n", pid, reg, val);
 }
@@ -1012,7 +1037,7 @@ void kernel_resume(void)
     kprintf("{\"resume\":true,\"pid\":%d}\n", (int)p->pid);
     if (p->pgtbl) proc_switch_satp(p->pgtbl);
     proc_set_timer(20000);
-    enter_u_mode(p->pc, p->sp, p->pid);
+    enter_u_mode_with_regs(p);
 }
 
 /* apply 也要记账：谁在什么时候执行了哪个计划 */
@@ -1044,7 +1069,7 @@ void kernel_apply_run(const char *prog)
     if (!p) { kprintf("[S] 调度失败\n"); return; }
     if (p->pgtbl) proc_switch_satp(p->pgtbl);
     proc_set_timer(20000);      /* 恢复时间片，进程才能轮转 */
-    enter_u_mode(p->pc, p->sp, p->pid);
+    enter_u_mode_with_regs(p);
 }
 
 /* shell 主循环：轮询 UART 收字符；收到 run 就装载镜像、重置进程并调度。

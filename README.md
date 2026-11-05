@@ -35,7 +35,7 @@
 | **QEMU 语义对照** | 与 QEMU 比对计算结果 | ✅ | 四个 CRC 值完全一致 |
 | Gate 7b WASM 可视化 | 浏览器调试界面 | ✅ | 90 KB wasm，Node + 浏览器双验证 |
 
-**riscv-tests：91/91 全通过；能力契约：11/11 全通过。**
+**riscv-tests：91/91 全通过；能力契约：12/12 全通过。**
 
 91 项只覆盖模拟器指令。能力层（manifest/assert/plan/snapshot）由
 `tests/contract.js` 覆盖，已并入 `tests/run_tests.sh`。
@@ -78,7 +78,7 @@ docs/         需求文档、设计文档、调研
 
 **已知未完成**（详见 `docs/audit-corrections.md`）：
 
-- 事件流是 512 条环形缓冲，不是真正的 append-only；`sbrk`/`getpid`/
+- 事件流是 2048 条环形缓冲（有界，会覆盖），`replay` 的 `complete` 标记这一点；`getpid`/
   `yield`/`reset`/`snapshot` 尚未记事件；没有 replay 实现
 - `snapshot` 只保存进程表，不保存用户内存与页表，所以回滚后代码区可能不一致
 - 前端可以直接读写寄存器，AI 没有对等能力
@@ -86,7 +86,7 @@ docs/         需求文档、设计文档、调研
 ## 运行
 
 ```bash
-# 回归（91 个指令测试 + 10 项能力契约）
+# 回归（91 个指令测试 + 12 项能力契约）
 ./tests/run_tests.sh all
 
 # 跑单个测试
@@ -111,7 +111,7 @@ cd web && python3 -m http.server 8777
 make                          # 构建 build/rvsim
 make directed                 # 构建 4 个定向测试 ELF
 make dts                      # 构建 dts/minimal.dtb
-./tests/run_tests.sh all      # 回归（应 91/91 + 契约 11/11）
+./tests/run_tests.sh all      # 回归（应 91/91 + 契约 12/12）
 ```
 
 缺 capstone 时 `make` 会直接提示 `先执行：make deps`，不会只丢一个 `capstone.h not found`。

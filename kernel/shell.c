@@ -366,7 +366,7 @@ void shell_input(char ch)
                 const char *q = g_line + 4;
                 if (*q == ' ') {
                     q++;
-                    while (*q >= '0' && *q <= '9') pid = pid * 10 + (*q - '0');
+                    while (*q >= '0' && *q <= '9') { pid = pid * 10 + (*q - '0'); q++; }
                 }
                 proc_dump_regs(pid);
             }

@@ -67,7 +67,7 @@ fork 实验已经证明 `spawn` 计数曾经是错的。
 | 人机接口不平等 | 新增 `regs`（读）与 `setreg`（写），两端能力对齐 | `setreg 0 10 0x1234` 生效 |
 | **没有独立 oracle** | 新增 `verify`：trap 侧独立计数，完全不经过 `evt_emit` | 见下 |
 | 缓冲 512 太小 | 扩到 2048，口径改为「有界事件流」 | `replay` 报 `complete` |
-| e2e.js 过期 | 删除，由 `tests/contract.js` 承担 | 契约 11/11 |
+| e2e.js 过期 | 删除，由 `tests/contract.js` 承担 | 契约 12/12 |
 
 ### 独立 oracle 抓到的第一个真问题
 
@@ -97,8 +97,10 @@ ecall: trap=128  evt=120  ok=false   unaccounted_ecall=3
 
 **3. 快照的语义是「回到快照时的进程表 + 代码」，不是「暂停/恢复」。**
 
-`restore` 之后进程一律回到 READY、`pc` 指向入口；`resume` 时**从头重新执行**，
-栈会被重新初始化。实测：`snapshot → run badptr → restore → resume`，
+`restore` 恢复的是**快照时的进程表 + 代码**，不是暂停/恢复。
+如果快照时进程是 READY，`resume` 会让它从入口重新执行；
+**如果快照时进程已经 EXIT，恢复后仍然是 EXIT，`resume` 会报告「没有可运行的进程」**。
+栈内容不保存，依赖程序从入口自行初始化。实测：`snapshot → run badptr → restore → resume`，
 进程从入口跑完（`nrun=7` → EXIT）。
 
 **真正没做到的是「运行中进程的暂停与恢复」**（checkpoint/restore），

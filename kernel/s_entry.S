@@ -126,6 +126,53 @@ enter_u_mode:
     csrs    sstatus, t0     # SPIE = 1，保证 sret 后 SIE = 1，否则定时器中断被永久关闭
     sret
 
+.globl enter_u_mode_ctx
+enter_u_mode_ctx:
+    # a0 = ctx（32 个 u32，索引即寄存器号；索引 2 是用户 sp）, a1 = entry
+    la      t0, s_kstack_top
+    csrw    sscratch, t0
+    csrw    sepc, a1
+    mv      sp, a0
+    li      t0, 0x100
+    csrc    sstatus, t0     # SPP = 0 -> U
+    li      t0, 0x40000
+    csrs    sstatus, t0     # SUM = 1
+    li      t0, 0x20
+    csrs    sstatus, t0     # SPIE = 1
+
+    lw      x1,  4(sp)
+    lw      x3, 12(sp)
+    lw      x4, 16(sp)
+    lw      x5, 20(sp)
+    lw      x6, 24(sp)
+    lw      x7, 28(sp)
+    lw      x8, 32(sp)
+    lw      x9, 36(sp)
+    lw      x10,40(sp)
+    lw      x11,44(sp)
+    lw      x12,48(sp)
+    lw      x13,52(sp)
+    lw      x14,56(sp)
+    lw      x15,60(sp)
+    lw      x16,64(sp)
+    lw      x17,68(sp)
+    lw      x18,72(sp)
+    lw      x19,76(sp)
+    lw      x20,80(sp)
+    lw      x21,84(sp)
+    lw      x22,88(sp)
+    lw      x23,92(sp)
+    lw      x24,96(sp)
+    lw      x25,100(sp)
+    lw      x26,104(sp)
+    lw      x27,108(sp)
+    lw      x28,112(sp)
+    lw      x29,116(sp)
+    lw      x30,120(sp)
+    lw      x31,124(sp)
+    lw      sp,  8(sp)       # x2 = 用户 sp，必须最后（否则找不到 ctx）
+    sret
+
 .section .bss
 .align 4
 s_kstack_bottom:
