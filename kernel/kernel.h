@@ -5,19 +5,12 @@
 #include <stdbool.h>
 #include <stddef.h>
 
-typedef uint8_t  u8;
-typedef uint16_t u16;
-typedef uint32_t u32;
-typedef int32_t  s32;
-typedef uint64_t u64;
+/* 类型与地址常量只在 src/include/rv_types.h 定义一份，这里不再复制。
+   （此前 kernel.h 自己抄了一份 u8/u32/RAM_BASE，改一处忘另一处会静默不一致。） */
+#include "../src/include/rv_types.h"
 
-#define UART_BASE   0x10000000u
-#define SYSCON_BASE 0x00100000u
-#define CLINT_BASE  0x02000000u
 #define USER_HEAP_BASE 0x80600000u
 #define USER_HEAP_END  0x80800000u
-#define RAM_BASE    0x80000000u
-#define RAM_SIZE    (64u * 1024u * 1024u)
 
 #define PRV_U 0
 #define PRV_S 1
@@ -32,6 +25,10 @@ typedef uint64_t u64;
 #define MSTATUS_MPRV  0x00020000u
 #define MSTATUS_SUM   0x00040000u
 #define MSTATUS_MXR   0x00080000u
+/* 以下三位此前缺失，导致 kernel/main.c 用 0x8u/0x20u/0x2u 字面量代替 */
+#define MSTATUS_TVM   0x00100000u
+#define MSTATUS_TW    0x00200000u
+#define MSTATUS_TSR   0x00400000u
 
 #define MIP_SSIP  0x00000002u
 #define MIP_STIP  0x00000020u
@@ -76,7 +73,6 @@ void *memcpy(void *d, const void *s, size_t n);
 
 /* 页表 */
 u32 *page_alloc(void);
-int vm_handle_page_fault(u32 va, int is_store);
 u32 *vm_proc_pgtbl(void);
 void vm_map_code(u32 *root, u32 va, u32 pa);
 int vm_page_fault_on(u32 *root, u32 va, int is_store);

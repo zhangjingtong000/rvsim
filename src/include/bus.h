@@ -57,9 +57,10 @@ void  bus_tick(csr_t *csr, u64 cycles);
 /* 从中断控制器汇总出 mip 的硬件位 */
 void  bus_update_irqs(csr_t *csr);
 
-#endif
 u32  bus_hot_read(u32 page);
 u32  bus_hot_write(u32 page);
 void bus_hot_clear(void);
 
 void uart_push_rx(u8 byte);
+
+#endif /* RV_BUS_H */

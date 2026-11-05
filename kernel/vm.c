@@ -68,37 +68,10 @@ u32 *kernel_pgtbl(void)
     return root;
 }
 /* ── 按需分页：缺页时分配物理页并建立映射 ── */
-u32 *g_kroot __attribute__((weak));
+extern u32 *g_kroot;   /* 定义在 main.c，避免 ODR 冲突与漏赋值 */
 
 /* 返回 1 表示映射成功，0 表示地址不合法 */
 u32 g_pf_count = 0;
-
-int vm_handle_page_fault(u32 va, int is_store)
-{
-    g_pf_count++;
-    (void)is_store;
-    /* 只处理用户地址区间 0x80400000 - 0x807FFFFF */
-    if (va < 0x80400000u || va >= 0x80800000u) return 0;
-
-    u32 vpn2 = VPN2(va);
-    u32 l1pa = (g_kroot[vpn2] >> 10) << 12;
-    u32 *l1;
-
-    if (!(g_kroot[vpn2] & PTE_V)) {
-        l1 = page_alloc();
-        g_kroot[vpn2] = ((u32)l1 >> 12 << 10) | PTE_V;
-    } else {
-        l1 = (u32 *)l1pa;
-    }
-
-    u32 idx = VPN1(va);
-    if (!(l1[idx] & PTE_V)) {
-        u32 *pa = page_alloc();
-        memset(pa, 0, 4096);
-        l1[idx] = (u32)(((u32)pa >> 12 << 10) | PTE_V | PTE_R | PTE_W | PTE_U | PTE_A | PTE_D);
-    }
-    return 1;
-}
 
 /* 为进程创建独立页表：内核映射共享，用户 L1 独立 */
 extern u32 *g_kroot;

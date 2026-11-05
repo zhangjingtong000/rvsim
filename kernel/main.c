@@ -49,7 +49,7 @@ u32 m_trap_handler(u32 cause, u32 epc, u32 tval, u32 *regs)
     if (!(cause & 0x80000000u) && code == 9) {
         u32 eid = regs[R_A7];
         if (eid == 0x53534950u) {         /* 'SSIP'：清 STIP + 重装定时器 */
-            __asm__ volatile("csrc mip, %0" : : "r"(0x20u));
+            __asm__ volatile("csrc mip, %0" : : "r"(MIP_STIP));
             proc_set_timer(20000);
             regs[R_A0] = 0;
             return epc + 4;
@@ -67,7 +67,7 @@ u32 m_trap_handler(u32 cause, u32 epc, u32 tval, u32 *regs)
     if (code == 7) {          /* MTIP：转成 S 模式定时器中断 */
         proc_set_timer(0x7FFFFFF0u);
         /* 置 STIP 交给 S 模式处理（软件写 mip.STIP） */
-        __asm__ volatile("csrs mip, %0" : : "r"(0x20u));
+        __asm__ volatile("csrs mip, %0" : : "r"(MIP_STIP));
         return epc;           /* 回到被打断的指令，马上会进 S 模式 */
     }
 
@@ -78,17 +78,6 @@ u32 m_trap_handler(u32 cause, u32 epc, u32 tval, u32 *regs)
 
 /* ── S 模式 trap：系统调用 ── */
 /* 切换到 next 进程：保存当前上下文，装载 next 的上下文 */
-static u32 __attribute__((unused)) switch_to(void *unused, u32 *regs, u32 epc, proc_t *next)
-{
-    (void)unused;
-    if (cur_proc >= 0) {
-        for (int i = 0; i < 32; i++) procs[cur_proc].regs[i] = regs[i];
-        procs[cur_proc].pc = epc;
-    }
-    for (int i = 0; i < 32; i++) regs[i] = next->regs[i];
-    return next->pc;
-}
-
 u32 s_trap_handler(u32 cause, u32 epc, u32 tval, u32 *regs)
 {
     /* 定时器中断（S 模式 STI）：抢占当前进程 */
@@ -264,7 +253,6 @@ int g_badptr_flag = 0;
 
 /* 重置所有进程到入口（shell 的 run 命令用） */
 /* 按名字选择要加载的用户程序（hello / fork）。len 返回镜像长度。 */
-static u32 g_cur_prog_len = 0;
 
 int kload_prog(const char *name)
 {
@@ -299,7 +287,6 @@ int kload_prog(const char *name)
     for (u32 a = g_user_base; a < g_user_base + len; a += 4096u)
         if (!vm_page_fault_on(g_kroot, a & ~0xFFFu, 1)) break;
     memcpy((void *)g_user_base, src, len);
-    g_cur_prog_len = len;
     return (int)len;
 }
 
@@ -366,11 +353,10 @@ void kmain(void)
 
     /* 定时器：默认关闭（yield 已足够验证轮转；打开见 RVSIM_TIMER 环境无对应，
        如需启用改成 1）。保留代码路径以便后续完善。 */
-    proc_set_timer(200000);
 
     /* 使能 M 模式定时器中断与全局中断（必须在 M 模式做） */
     __asm__ volatile("csrs mie, %0" : : "r"(0x80u));    /* MTIE */
-    __asm__ volatile("csrs mstatus, %0" : : "r"(0x8u)); /* MIE */
+    __asm__ volatile("csrs mstatus, %0" : : "r"(MSTATUS_MIE));
     proc_set_timer(20000);
 
 
@@ -384,8 +370,8 @@ void s_main(void)
     kprintf("[S] 进入 S 模式\n");
 
     /* 使能 S 模式定时器中断 */
-    __asm__ volatile("csrs sie, %0" : : "r"(0x20u));      /* STIE */
-    __asm__ volatile("csrs sstatus, %0" : : "r"(0x2u));    /* SIE */
+    __asm__ volatile("csrs sie, %0" : : "r"(SIE_STIE));
+    __asm__ volatile("csrs sstatus, %0" : : "r"(SSTATUS_SIE));
 
     proc_t *p0 = proc_schedule();
     if (!p0) { kprintf("[S] 无进程\n"); for (;;) { } }
