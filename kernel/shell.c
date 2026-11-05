@@ -267,6 +267,38 @@ void shell_input(char ch)
                 extern void evt_dump(void);
                 evt_dump();
             }
+            else if (ADV && streq(g_line, "log count")) {
+                extern void evt_count_dump(void);
+                evt_count_dump();
+            }
+            else if (ADV && starts_with(g_line, "log count ")) {
+                extern int evt_count_named(const char *);
+                extern int evt_type_known(const char *);
+                const char *q = g_line + 10;
+                extern int evt_count_denied(void);
+                if (streq(q, "oob")) {
+                    /* oob 不是事件类型，是被拒绝的操作数 */
+                    uart_puts("{\"count\":{\"oob\":");
+                    uart_dec(evt_count_denied());
+                    uart_puts("}}\n");
+                } else if (!evt_type_known(q)) {
+                    uart_puts("{\"ok\":false,\"why\":\"未知计数键\",\"hint\":\"spawn|exit|ecall|restore|oob\"}\n");
+                } else {
+                    uart_puts("{\"count\":{\"");
+                    uart_puts(q);
+                    uart_puts("\":");
+                    uart_dec(evt_count_named(q));
+                    uart_puts("}}\n");
+                }
+            }
+            else if (ADV && starts_with(g_line, "log last ")) {
+                extern void evt_dump_last(u32);
+                int n = 0;
+                const char *q = g_line + 9;
+                while (*q >= '0' && *q <= '9') { n = n * 10 + (*q - '0'); q++; }
+                if (n <= 0) uart_puts("{\"ok\":false,\"why\":\"用法: log last <n>\"}\n");
+                else evt_dump_last((u32)n);
+            }
             else if (streq(g_line, "mem")) {
                 extern u32 g_pf_count;
                 uart_puts("物理内存 64 MB @ 0x80000000\n");
@@ -274,7 +306,13 @@ void shell_input(char ch)
                 uart_dec((int)g_pf_count);
                 uart_putc('\n');
             }
-            else uart_puts("未知命令，试 help\n");
+            else {
+                /* 结构化失败 + 可操作建议：让模型能自己纠正，
+                   而不是在同一个错误上反复试。 */
+                uart_puts("{\"ok\":false,\"why\":\"unknown command\",\"echo\":\"");
+                uart_puts(g_line);
+                uart_puts("\",\"hint\":\"输入 help 或 manifest 查看可用能力\"}\n");
+            }
         }
         g_len = 0;
         prompt();
@@ -292,6 +330,9 @@ void shell_input(char ch)
 void shell_start(void)
 {
     uart_puts("\n=== rvsh ===\n");
-    uart_puts("简易 shell，输入 help 或 manifest 查看能力\n");
+    /* 明确声明这不是 POSIX shell：实测模型会本能地写 ps -ef、log | tail，
+       然后连错好几轮。声明一次比纠正五次便宜。 */
+    if (ADV) uart_puts("简易 shell（非 POSIX，不支持管道/重定向），输入 manifest 查看能力\n");
+    else     uart_puts("简易 shell（非 POSIX，不支持管道/重定向），输入 help 查看命令\n");
     prompt();
 }

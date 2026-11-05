@@ -68,6 +68,11 @@ typedef struct {
 
 static evt_t g_evts[EVT_CAP];
 static u32 g_evt_head, g_evt_tail, g_evt_seq;
+/* 前置声明：这些函数定义在后面，但事件倾倒函数要用到它们 */
+void evt_summary(void);
+int  evt_count_all(void);
+int  evt_count_named(const char *name);
+int  evt_count_denied(void);
 
 void evt_emit_code(u16 type, u32 actor, u32 a0, u32 a1, s32 result, u8 code)
 {
@@ -134,6 +139,15 @@ int evt_count_denied(void)
     return n;
 }
 
+/* 类型名是否已知：计数为 0 与类型不存在必须区分开 */
+int evt_type_known(const char *name)
+{
+    const char *ok[] = {"spawn", "exit", "ecall", "restore"};
+    for (u32 i = 0; i < 4; i++)
+        if (kstreq(ok[i], name)) return 1;
+    return 0;
+}
+
 int evt_count_all(void)
 {
     int n = 0;
@@ -151,34 +165,72 @@ int proc_count_live(void)
     return n;
 }
 
+/* log 的轻量查询：把「整段倾倒」换成「按需取用」。
+   39 条事件倒给模型会撞上下文窗口，而模型会在边界处数错。 */
+void evt_count_dump(void)
+{
+    kprintf("{\"log\":{\"total\":%d,\"spawn\":%d,\"exit\":%d,\"ecall\":%d,\"restore\":%d,\"denied\":%d}}\n",
+            evt_count_all(), evt_count_named("spawn"), evt_count_named("exit"),
+            evt_count_named("ecall"), evt_count_named("restore"), evt_count_denied());
+}
+
+void evt_dump_last(u32 n)
+{
+    u32 total = (u32)evt_count_all();
+    if (n > total) n = total;
+    u32 skip = total - n;
+    u32 i = g_evt_head;
+    while (skip--) i = (i + 1u) % EVT_CAP;
+    kprintf("seq actor type arg0 arg1 result code\n");
+    while (i != g_evt_tail) {
+        evt_t *e = &g_evts[i];
+        kprintf("%d %d %s %x %x %d code=%d\n",
+                (int)e->seq, (int)e->actor, evt_name(e->type),
+                (u32)e->arg0, (u32)e->arg1, (int)e->result, (int)e->code);
+        i = (i + 1u) % EVT_CAP;
+    }
+    evt_summary();
+}
+
+/* 每次倾倒事件流都在末尾附一行摘要。
+   实测：模型会去读完整 log 然后自己数，且在窗口边界数错。
+   与其指望它数对，不如把答案直接放在它一定会读到的地方。 */
+void evt_summary(void)
+{
+    kprintf("[summary] total=%d spawn=%d exit=%d ecall=%d restore=%d denied=%d\n",
+            evt_count_all(), evt_count_named("spawn"), evt_count_named("exit"),
+            evt_count_named("ecall"), evt_count_named("restore"), evt_count_denied());
+}
+
 /* ── 能力清单 ──
    AI 读这一份就知道能做什么、参数取值、哪个操作不可逆。
    关键：清单由内核生成，不由应用注册——应用注册的清单会撒谎。 */
 typedef struct {
     const char *name;
-    const char *args;
+    const char *usage;      /* 完整命令形式，避免被理解成键值对 */
+    const char *values;     /* 枚举取值（空串表示无） */
     u8          irreversible;
     const char *desc;
 } cap_t;
 
 static const cap_t g_caps[] = {
-    {"help",     "",                       0, "列出全部命令"},
-    {"manifest", "",                       0, "输出本能力清单（机器可解析）"},
-    {"ps",       "",                       0, "进程表：PID/状态/PC"},
-    {"run",      "prog=hello|fork|badptr", 0, "装载程序并调度三个进程"},
-    {"reset",    "",                       0, "把全部进程重置到就绪"},
-    {"mem",      "",                       0, "物理内存与缺页统计"},
-    {"uptime",   "",                       0, "读取虚拟时钟 mtime"},
-    {"log",      "",                       0, "按发生顺序输出事件流"},
-    {"assert",   "key=spawn|exit|ecall|restore|events|nproc|oob|uart, value", 0, "断言：内核直接回答是否成立"},
-    {"plan",     "run <prog>",             0, "生成执行计划但不执行"},
-    {"plans",    "",                       0, "列出待执行的计划"},
-    {"apply",    "<plan_id>",              0, "执行指定计划"},
-    {"snapshot", "",                       0, "保存当前进程状态快照"},
-    {"snaps",    "",                       0, "列出快照"},
-    {"restore",  "<snap_id>",              0, "恢复到指定快照（回滚）"},
-    {"status",   "",                       0, "统一状态入口（JSON）"},
-    {"tail",     "",                       0, "输出最近一段串口内容（审计用）"},
+    {"help",     "help",                    "",                0, "列出全部命令"},
+    {"manifest", "manifest",                "",                0, "输出本能力清单（机器可解析）"},
+    {"status",   "status",                  "",                0, "统一状态入口（JSON）"},
+    {"ps",       "ps",                      "",                0, "进程表（JSON）"},
+    {"run",      "run <prog>",              "hello|fork|badptr", 0, "装载程序并调度三个进程"},
+    {"reset",    "reset",                   "",                0, "把全部进程重置到就绪"},
+    {"mem",      "mem",                     "",                0, "物理内存与缺页统计"},
+    {"uptime",   "uptime",                  "",                0, "读取虚拟时钟 mtime"},
+    {"log",      "log | log count [type] | log last <n>", "", 0, "事件流：全部/计数/最近 n 条"},
+    {"tail",     "tail",                    "",                0, "输出最近一段串口内容（审计用）"},
+    {"assert",   "assert <key>=<value>",    "spawn|exit|ecall|restore|events|nproc|oob|uart", 0, "断言：内核直接回答是否成立"},
+    {"plan",     "plan run <prog>",         "hello|fork|badptr", 0, "生成执行计划但不执行"},
+    {"plans",    "plans",                   "",                0, "列出待执行的计划"},
+    {"apply",    "apply <plan_id>",         "",                0, "执行指定计划"},
+    {"snapshot", "snapshot",                "",                0, "保存当前进程状态快照"},
+    {"snaps",    "snaps",                   "",                0, "列出快照"},
+    {"restore",  "restore <snap_id>",       "",                0, "恢复到指定快照（回滚）"},
 };
 
 /* 统一状态入口：AI 一次调用就能拿到全貌，
@@ -197,8 +249,8 @@ void cap_manifest(void)
     kprintf("{\"manifest\":1,\"caps\":%d}\n", (int)n);
     for (u32 i = 0; i < n; i++) {
         const cap_t *c = &g_caps[i];
-        kprintf("{\"cap\":\"%s\",\"args\":\"%s\",\"irreversible\":%s,\"desc\":\"%s\"}\n",
-                c->name, c->args,
+        kprintf("{\"cap\":\"%s\",\"usage\":\"%s\",\"values\":\"%s\",\"irreversible\":%s,\"desc\":\"%s\"}\n",
+                c->name, c->usage, c->values,
                 c->irreversible ? "true" : "false", c->desc);
     }
 }
@@ -216,7 +268,9 @@ void evt_dump(void)
                 (u32)e->arg0, (u32)e->arg1, (int)e->result, (int)e->code);
         i = (i + 1u) % EVT_CAP;
     }
+    evt_summary();
 }
+
 
 /* ── M 模式 trap：只处理定时器，切进程 ── */
 u32 m_trap_handler(u32 cause, u32 epc, u32 tval, u32 *regs)
@@ -479,12 +533,20 @@ int krestart(void)
 /* 供 shell 的 ps 命令调用 */
 void shell_ps_hook(void)
 {
-    kprintf("PID  STATE  NRUN  PC\n");
+    /* JSON 而不是表格：空格分隔的表格要靠猜列边界，机器读容易错位 */
+    kprintf("{\"procs\":[");
     for (int i = 0; i < NPROC; i++) {
-        const char *st = procs[i].state == PROC_RUN ? "RUN  " :
-                         procs[i].state == PROC_READY ? "READY" : "EXIT ";
-        kprintf(" %d   %s  %d     %x\n", i, st, (int)procs[i].nrun, procs[i].pc);
+        if (i) kprintf(",");
+        /* stack_pa == 0 说明这个槽从未被 proc_create 使用过 */
+        const char *st = procs[i].stack_pa == 0 ? "UNUSED" :
+                         procs[i].state == PROC_RUN ? "RUN" :
+                         procs[i].state == PROC_READY ? "READY" : "EXIT";
+        {   /* kprintf 的 %x 已自带 0x 前缀，不能再加 */
+            kprintf("{\"pid\":%d,\"state\":\"%s\",\"pc\":\"%x\",\"nrun\":%d}",
+                    (int)procs[i].pid, st, (u32)procs[i].pc, (int)procs[i].nrun);
+        }
     }
+    kprintf("]}\n");
 }
 
 void kmain(void)
