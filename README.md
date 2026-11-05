@@ -35,7 +35,7 @@
 | **QEMU 语义对照** | 与 QEMU 比对计算结果 | ✅ | 四个 CRC 值完全一致 |
 | Gate 7b WASM 可视化 | 浏览器调试界面 | ✅ | 90 KB wasm，Node + 浏览器双验证 |
 
-**riscv-tests：91/91 全通过；能力契约：10/10 全通过。**
+**riscv-tests：91/91 全通过；能力契约：11/11 全通过。**
 
 91 项只覆盖模拟器指令。能力层（manifest/assert/plan/snapshot）由
 `tests/contract.js` 覆盖，已并入 `tests/run_tests.sh`。
@@ -111,7 +111,7 @@ cd web && python3 -m http.server 8777
 make                          # 构建 build/rvsim
 make directed                 # 构建 4 个定向测试 ELF
 make dts                      # 构建 dts/minimal.dtb
-./tests/run_tests.sh all      # 回归（应 91/91 + 契约 10/10）
+./tests/run_tests.sh all      # 回归（应 91/91 + 契约 11/11）
 ```
 
 缺 capstone 时 `make` 会直接提示 `先执行：make deps`，不会只丢一个 `capstone.h not found`。

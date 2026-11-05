@@ -226,7 +226,7 @@ rvsh> restore 1
 [10] 回滚后状态复原           nproc=3 ok
 [11] 回滚本身被记录           restore=1 ok
 
-10/10 通过（迁移到 tests/contract.js，已并入 run_tests.sh）
+11/11 通过（迁移到 tests/contract.js，已并入 run_tests.sh）
 ```
 
 > **2026-11-05 更正**：原脚本 `web/e2e.js` 已过期（9/11 且崩溃），
