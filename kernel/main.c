@@ -552,7 +552,8 @@ int krestart(void)
 void shell_ps_hook(void)
 {
     /* JSON 而不是表格：空格分隔的表格要靠猜列边界，机器读容易错位 */
-    kprintf("{\"procs\":[");
+    /* 显式给出有效进程数：列表里有 UNUSED 槽，让模型自己数容易多数 */
+    kprintf("{\"nproc\":%d,\"procs\":[", proc_count_live());
     for (int i = 0; i < NPROC; i++) {
         if (i) kprintf(",");
         /* stack_pa == 0 说明这个槽从未被 proc_create 使用过 */
