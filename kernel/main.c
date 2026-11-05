@@ -994,6 +994,11 @@ void proc_set_reg(int pid, int reg, u32 val)
         kprintf("{\"ok\":false,\"why\":\"寄存器号应为 0..31\"}\n");
         return;
     }
+    if (reg == 0) {
+        /* x0 在硬件上恒为 0，写它没有意义，明确拒绝而不是假装成功 */
+        kprintf("{\"ok\":false,\"why\":\"x0 恒为 0，不可写\"}\n");
+        return;
+    }
     procs[pid].regs[reg] = val;
     /* x2 是栈指针，进程表里另有一份 sp 字段；不同步的话，
        进入用户态时会用旧 sp 覆盖掉这次改写。 */
