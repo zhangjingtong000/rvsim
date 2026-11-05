@@ -66,7 +66,7 @@ static u32 g_ustack[NPROC];
    内核的真相不是「当前状态」，而是「发生过什么」。
    状态可以从事件流重放出来，反过来不成立。
    这是可审计、可回放、可回滚三件事的共同底座。 */
-#define EVT_CAP   2048
+#define EVT_CAP   16384
 #define EVT_SPAWN   1
 #define EVT_EXIT    2
 #define EVT_ECALL   3
@@ -80,6 +80,8 @@ static u32 g_ustack[NPROC];
 #define EVT_SBRK     9   /* 堆扩展 */
 #define EVT_FORK     10  /* fork：父进程视角的派生事件 */
 #define EVT_SETREG   11  /* 外部改写进程寄存器（调试） */
+#define EVT_GETPID   12  /* getpid 系统调用 */
+#define EVT_YIELD    13  /* yield 系统调用 */
 
 /* 失败原因码：审计要能回答「为什么被拒」，而不只是「被拒了」 */
 #define ECODE_OK      0
@@ -140,6 +142,8 @@ static const char *evt_name(u16 t)
     case EVT_SBRK:     return "sbrk";
     case EVT_FORK:     return "fork";
     case EVT_SETREG:   return "setreg";
+    case EVT_GETPID:   return "getpid";
+    case EVT_YIELD:    return "yield";
     default:        return "?";
     }
 }
@@ -181,8 +185,9 @@ int evt_count_denied(void)
 int evt_type_known(const char *name)
 {
     const char *ok[] = {"spawn", "exit", "ecall", "restore",
-                        "reset", "snapshot", "plan", "apply", "sbrk", "fork", "setreg"};
-    for (u32 i = 0; i < 11; i++)
+                        "reset", "snapshot", "plan", "apply", "sbrk", "fork",
+                        "setreg", "getpid", "yield"};
+    for (u32 i = 0; i < 13; i++)
         if (kstreq(ok[i], name)) return 1;
     return 0;
 }
@@ -257,12 +262,15 @@ void evt_dump_actor(u32 actor)
 void evt_count_dump(void)
 {
     kprintf("{\"log\":{\"total\":%d,\"spawn\":%d,\"exit\":%d,\"ecall\":%d,\"restore\":%d,"
-            "\"reset\":%d,\"snapshot\":%d,\"plan\":%d,\"apply\":%d,\"sbrk\":%d,\"fork\":%d,\"denied\":%d}}\n",
+            "\"reset\":%d,\"snapshot\":%d,\"plan\":%d,\"apply\":%d,\"sbrk\":%d,\"fork\":%d,"
+            "\"getpid\":%d,\"yield\":%d,\"setreg\":%d,\"denied\":%d}}\n",
             evt_count_all(), evt_count_named("spawn"), evt_count_named("exit"),
             evt_count_named("ecall"), evt_count_named("restore"),
             evt_count_named("reset"), evt_count_named("snapshot"),
             evt_count_named("plan"), evt_count_named("apply"),
-            evt_count_named("sbrk"), evt_count_named("fork"), evt_count_denied());
+            evt_count_named("sbrk"), evt_count_named("fork"),
+            evt_count_named("getpid"), evt_count_named("yield"),
+            evt_count_named("setreg"), evt_count_denied());
 }
 
 void evt_dump_last(u32 n)
@@ -294,7 +302,9 @@ void evt_summary(void)
             evt_count_named("ecall"), evt_count_named("restore"),
             evt_count_named("reset"), evt_count_named("snapshot"),
             evt_count_named("plan"), evt_count_named("apply"),
-            evt_count_named("sbrk"), evt_count_named("fork"), evt_count_denied());
+            evt_count_named("sbrk"), evt_count_named("fork"),
+            evt_count_named("getpid"), evt_count_named("yield"),
+            evt_count_named("setreg"), evt_count_denied());
 }
 
 /* ── 能力清单 ──
@@ -375,9 +385,12 @@ void verify_dump(void)
     int ok_s  = ((int)g_trap_sbrk  == sb);
     int ok_f  = ((int)g_trap_fork  == fk);
 
-    /* 未记账的 ecall：getpid/yield 一类，故意不记 */
+    /* 未记账的 ecall。getpid/yield 现在也记账了，
+       所以这个数应当恒为 0；不为 0 就说明真的漏了某类系统调用。 */
+    int gp = evt_count_named("getpid"), yl = evt_count_named("yield");
     int unaccounted = (int)g_trap_ecall - (int)g_trap_write
-                    - (int)g_trap_exit - (int)g_trap_sbrk - (int)g_trap_fork;
+                    - (int)g_trap_exit - (int)g_trap_sbrk - (int)g_trap_fork
+                    - gp - yl;
 
     /* 回绕之后 evt 侧会被截断，此时一切比较都不可信 */
     int complete = ((int)g_evt_seq == evt_count_all());
@@ -532,6 +545,9 @@ u32 s_trap_handler(u32 cause, u32 epc, u32 tval, u32 *regs)
 
         /* 独立计数：此处不做任何事件记录，纯计数 */
         g_trap_ecall++;
+        /* 高频但无副作用的两个调用也记账，让 unaccounted 能为 0 */
+        if (a7 == 3) evt_emit(EVT_GETPID, (u32)cur_proc, 0, 0, (s32)cur_proc);
+        if (a7 == 7) evt_emit(EVT_YIELD,  (u32)cur_proc, 0, 0, 0);
         if (a7 == 0) g_trap_exit++;
         if (a7 == 1) g_trap_write++;   /* 只有 write 会记 EVT_ECALL */
         if (a7 == 5) g_trap_sbrk++;
@@ -831,9 +847,8 @@ typedef struct {
     u32    id;
     u32    evt_seq;
     proc_t snap[NPROC];
-    /* 审计指出：只存 procs 不足以叫「快照」——回滚后代码区仍是新程序。
-       这里记录当时装载的程序名，回滚时重新装载即可复原代码区。
-       比在进程页表下 memcpy 用户内存可靠得多。 */
+    /* 代码区靠程序名复原。栈不保存：进程在入口重新执行时会自己初始化栈，
+       保存旧栈内容既无意义也读不到（进程页表下访问各进程栈页会缺页）。 */
     char   prog[8];
 } snap_t;
 
@@ -842,6 +857,9 @@ static u32    g_snap_seq;
 
 u32 snap_take(void)
 {
+    /* 栈页在进程页表里是 U 页，S 模式访问需要 SUM。
+       从用户态 trap 回来之后 SUM 未必还开着，这里显式打开。 */
+    __asm__ volatile("csrs sstatus, %0" : : "r"(0x40000u));
     for (u32 i = 0; i < SNAP_SLOTS; i++) {
         if (!g_snaps[i].used) {
             g_snaps[i].used    = 1;
@@ -854,6 +872,7 @@ u32 snap_take(void)
                 while (g_loaded_prog[k] && k < 7) { g_snaps[i].prog[k] = g_loaded_prog[k]; k++; }
                 g_snaps[i].prog[k] = 0;
             }
+
             evt_emit(EVT_SNAPSHOT, (u32)-1, g_snaps[i].id, g_snaps[i].evt_seq, 1);
             return g_snaps[i].id;
         }
@@ -863,6 +882,7 @@ u32 snap_take(void)
 
 int snap_restore(u32 id)
 {
+    __asm__ volatile("csrs sstatus, %0" : : "r"(0x40000u));
     for (u32 i = 0; i < SNAP_SLOTS; i++) {
         if (g_snaps[i].used && g_snaps[i].id == id) {
             memcpy(procs, g_snaps[i].snap, sizeof(procs));
@@ -870,6 +890,7 @@ int snap_restore(u32 id)
                直接写公共用户区会落到错误映射上。 */
             /* 代码区复原：按快照记录的程序名重新装载 */
             kload_prog(g_snaps[i].prog);
+
             cur_proc = -1;
             front_sync();
             evt_emit(EVT_RESTORE, (u32)-1, id, g_snaps[i].evt_seq, 1);

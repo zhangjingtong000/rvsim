@@ -9,7 +9,7 @@ uart_t   g_uart;
 
 /* UART 输出环形缓冲。WASM 环境没有真正的终端，前端靠它拿到 guest 的输出；
    原生环境只是额外存一份，不影响 putchar 行为。 */
-#define UOUT_CAP 16384
+#define UOUT_CAP 262144   /* 256KB：log all 输出几百条事件时不能被截断 */
 static u8  g_uout[UOUT_CAP];
 static u32 g_uout_head, g_uout_tail;
 

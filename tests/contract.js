@@ -120,7 +120,7 @@ function record(name, ok, detail) {
   const cntAll = json(send("log count"));
   const total = cntAll && cntAll.log ? cntAll.log.total : -1;
   const full = send("log all");
-  const lines = full.split("\n").filter(l => /^-?\d+ -?\d+ (spawn|exit|ecall|restore|reset|snapshot|plan|apply|sbrk|fork|setreg)/.test(l.trim())).length;
+  const lines = full.split("\n").filter(l => /^-?\d+ -?\d+ (spawn|exit|ecall|restore|reset|snapshot|plan|apply|sbrk|fork|setreg|getpid|yield)/.test(l.trim())).length;
   record("log all 条数与 log count 一致", total === lines, `count.total=${total} 实际行=${lines}`);
 
   // ── T11: verify 的 trap 侧计数必须与事件流一致 ──
