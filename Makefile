@@ -6,7 +6,20 @@ KCFLAGS  := -march=rv32ima_zicsr_zifencei -mabi=ilp32 -mcmodel=medany -nostdlib 
             -ffreestanding -fno-builtin -O2 -Wall -Wextra
 SRCDIR    = src
 OBJDIR    = build
-TARGET    = $(OBJDIR)/rvsim
+TARGET    = build/rvsim
+# 干净克隆里 third_party/ 不存在（被 .gitignore），必须显式拉取。
+CAPSTONE_HDR := third_party/capstone/include/capstone/capstone.h
+$(CAPSTONE_HDR):
+	@echo ""
+	@echo "缺少 capstone 源码（third_party/capstone）。"
+	@echo "先执行：  make deps     （等价于 ./scripts/fetch_deps.sh）"
+	@echo ""
+	@exit 1
+
+deps:
+	./scripts/fetch_deps.sh all
+
+.PHONY: deps
 
 SRCS = $(SRCDIR)/main.c $(SRCDIR)/exec.c $(SRCDIR)/csr.c $(SRCDIR)/bus.c \
        $(SRCDIR)/loader.c $(SRCDIR)/mmu.c $(SRCDIR)/disasm.c $(SRCDIR)/fdt.c
@@ -31,7 +44,7 @@ KASMS = kernel/start.S kernel/s_entry.S kernel/user_prog.S
 
 all: $(TARGET) $(OBJDIR)/kernel.elf
 
-$(TARGET): $(OBJS) $(CAPSTONE_OBJS)
+$(TARGET): $(OBJS) $(CAPSTONE_HDR) $(CAPSTONE_OBJS)
 	@mkdir -p $(OBJDIR)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
@@ -50,6 +63,12 @@ $(OBJDIR)/fork_prog.bin: kernel/user/fork.S
 		-Ttext=0x80400000 -o $(OBJDIR)/fork_prog.elf kernel/user/fork.S
 	$(CROSS)objcopy -O binary $(OBJDIR)/fork_prog.elf $@
 
+$(OBJDIR)/badptr_prog.bin: kernel/user/badptr.S
+	@mkdir -p $(OBJDIR)
+	$(CROSS)gcc -march=rv32ima_zicsr_zifencei -mabi=ilp32 -mcmodel=medany -nostdlib -nostartfiles \
+		-Ttext=0x80400000 -o $(OBJDIR)/badptr_prog.elf kernel/user/badptr.S
+	$(CROSS)objcopy -O binary $(OBJDIR)/badptr_prog.elf $@
+
 $(OBJDIR)/user_prog.bin: kernel/user/hello.S
 	@mkdir -p $(OBJDIR)
 	$(CROSS)gcc -march=rv32ima_zicsr_zifencei -mabi=ilp32 -mcmodel=medany -nostdlib -nostartfiles \
@@ -57,7 +76,7 @@ $(OBJDIR)/user_prog.bin: kernel/user/hello.S
 	$(CROSS)objcopy -O binary $(OBJDIR)/user_prog.elf $@
 
 # 内核
-$(OBJDIR)/kernel.elf: $(KSRCS) $(KASMS) $(OBJDIR)/user_prog.bin $(OBJDIR)/fork_prog.bin kernel/linker.ld
+$(OBJDIR)/kernel.elf: $(KSRCS) $(KASMS) $(OBJDIR)/user_prog.bin $(OBJDIR)/fork_prog.bin $(OBJDIR)/badptr_prog.bin kernel/linker.ld
 	@mkdir -p $(OBJDIR)
 	$(CROSS)gcc $(KCFLAGS) -T kernel/linker.ld -o $@ \
 		$(KASMS) $(KSRCS) -lgcc
@@ -74,6 +93,7 @@ $(OBJDIR)/coremark.elf: $(CM_SRCS) bench/core_portme.h kernel/uart.c kernel/vm.c
 
 clean:
 	rm -rf $(OBJDIR)
+	rm -f dts/*.dtb tests/directed/*.elf
 
 .PHONY: all clean
 

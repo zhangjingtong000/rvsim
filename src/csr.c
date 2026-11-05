@@ -132,15 +132,16 @@ bool csr_write_priv(csr_t *c, u32 addr, u32 val)
         c->mtvec = (val & ~3u) | (val & 1u);   /* MODE 只保留 0/1，2/3 归一为 0 */
         break;
     case CSR_MCOUNTEREN: c->mcounteren = val; break;
-    case CSR_MCOUNTINHIBIT: c->mcountinhibit = val; break;
+    case CSR_MCOUNTINHIBIT: c->mcountinhibit = val & 0x5u; break;   /* 只实现 CY(0)/IR(2) */
     case CSR_MSCRATCH:  c->mscratch = val; break;
     case CSR_MEPC:      c->mepc = val & ~3u; break;
     case CSR_MCAUSE:    c->mcause = val; break;
     case CSR_MTVAL:     c->mtval = val; break;
     case CSR_MIP:
-        /* 只允许写 SSIP/MSIP/STIP；MTIP/MEIP 由硬件驱动 */
-        c->mip = (c->mip & ~(MIP_SSIP | MIP_MSIP | MIP_STIP))
-               | (val & (MIP_SSIP | MIP_MSIP | MIP_STIP));
+        /* 只允许写 SSIP/STIP（软件可置位）。MSIP 由 CLINT 驱动、MTIP/MEIP 由外设驱动，
+           这几个每 tick 会被 bus_update_irqs() 重算，允许写只会让调用者以为写成功。 */
+        c->mip = (c->mip & ~(MIP_SSIP | MIP_STIP))
+               | (val & (MIP_SSIP | MIP_STIP));
         break;
     case CSR_MNSTATUS:
         /* 只允许写 INIT_RNMI(bit3)；其余只读 0 */
@@ -151,11 +152,13 @@ bool csr_write_priv(csr_t *c, u32 addr, u32 val)
     case CSR_MCYCLEH:   c->mcycle = (c->mcycle & 0x00000000FFFFFFFFull) | ((u64)val << 32); break;
     case CSR_MINSTRET:
         c->minstret = (c->minstret & 0xFFFFFFFF00000000ull) | val;
-        c->minstret--;   /* 抵消本条指令的自增 */
+        /* 抵消本条指令的自增。但 mcountinhibit.IR=1 时本来就不自增，
+           再减 1 会让"写 1000 读回 999"（评审实测）。 */
+        if (!(c->mcountinhibit & 0x4u)) c->minstret--;
         break;
     case CSR_MINSTRETH:
         c->minstret = (c->minstret & 0x00000000FFFFFFFFull) | ((u64)val << 32);
-        c->minstret--;
+        if (!(c->mcountinhibit & 0x4u)) c->minstret--;
         break;
     /* 只读身份寄存器：写应 illegal */
     case CSR_MVENDORID: case CSR_MARCHID: case CSR_MIMPID: case CSR_MHARTID:
@@ -254,6 +257,9 @@ void csr_return(csr_t *c, int is_mret)
         m = (m & ~MSTATUS_SIE) | ((m & MSTATUS_SPIE) ? MSTATUS_SIE : 0);
         m |= MSTATUS_SPIE;                    /* xPIE <- 1 */
         m &= ~MSTATUS_SPP;                    /* SPP <- 0（U） */
+        /* 规范：任何 xRET 把特权级切到 < M 时都要清 MPRV。
+           原来只在 MRET 分支清，M 模式执行 SRET->U 后 MPRV 会残留。 */
+        if (spp != PRV_M) m &= ~MSTATUS_MPRV;
         c->mstatus = m;
         c->priv = spp;
     }

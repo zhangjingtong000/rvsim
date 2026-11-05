@@ -12,7 +12,10 @@ set -u
 cd "$(dirname "$0")/.." || exit 1
 
 ELF=build/coremark.elf
-[ -f "$ELF" ] || { echo "缺少 $ELF，先跑 make build/coremark.elf"; exit 1; }
+if [ ! -f "$ELF" ]; then
+    echo "缺少 $ELF，正在自动构建..."
+    make build/coremark.elf >/dev/null 2>&1 || { echo "构建失败，请手动 make build/coremark.elf"; exit 1; }
+fi
 
 RV_CYCLES=${RV_CYCLES:-2000000000}
 CM_ITER=${CM_ITER:-4000}

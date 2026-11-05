@@ -20,10 +20,12 @@ static void usage(const char *p)
         "用法: %s [选项]\n"
         "  --elf <path>         加载 ELF32（riscv-tests）\n"
         "  --image <path>       加载裸 Image 到 0x80000000\n"
-        "  --dtb <path>         加载 dtb 到指定地址（默认 0x87e00000）\n"
-        "  --dtb-addr <hex>     dtb 物理地址\n"
+        "  --dtb <path>         加载 dtb 并从中读取设备地址（默认装到 0x83E00000）\n"
+        "  --dtb-addr <hex>     dtb 物理地址（默认 0x83E00000）\n"
         "  --max-cycles <n>     指令数上限（默认 50000000）\n"
         "  --tohost-addr <hex>  手动指定 tohost 地址\n"
+        "  --dump-mem <addr> <len>         运行结束后 dump 物理内存\n"
+        "  --disasm <addr> <count>         运行结束后反汇编（capstone）\n"
         "  --trace              打印每条指令（慢）\n",
         p);
 }
@@ -93,7 +95,10 @@ int main(int argc, char **argv)
 
     u32 tohost = tohost_override;
     if (elf) {
-        if (!loader_load_elf(elf, &cpu.img)) return 1;
+        if (!loader_load_elf(elf, &cpu.img)) {
+            fprintf(stderr, "错误：无法加载 ELF '%s'（文件为空、不是 ELF32、或格式不支持）\n", elf);
+            return 1;
+        }
         cpu.pc = cpu.img.entry;
         if (!tohost && cpu.img.has_tohost) tohost = cpu.img.tohost_addr;
         printf("[rvsim] ELF=%s entry=0x%08x 装载=%u 字节 tohost=0x%08x%s\n",
@@ -203,6 +208,10 @@ int main(int argc, char **argv)
     }
 
     if (dump_len) {
+        if (dump_addr < RAM_BASE || (u64)dump_addr + dump_len > (u64)RAM_BASE + RAM_SIZE) {
+            fprintf(stderr, "错误：--dump-mem 0x%08x+%u 超出 RAM 范围 [0x%08x, 0x%08x)\n",
+                    dump_addr, dump_len, RAM_BASE, RAM_BASE + RAM_SIZE);
+        } else {
         printf("\n[rvsim] 内存 dump @ 0x%08x (%u 字节)\n", dump_addr, dump_len);
         for (u32 off = 0; off < dump_len; off += 16) {
             printf("  %08x: ", dump_addr + off);
@@ -212,6 +221,7 @@ int main(int argc, char **argv)
                 printf("%02x ", v & 0xFF);
             }
             printf("\n");
+        }
         }
     }
 

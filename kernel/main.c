@@ -9,6 +9,9 @@
 
 /* shell 与 trap 处理共享的标志（定义在下方） */
 extern int  g_run_flag;
+extern int  g_fork_flag;
+extern int  g_badptr_flag;
+int kload_prog(const char *name);
 extern int  g_exec_flag;
 extern char g_exec_name[32];
 int krestart(void);
@@ -25,6 +28,10 @@ extern u32 *kernel_pgtbl(void);
 extern void enter_u_mode(u32 entry, u32 stack, u32 pid);
 extern const u8 user_prog_start[];
 extern const u8 user_prog_end[];
+extern const u8 fork_prog_start[];
+extern const u8 fork_prog_end[];
+extern const u8 badptr_prog_start[];
+extern const u8 badptr_prog_end[];
 
 u32 *g_kroot;   /* 供 vm.c 的按需分页使用 */
 static u32  g_user_base = 0x80400000u;
@@ -157,6 +164,8 @@ u32 s_trap_handler(u32 cause, u32 epc, u32 tval, u32 *regs)
                     if (*lsr2 & 0x01) shell_input((char)*rbr2);
                     if (g_run_flag) {
                         g_run_flag = 0;
+                        kload_prog(g_badptr_flag ? "badptr" : (g_fork_flag ? "fork" : "hello"));
+                        g_badptr_flag = 0;
                         /* run = 重置所有进程 + 立即调度（不需要先敲 reset） */
                         int n2 = krestart();
                         kprintf("[S] run: 已重置 %d 个进程，重新调度\n", n2);
@@ -250,8 +259,44 @@ u32 s_trap_handler(u32 cause, u32 epc, u32 tval, u32 *regs)
 }
 
 int g_run_flag = 0;
+int g_fork_flag = 0;
+int g_badptr_flag = 0;
 
 /* 重置所有进程到入口（shell 的 run 命令用） */
+/* 按名字选择要加载的用户程序（hello / fork）。len 返回镜像长度。 */
+static u32 g_cur_prog_len = 0;
+
+int kload_prog(const char *name)
+{
+    const u8 *src = user_prog_start;
+    u32 len = (u32)(user_prog_end - user_prog_start);
+    if (name && name[0]) {
+        const char *want_fork = "fork";
+        int is_fork = 1;
+        for (int i = 0; want_fork[i]; i++) {
+            if (name[i] != want_fork[i]) { is_fork = 0; break; }
+        }
+        if (is_fork && name[4] == 0) {
+            src = fork_prog_start;
+            len = (u32)(fork_prog_end - fork_prog_start);
+        } else {
+            const char *want_bad = "badptr";
+            int is_bad = 1;
+            for (int i = 0; want_bad[i]; i++) {
+                if (name[i] != want_bad[i]) { is_bad = 0; break; }
+            }
+            if (is_bad && name[6] == 0) {
+                src = badptr_prog_start;
+                len = (u32)(badptr_prog_end - badptr_prog_start);
+            }
+        }
+    }
+    if (len == 0 || len > 256u * 1024u) return -1;
+    memcpy((void *)g_user_base, src, len);
+    g_cur_prog_len = len;
+    return (int)len;
+}
+
 int krestart(void)
 {
     for (u32 k = 0; k < NPROC_INIT; k++) {

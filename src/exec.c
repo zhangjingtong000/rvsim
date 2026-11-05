@@ -1,9 +1,24 @@
 #include <stdio.h>
+
 #include <stdlib.h>
 #include <string.h>
 #include "include/cpu.h"
 #include "include/bus.h"
 #include "include/mmu.h"
+
+/* 环境变量在热路径上反复 getenv 很贵（每条分支指令/trap 都会调）。
+   统一缓存成静态标志：-1 未探测，0/1 为结果。 */
+static int g_trap_dbg  = -1;
+static int g_brk_dbg   = -1;
+static int g_ignore_mie = -1;
+
+static int env_flag(const char *name, int *cache)
+{
+    if (*cache < 0) *cache = getenv(name) ? 1 : 0;
+    return *cache;
+}
+
+
 
 /* ── 存取辅助（先过 MMU，misaligned 由硬件分解） ── */
 static u32 g_fault_cause = 0;
@@ -42,6 +57,9 @@ static bool store_u8_phys(cpu_t *c, u32 pa, u32 v)
 /* 翻译单个字节/半字（用于 misaligned 分解，可能跨页） */
 static bool trans(cpu_t *c, u32 va, acc_t acc, u32 *pa)
 {
+    /* 每次翻译前清零：bare 映射下 mmu_translate 不写 cause，若不清零，
+       非法物理地址访问会误用上一次 page fault 的 cause（评审实测得到 13 而非 5）。 */
+    g_fault_cause = 0;
     return mmu_translate(c->csr.satp, c->csr.priv, c->csr.mstatus, va, acc, pa, &g_fault_cause);
 }
 
@@ -139,14 +157,14 @@ static void do_trap(cpu_t *c, u32 cause, u32 tval)
     u32 epc = c->pc;
     /* FR-1.5 / 规范：任何 trap（含中断）都必须清 LR reservation */
     c->lr_valid = false;
-    if (getenv("RVSIM_TRAP")) fprintf(stderr, "[trap] cause=%u tval=%08x epc=%08x pc=%08x\n", cause, tval, epc, c->pc);
+    if (env_flag("RVSIM_TRAP", &g_trap_dbg)) fprintf(stderr, "[trap] cause=%u tval=%08x epc=%08x pc=%08x\n", cause, tval, epc, c->pc);
     csr_raise(&c->csr, cause, tval);
-    if (getenv("RVSIM_TRAP"))
+    if (env_flag("RVSIM_TRAP", &g_trap_dbg))
         fprintf(stderr, "[trap2] cause=%u epc=%08x target=%d mepc_set=%08x sepc_set=%08x\n",
                 cause, epc, c->csr.priv, c->csr.mepc, c->csr.sepc);
     if (c->csr.priv == PRV_M) {
         c->csr.mepc = epc;
-        if (getenv("RVSIM_TRAP")) fprintf(stderr, "[set] mepc=%08x mtvec=%08x\n", c->csr.mepc, c->csr.mtvec);
+        if (env_flag("RVSIM_TRAP", &g_trap_dbg)) fprintf(stderr, "[set] mepc=%08x mtvec=%08x\n", c->csr.mepc, c->csr.mtvec);
         u32 base = c->csr.mtvec & ~3u;
         u32 mode = c->csr.mtvec & 3u;
         if (mode == 1 && (cause >> 31)) base += 4u * (cause & 0x7FFFFFFFu);
@@ -177,7 +195,7 @@ static bool check_interrupt(cpu_t *c)
             if (!(c->csr.mstatus & MSTATUS_SIE)) continue;
         } else {
             if (c->csr.priv == PRV_M && !(c->csr.mstatus & MSTATUS_MIE)) {
-                if (!getenv("RVSIM_IGNORE_MIE")) continue;
+                if (!env_flag("RVSIM_IGNORE_MIE", &g_ignore_mie)) continue;
             }
         }
         do_trap(c, (u32)code[i] | 0x80000000u, 0);
@@ -221,7 +239,6 @@ static inline u32 imm_j(u32 i)
 
 /* ── 单条执行 ── */
 static int g_hang_detect = -1;
-
 bool cpu_step(cpu_t *c)
 {
     if (!c->running || c->halted) return false;
@@ -309,7 +326,7 @@ bool cpu_step(cpu_t *c)
         case 7: take = (a >= b); break;
         default: do_trap(c, CAUSE_ILLEGAL_INSTRUCTION, insn); return true;
         }
-        if (getenv("RVSIM_BR") && c->pc >= 0x80002270u && c->pc <= 0x80002280u)
+        if (env_flag("RVSIM_BR", &g_brk_dbg) && c->pc >= 0x80002270u && c->pc <= 0x80002280u)
             fprintf(stderr, "[br] pc=%08x insn=%08x a(x%d)=%08x b(x%d)=%08x take=%d\n",
                     c->pc, insn, rs1, a, rs2, b, take);
         if (take) {
@@ -481,7 +498,12 @@ bool cpu_step(cpu_t *c)
     case 0x2F: { /* AMO (RV32A)：注意 aq/rl 占 funct7 的低 2 位，必须用 funct5 */
         u32 addr   = a;
         u32 funct5 = (insn >> 27) & 0x1F;
-        if (addr & 3) { do_trap(c, CAUSE_MISALIGNED_STORE, addr); return true; }
+        if (addr & 3) {
+            /* LR.W 是 load，其余 AMO 是读改写；按主流的分类报 cause
+               （Spike/QEMU 对 LR 报 load-misaligned=4，对其他 AMO 报 store-misaligned=6） */
+            do_trap(c, funct5 == 0x02 ? CAUSE_MISALIGNED_LOAD : CAUSE_MISALIGNED_STORE, addr);
+            return true;
+        }
         u32 old = 0;
         if (!mem_read32(c, addr, &old)) { do_trap(c, CAUSE_LOAD_ACCESS, addr); return true; }
 

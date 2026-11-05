@@ -25,11 +25,14 @@
 
 ## 数字
 
+> 下面的行数由 `./scripts/count_lines.sh` 生成，改代码后重跑即可，不要手改。
+
+
 | 项 | 值 |
 |---|---|
-| 模拟器源码 | 2,270 行（`src/`，含 FDT 解析 210 行） |
-| 迷你内核 | 1,131 行（`kernel/`） |
-| 解释速度 | **32 MIPS**（1000 万条 0.31 秒） |
+| 模拟器源码 | 2,284 行（`src/`，含 FDT 解析 219 行、反汇编适配 70 行） |
+| 迷你内核 | 1,139 行（`kernel/`） |
+| 解释速度 | **约 25.8 MIPS**（CoreMark 12.58 亿条 / 48.7 秒；轻负载微基准可达 32） |
 | WASM 体积 | 90 KB |
 | Linux 启动 | 6.1.14，约 3 亿条指令到 shell |
 
@@ -61,14 +64,21 @@ docs/         需求文档、设计文档、调研
 ./build/rvsim --elf build/kernel.elf
 
 # 可视化（先编译 WASM）
-emcc -O2 -s WASM=1 -s MODULARIZE=1 -s EXPORT_NAME=createRvsim \
-  -s EXPORTED_FUNCTIONS='["_rv_reset","_rv_load","_rv_step","_rv_pc","_rv_reg","_rv_priv","_rv_cycles","_rv_result","_rv_insn","_rv_csr","_rv_mem","_rv_tohost","_malloc","_free"]' \
-  -s EXPORTED_RUNTIME_METHODS='["ccall","cwrap","HEAPU8"]' \
-  -s ALLOW_MEMORY_GROWTH=1 -s INITIAL_MEMORY=134217728 \
-  -I src/include -o web/rvsim.js \
-  web/wasm_entry.c src/exec.c src/csr.c src/bus.c src/mmu.c src/loader_mem.c
+./scripts/build_wasm.sh    # 重新生成 web/rvsim.js + .wasm（含 capstone，必须一起编）
 cd web && python3 -m http.server 8777
 ```
+
+**首次使用（干净克隆）必须先拉依赖**：
+
+```bash
+./scripts/fetch_deps.sh all   # 等价于 make deps：capstone + riscv-tests + dtb 工具
+make                          # 构建 build/rvsim
+make directed                 # 构建 4 个定向测试 ELF
+make dts                      # 构建 dts/minimal.dtb
+./tests/run_tests.sh all      # 回归（应 86/86）
+```
+
+缺 capstone 时 `make` 会直接提示 `先执行：make deps`，不会只丢一个 `capstone.h not found`。
 
 ## Gate 7a 的完成度（如实说明）
 
@@ -108,7 +118,7 @@ cd web && python3 -m http.server 8777
 
 ### FR-2.8：设备地址从 dtb 读取（2026-10-27 实现）
 
-`src/fdt.c`（210 行）解析 FDT：校验 header magic，遍历 structure block，按 `compatible` 属性识别节点（不是按节点名——plic 的节点名是 `interrupt-controller@c000000`，按名字匹配会漏），从 `reg` 读 <base,size>，写进运行时表 `g_devmap`。所有外设访问都走这张表。
+`src/fdt.c`（219 行）解析 FDT：校验 header magic，遍历 structure block，按 `compatible` 属性识别节点（不是按节点名——plic 的节点名是 `interrupt-controller@c000000`，按名字匹配会漏），从 `reg` 读 <base,size>，写进运行时表 `g_devmap`。所有外设访问都走这张表。
 
 **验证方法（可复现）**：
 

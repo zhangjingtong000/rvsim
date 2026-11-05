@@ -39,15 +39,41 @@ fetch_riscv_tests() {
     fi
     mkdir -p tests
     local tmp; tmp="$(mktemp -d)"
-    if command -v curl >/dev/null; then
-        curl -fL ${PROXY:+-x "$PROXY"} \
-            https://github.com/riscv-software-src/riscv-tests/archive/refs/heads/master.tar.gz \
-            -o "$tmp/t.tgz"
-    else
-        wget -O "$tmp/t.tgz" https://github.com/riscv-software-src/riscv-tests/archive/refs/heads/master.tar.gz
+    # 用 git clone --recursive：riscv-tests 的 isa 测试依赖 env 子模块（../env/p/link.ld）。
+    # 不写死 commit（我没有核实过上游 hash，编一个只会误导）；改为 clone 后把实际
+    # commit 记进 tests/riscv-tests/.pinned-commit，便于复现时对齐。
+    if command -v git >/dev/null; then
+        if ! git clone --recursive --depth 1 \
+             ${PROXY:+-c http.proxy="$PROXY"} \
+             https://github.com/riscv-software-src/riscv-tests.git "$tmp/rt" 2>/dev/null; then
+            echo "git clone 失败，回退到 tarball"
+        fi
     fi
-    tar xzf "$tmp/t.tgz" -C "$tmp"
-    mv "$tmp/riscv-tests-master" tests/riscv-tests
+    if [ -d "$tmp/rt" ]; then
+        ( cd "$tmp/rt" && git rev-parse HEAD > /tmp/rt_commit 2>/dev/null ) || true
+        mv "$tmp/rt" tests/riscv-tests
+        if [ -s /tmp/rt_commit ]; then
+            cp /tmp/rt_commit tests/riscv-tests/.pinned-commit
+            echo "已记录 riscv-tests commit: $(cat /tmp/rt_commit)"
+        fi
+        # riscv-tests 的 isa 测试依赖 env 子模块（../env/p/link.ld），必须一起拉
+        if [ -d tests/riscv-tests/env ] && [ -f tests/riscv-tests/env/p/link.ld ]; then
+            echo "env 子模块已就位"
+        else
+            echo "警告：tests/riscv-tests/env/p/link.ld 缺失，官方用例无法编译"
+        fi
+    else
+        if command -v curl >/dev/null; then
+            curl -fL ${PROXY:+-x "$PROXY"} \
+                "https://github.com/riscv-software-src/riscv-tests/archive/refs/heads/master.tar.gz" \
+                -o "$tmp/t.tgz"
+        else
+            wget -O "$tmp/t.tgz" "https://github.com/riscv-software-src/riscv-tests/archive/refs/heads/master.tar.gz"
+        fi
+        tar xzf "$tmp/t.tgz" -C "$tmp"
+        mv "$tmp"/riscv-tests-* tests/riscv-tests
+        echo "已用 tarball 获取（未含 env 子模块，可能编不出官方用例）"
+    fi
     rm -rf "$tmp"
     echo "源码已就位，开始编译 rv32 的 p 测试..."
     if ( cd tests/riscv-tests/isa && make XLEN=32 rv32ui rv32um rv32ua rv32mi rv32si ) >/dev/null 2>&1; then

@@ -49,6 +49,13 @@ fi
 
 # 定向测试（tests/directed/，针对 FR 条目的断言，不是 riscv-tests 官方用例）
 DIRECTED_DIR="$REPO_ROOT/tests/directed"
+DIRECTED_EXPECTED=$(ls "$DIRECTED_DIR"/*.S 2>/dev/null | wc -l)
+DIRECTED_BUILT=$(ls "$DIRECTED_DIR"/*.elf 2>/dev/null | wc -l)
+if [ "$DIRECTED_EXPECTED" -gt "$DIRECTED_BUILT" ]; then
+  # 不静默降级：定向测试没构建时必须说明，否则报告里的数字会莫名变化
+  echo "注意：定向测试只构建了 $DIRECTED_BUILT/$DIRECTED_EXPECTED 条，缺 $((DIRECTED_EXPECTED - DIRECTED_BUILT)) 条"
+  echo "      先执行 make directed 再跑回归"
+fi
 if [ "$SUITE" = "all" ] && ls "$DIRECTED_DIR"/*.elf >/dev/null 2>&1; then
   sub_total=0; sub_pass=0
   for t in "$DIRECTED_DIR"/*.elf; do

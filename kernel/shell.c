@@ -15,7 +15,7 @@ static int streq(const char *a, const char *b)
 
 static void cmd_help(void)
 {
-    uart_puts("命令: help ps run reset mem uptime\n");
+    uart_puts("命令: help ps run [fork|badptr] reset mem uptime\n");
 }
 
 static void cmd_ps(void)
@@ -40,7 +40,18 @@ void shell_input(char ch)
                 uart_putc('\n');
             }
             else if (streq(g_line, "run")) {
-                extern int g_run_flag;
+                extern int g_run_flag, g_fork_flag;
+                g_fork_flag = 0;
+                g_run_flag = 1;
+            }
+            else if (streq(g_line, "run badptr")) {
+                extern int g_run_flag, g_badptr_flag;
+                g_badptr_flag = 1;
+                g_run_flag = 1;
+            }
+            else if (streq(g_line, "run fork")) {
+                extern int g_run_flag, g_fork_flag;
+                g_fork_flag = 1;
                 g_run_flag = 1;
             }
             else if (streq(g_line, "reset")) {
