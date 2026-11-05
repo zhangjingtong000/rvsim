@@ -157,14 +157,26 @@ static const cap_t g_caps[] = {
     {"mem",      "",                       0, "物理内存与缺页统计"},
     {"uptime",   "",                       0, "读取虚拟时钟 mtime"},
     {"log",      "",                       0, "按发生顺序输出事件流"},
-    {"assert",   "key=spawn|exit|ecall|events|nproc, n", 0, "断言：内核直接回答是否成立"},
+    {"assert",   "key=spawn|exit|ecall|restore|events|nproc|uart, value", 0, "断言：内核直接回答是否成立"},
     {"plan",     "run <prog>",             0, "生成执行计划但不执行"},
     {"plans",    "",                       0, "列出待执行的计划"},
     {"apply",    "<plan_id>",              0, "执行指定计划"},
     {"snapshot", "",                       0, "保存当前进程状态快照"},
     {"snaps",    "",                       0, "列出快照"},
     {"restore",  "<snap_id>",              0, "恢复到指定快照（回滚）"},
+    {"status",   "",                       0, "统一状态入口（JSON）"},
+    {"tail",     "",                       0, "输出最近一段串口内容（审计用）"},
 };
+
+/* 统一状态入口：AI 一次调用就能拿到全貌，
+   不必分别去调 ps / log / plans / snaps 再自己拼。 */
+void status_json(void)
+{
+    extern int plan_count(void);
+    extern int snap_count(void);
+    kprintf("{\"status\":{\"nproc\":%d,\"events\":%d,\"plans\":%d,\"snaps\":%d}}\n",
+            proc_count_live(), evt_count_all(), plan_count(), snap_count());
+}
 
 void cap_manifest(void)
 {
@@ -555,6 +567,13 @@ int snap_restore(u32 id)
     return 0;
 }
 
+int snap_count(void)
+{
+    int n = 0;
+    for (u32 i = 0; i < SNAP_SLOTS; i++) if (g_snaps[i].used) n++;
+    return n;
+}
+
 void snap_list(void)
 {
     int first = 1;
@@ -618,6 +637,13 @@ int plan_take_run(u32 id, char *out, u32 cap)
         }
     }
     return 0;
+}
+
+int plan_count(void)
+{
+    int n = 0;
+    for (u32 i = 0; i < PLAN_SLOTS; i++) if (g_plans[i].used) n++;
+    return n;
 }
 
 void plan_list(void)

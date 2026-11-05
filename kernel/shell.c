@@ -3,6 +3,7 @@
 #define SHELL_BUF 128
 
 static char g_line[SHELL_BUF];
+static u32  g_cmd_mark;   /* 命令回显之前的输出长度，供 assert 查产物 */
 static int  g_len = 0;
 
 static void prompt(void) { uart_puts("\nrvsh> "); }
@@ -15,7 +16,7 @@ static int streq(const char *a, const char *b)
 
 static void cmd_help(void)
 {
-    uart_puts("命令: help manifest ps run reset mem uptime log assert plan apply plans snapshot snaps restore\n");
+    uart_puts("命令: help status manifest ps run reset mem uptime log assert plan apply plans snapshot snaps restore\n");
 }
 
 static void cmd_ps(void)
@@ -45,6 +46,19 @@ static void cmd_assert(const char *line)
     key[kl] = 0;
     if (*p != '=') { uart_puts("{\"ok\":false,\"why\":\"格式应为 key=value\"}\n"); return; }
     p++;
+
+    /* uart=<子串>：检查命令回显之前的输出里有没有它 */
+    if (streq(key, "uart")) {
+        extern int uart_tail_has(u32, const char *);
+        int ok = uart_tail_has(g_cmd_mark, p);
+        uart_puts("{\"assert\":\"uart\",\"want\":\"");
+        uart_puts(p);
+        uart_puts("\",\"ok\":");
+        uart_puts(ok ? "true" : "false");
+        uart_puts("}\n");
+        return;
+    }
+
     int want = 0, neg = 0;
     if (*p == '-') { neg = 1; p++; }
     while (*p >= '0' && *p <= '9') { want = want * 10 + (*p - '0'); p++; }
@@ -182,6 +196,20 @@ void shell_input(char ch)
                 uart_dec(n2);
                 uart_puts(" 个进程到就绪状态\n");
             }
+            else if (streq(g_line, "tail")) {
+                extern void uart_tail_dump(void);
+                extern u32  uart_tail_len(void);
+                uart_puts("mark=");
+                uart_dec((int)g_cmd_mark);
+                uart_puts(" len=");
+                uart_dec((int)uart_tail_len());
+                uart_puts(" : ");
+                uart_tail_dump();
+            }
+            else if (streq(g_line, "status")) {
+                extern void status_json(void);
+                status_json();
+            }
             else if (streq(g_line, "snapshot")) {
                 cmd_snapshot();
             }
@@ -227,6 +255,9 @@ void shell_input(char ch)
     } else if (ch == 0x7F || ch == 0x08) {   /* 退格 */
         if (g_len > 0) { g_len--; uart_puts("\b \b"); }
     } else if (g_len < SHELL_BUF - 1 && ch >= 0x20 && ch < 0x7F) {
+        /* 命令的第一个字符：此刻缓冲区里还只有提示符，
+           回显还没进来。assert 查产物时以这里为界。 */
+        if (g_len == 0) g_cmd_mark = uart_tail_len();
         g_line[g_len++] = ch;
         uart_putc(ch);
     }
