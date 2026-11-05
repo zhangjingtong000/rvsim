@@ -154,6 +154,7 @@ seq actor type arg0 arg1 result code
 
 ### 6.3 断言（P9）
 
+**状态断言：**
 ```
 rvsh> assert spawn=3
 {"assert":"spawn","want":3,"got":3,"ok":true}
@@ -161,9 +162,26 @@ rvsh> assert foo=1
 {"ok":false,"why":"未知断言键"}
 ```
 
-AI 不必自己解析事件流：内核直接回答「是不是这样」。
+**产物断言**（验证「输出里有没有出现某内容」）：
+```
+rvsh> assert uart=rvsh>
+{"assert":"uart","want":"rvsh>","ok":true}
+```
 
-### 6.4 预演与提交（P7、P8）
+AI 不必自己解析事件流或翻输出：内核直接回答「是不是这样」。
+
+**实现要点：** 检查产物时必须排除当前命令的回显，否则 `assert uart=rvsh>` 会匹配到自己。因此 `g_cmd_mark` 在命令第一个字符到达前记录，只在它之前的范围内查找。
+
+### 6.4 统一状态入口
+
+```
+rvsh> status
+{"status":{"nproc":3,"events":3,"plans":0,"snaps":0}}
+```
+
+一次调用拿到全貌，AI 不必分别调 ps / log / plans / snaps 再自己拼。
+
+### 6.5 预演与提交（P7、P8）
 
 ```
 rvsh> plan run badptr
@@ -174,7 +192,7 @@ rvsh> apply 1
 {"apply":true,"plan":1}
 ```
 
-### 6.5 快照与回滚
+### 6.6 快照与回滚
 
 ```
 rvsh> snapshot
@@ -185,9 +203,9 @@ rvsh> restore 1
 
 回滚会追加一条 `restore` 事件，使历史保持完整。
 
-### 6.6 完整命令集
+### 6.7 完整命令集
 
-`help` `manifest` `ps` `run` `reset` `mem` `uptime` `log` `assert` `plan` `plans` `apply` `snapshot` `snaps` `restore`
+`help` `status` `manifest` `ps` `run` `reset` `mem` `uptime` `log` `assert` `plan` `plans` `apply` `snapshot` `snaps` `restore` `tail`
 
 ---
 
