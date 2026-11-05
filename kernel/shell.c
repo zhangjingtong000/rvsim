@@ -15,7 +15,7 @@ static int streq(const char *a, const char *b)
 
 static void cmd_help(void)
 {
-    uart_puts("命令: help manifest ps run [fork|badptr] reset mem uptime log\n");
+    uart_puts("命令: help manifest ps run [fork|badptr] reset mem uptime log assert\n");
 }
 
 static void cmd_ps(void)
@@ -25,6 +25,54 @@ static void cmd_ps(void)
 }
 
 /* 由 UART 中断或轮询喂入字符 */
+static int starts_with(const char *a, const char *b)
+{
+    while (*b) { if (*a++ != *b++) return 0; }
+    return 1;
+}
+
+/* assert key=value —— 内核直接回答「是不是这样」。
+   输出固定为一行 JSON，便于机器解析。 */
+static void cmd_assert(const char *line)
+{
+    extern int evt_count_named(const char *);
+    extern int evt_count_all(void);
+    extern int proc_count_live(void);
+
+    const char *p = line + 7;          /* 跳过 "assert " */
+    char key[16]; int kl = 0;
+    while (*p && *p != '=' && kl < 15) key[kl++] = *p++;
+    key[kl] = 0;
+    if (*p != '=') { uart_puts("{\"ok\":false,\"why\":\"格式应为 key=value\"}\n"); return; }
+    p++;
+    int want = 0, neg = 0;
+    if (*p == '-') { neg = 1; p++; }
+    while (*p >= '0' && *p <= '9') { want = want * 10 + (*p - '0'); p++; }
+    if (neg) want = -want;
+
+    int got;
+    if (streq(key, "spawn") || streq(key, "exit") || streq(key, "ecall"))
+        got = evt_count_named(key);
+    else if (streq(key, "events"))
+        got = evt_count_all();
+    else if (streq(key, "nproc"))
+        got = proc_count_live();
+    else {
+        uart_puts("{\"ok\":false,\"why\":\"未知断言键\"}\n");
+        return;
+    }
+
+    uart_puts("{\"assert\":\"");
+    uart_puts(key);
+    uart_puts("\",\"want\":");
+    uart_dec(want);
+    uart_puts(",\"got\":");
+    uart_dec(got);
+    uart_puts(",\"ok\":");
+    uart_puts(got == want ? "true" : "false");
+    uart_puts("}\n");
+}
+
 void shell_input(char ch)
 {
     if (ch == '\r' || ch == '\n') {
@@ -60,6 +108,9 @@ void shell_input(char ch)
                 uart_puts("已重置 ");
                 uart_dec(n2);
                 uart_puts(" 个进程到就绪状态\n");
+            }
+            else if (starts_with(g_line, "assert ")) {
+                cmd_assert(g_line);
             }
             else if (streq(g_line, "manifest")) {
                 extern void cap_manifest(void);

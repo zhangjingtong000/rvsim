@@ -87,6 +87,43 @@ static const char *evt_name(u16 t)
     }
 }
 
+/* ── 供 shell 的 assert 使用 ──
+   AI 不该自己去数事件流：那既慢又容易数错。
+   让内核直接回答「是不是这样」，断言一次调用就完成。 */
+static int kstreq(const char *a, const char *b)
+{
+    while (*a && *b) { if (*a++ != *b++) return 0; }
+    return *a == *b;
+}
+
+int evt_count_named(const char *name)
+{
+    int n = 0;
+    u32 i = g_evt_head;
+    while (i != g_evt_tail) {
+        if (kstreq(evt_name(g_evts[i].type), name)) n++;
+        i = (i + 1u) % EVT_CAP;
+    }
+    return n;
+}
+
+int evt_count_all(void)
+{
+    int n = 0;
+    u32 i = g_evt_head;
+    while (i != g_evt_tail) { n++; i = (i + 1u) % EVT_CAP; }
+    return n;
+}
+
+/* 就绪 + 运行中的进程数 */
+int proc_count_live(void)
+{
+    int n = 0;
+    for (u32 i = 0; i < NPROC; i++)
+        if (procs[i].state == PROC_READY || procs[i].state == PROC_RUN) n++;
+    return n;
+}
+
 /* ── 能力清单 ──
    AI 读这一份就知道能做什么、参数取值、哪个操作不可逆。
    关键：清单由内核生成，不由应用注册——应用注册的清单会撒谎。 */
