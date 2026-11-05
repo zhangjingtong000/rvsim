@@ -13,6 +13,7 @@
 
 static char g_line[SHELL_BUF];
 static u32  g_cmd_mark;   /* 命令回显之前的输出长度，供 assert 查产物 */
+static int  g_cmd_at_prompt; /* 命令开始时系统是否停在提示符 */
 static int  g_len = 0;
 
 static void prompt(void) { uart_puts("\nrvsh> "); }
@@ -55,14 +56,12 @@ static void cmd_assert(const char *line)
 
     const char *p = line + 7;          /* 跳过 "assert " */
     char key[16]; int kl = 0;
-    /* 键在 '=' 或空格处结束——否则 "oob 18" 会被整个当成键名 */
-    while (*p && *p != '=' && *p != ' ' && kl < 15) key[kl++] = *p++;
+    /* 键在 '='、':' 或空格处结束——否则 "oob 18" 会被整个当成键名 */
+    while (*p && *p != '=' && *p != ':' && *p != ' ' && kl < 15) key[kl++] = *p++;
     key[kl] = 0;
     /* 同时接受 key=value 与 key value：实测 AI 经常写成后者，
        每错一次就浪费一步。这是可用性缺陷，不是被测变量。 */
-    if (*p == '=') {
-        p++;
-    } else if (*p == ' ') {
+    if (*p == '=' || *p == ':' || *p == ' ') {
         p++;
     } else {
         uart_puts("{\"ok\":false,\"why\":\"格式应为 key=value\"}\n");
@@ -116,48 +115,79 @@ static void cmd_assert(const char *line)
 
 static void cmd_plan(const char *line)
 {
-    extern u32 plan_make_run(const char *);
+    extern u32 plan_make(u8, const char *);
     const char *p = line + 5;                 /* 跳过 "plan " */
-    if (!(p[0] == 'r' && p[1] == 'u' && p[2] == 'n' && p[3] == ' ')) {
-        uart_puts("{\"ok\":false,\"why\":\"用法: plan run <prog>\"}\n");
+    u8 kind = 0;
+    const char *intent = 0, *argstr = "";
+    int irr = 0;
+
+    if (starts_with(p, "run ")) {
+        kind = PLAN_RUN;     intent = "run";     argstr = p + 4; irr = 0;
+    } else if (streq(p, "reset")) {
+        kind = PLAN_RESET;   intent = "reset";   argstr = "";    irr = 0;
+    } else if (starts_with(p, "restore ")) {
+        kind = PLAN_RESTORE; intent = "restore"; argstr = p + 8; irr = 1;
+    } else {
+        uart_puts("{\"ok\":false,\"why\":\"用法: plan run <prog> | plan reset | plan restore <snap_id>\"}\n");
         return;
     }
-    p += 4;
-    if (!p[0]) { uart_puts("{\"ok\":false,\"why\":\"缺少程序名\"}\n"); return; }
-    u32 id = plan_make_run(p);
+    if (kind != PLAN_RESET && !argstr[0]) {
+        uart_puts("{\"ok\":false,\"why\":\"缺少参数\"}\n");
+        return;
+    }
+
+    u32 id = plan_make(kind, argstr[0] ? argstr : 0);
     if (!id) { uart_puts("{\"ok\":false,\"why\":\"计划槽已满\"}\n"); return; }
+
     uart_puts("{\"plan\":");
     uart_dec((int)id);
-    uart_puts(",\"intent\":\"run\",\"prog\":\"");
-    uart_puts(p);
-    uart_puts("\",\"will\":\"spawn 3 procs\",\"irreversible\":false}\n");
+    uart_puts(",\"intent\":\"");
+    uart_puts(intent);
+    uart_puts("\",\"arg\":\"");
+    uart_puts(argstr);
+    uart_puts("\",\"irreversible\":");
+    uart_puts(irr ? "true" : "false");
+    uart_puts("}\n");
 }
 
 static void cmd_apply(const char *line)
 {
-    extern int plan_take_run(u32, char *, u32);
+    extern int plan_take(u32, u8 *, char *, u32);
     extern void kernel_apply_run(const char *);
+    extern void kernel_apply_reset(void);
+    extern int kernel_apply_restore(u32);
     const char *p = line + 6;                 /* 跳过 "apply " */
     int id = 0;
     while (*p >= '0' && *p <= '9') { id = id * 10 + (*p - '0'); p++; }
     if (id <= 0) { uart_puts("{\"ok\":false,\"why\":\"用法: apply <plan_id>\"}\n"); return; }
-    char prog[12];
-    if (!plan_take_run((u32)id, prog, sizeof(prog))) {
+
+    u8 kind = 0;
+    char arg[12];
+    if (!plan_take((u32)id, &kind, arg, sizeof(arg))) {
         uart_puts("{\"ok\":false,\"why\":\"计划不存在或已被执行\"}\n");
         return;
     }
-    /* 先确认再执行：apply 成功的信息必须在进入用户态之前发出去 */
+
     uart_puts("{\"apply\":true,\"plan\":");
     uart_dec(id);
     uart_puts("}\n");
 
     /* kernel_apply_run 进用户态后不返回，shell_input 尾部的
-       g_len = 0 永远执行不到。必须在这里手动清行缓冲，
-       否则下次回到 shell 会把新输入接在旧命令后面。 */
+       g_len = 0 永远执行不到，必须在这里手动清行缓冲。 */
     g_len = 0;
     g_line[0] = 0;
 
-    kernel_apply_run(prog);
+    if (kind == PLAN_RUN) {
+        kernel_apply_run(arg);
+    } else if (kind == PLAN_RESET) {
+        kernel_apply_reset();
+    } else {
+        int sid = 0;
+        for (const char *q = arg; *q >= '0' && *q <= '9'; q++)
+            sid = sid * 10 + (*q - '0');
+        if (!kernel_apply_restore((u32)sid))
+            uart_puts("{\"ok\":false,\"why\":\"快照不存在\"}\n");
+    }
 }
 
 static void cmd_snapshot(void)
@@ -233,8 +263,8 @@ void shell_input(char ch)
                 uart_tail_dump();
             }
             else if (ADV && streq(g_line, "status")) {
-                extern void status_json(void);
-                status_json();
+                extern void status_json(int);
+                status_json(g_cmd_at_prompt);
             }
             else if (ADV && streq(g_line, "snapshot")) {
                 cmd_snapshot();
@@ -291,6 +321,14 @@ void shell_input(char ch)
                     uart_puts("}}\n");
                 }
             }
+            else if (ADV && starts_with(g_line, "log find ")) {
+                extern void evt_dump_actor(u32);
+                const char *q = g_line + 9;
+                int pid = 0;
+                while (*q >= '0' && *q <= '9') { pid = pid * 10 + (*q - '0'); q++; }
+                if (*q) uart_puts("{\"ok\":false,\"why\":\"用法: log find <pid>\"}\n");
+                else evt_dump_actor((u32)pid);
+            }
             else if (ADV && starts_with(g_line, "log last ")) {
                 extern void evt_dump_last(u32);
                 int n = 0;
@@ -321,7 +359,13 @@ void shell_input(char ch)
     } else if (g_len < SHELL_BUF - 1 && ch >= 0x20 && ch < 0x7F) {
         /* 命令的第一个字符：此刻缓冲区里还只有提示符，
            回显还没进来。assert 查产物时以这里为界。 */
-        if (g_len == 0) g_cmd_mark = uart_tail_len();
+        if (g_len == 0) {
+            /* 必须在命令第一个字符到达时立刻判定：缓冲是滑窗，
+               等命令执行完再回头看，prompt 早被回显挤走了。 */
+            extern int uart_at_prompt(u32);
+            g_cmd_mark = uart_tail_len();
+            g_cmd_at_prompt = uart_at_prompt(g_cmd_mark);
+        }
         g_line[g_len++] = ch;
         uart_putc(ch);
     }

@@ -64,8 +64,14 @@ void uart_putc(char c);
 void uart_puts(const char *s);
 void uart_hex(u32 v);
 void uart_dec(int v);
+
+/* 计划类型：apply 时按这个分派 */
+#define PLAN_RUN     1
+#define PLAN_RESET   2
+#define PLAN_RESTORE 3
 u32  uart_tail_len(void);
 int  uart_tail_has(u32 mark, const char *needle);
+int  uart_at_prompt(u32 mark);
 void uart_tail_dump(void);
 void kprintf(const char *fmt, ...);
 void shell_input(char ch);

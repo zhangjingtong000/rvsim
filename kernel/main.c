@@ -167,6 +167,21 @@ int proc_count_live(void)
 
 /* log 的轻量查询：把「整段倾倒」换成「按需取用」。
    39 条事件倒给模型会撞上下文窗口，而模型会在边界处数错。 */
+void evt_dump_actor(u32 actor)
+{
+    kprintf("seq actor type arg0 arg1 result code\n");
+    u32 i = g_evt_head;
+    while (i != g_evt_tail) {
+        evt_t *e = &g_evts[i];
+        if (e->actor == actor)
+            kprintf("%d %d %s %x %x %d code=%d\n",
+                    (int)e->seq, (int)e->actor, evt_name(e->type),
+                    (u32)e->arg0, (u32)e->arg1, (int)e->result, (int)e->code);
+        i = (i + 1u) % EVT_CAP;
+    }
+    evt_summary();
+}
+
 void evt_count_dump(void)
 {
     kprintf("{\"log\":{\"total\":%d,\"spawn\":%d,\"exit\":%d,\"ecall\":%d,\"restore\":%d,\"denied\":%d}}\n",
@@ -222,10 +237,10 @@ static const cap_t g_caps[] = {
     {"reset",    "reset",                   "",                0, "把全部进程重置到就绪"},
     {"mem",      "mem",                     "",                0, "物理内存与缺页统计"},
     {"uptime",   "uptime",                  "",                0, "读取虚拟时钟 mtime"},
-    {"log",      "log | log count [type] | log last <n>", "", 0, "事件流：全部/计数/最近 n 条"},
+    {"log",      "log | log count [type] | log last <n> | log find <pid>", "", 0, "事件流：全部/计数/最近 n 条"},
     {"tail",     "tail",                    "",                0, "输出最近一段串口内容（审计用）"},
-    {"assert",   "assert <key>=<value>",    "spawn|exit|ecall|restore|events|nproc|oob|uart", 0, "断言：内核直接回答是否成立"},
-    {"plan",     "plan run <prog>",         "hello|fork|badptr", 0, "生成执行计划但不执行"},
+    {"assert",   "assert <key>=<value> | <key>: <value> | <key> <value>",    "spawn|exit|ecall|restore|events|nproc|oob|uart", 0, "断言：内核直接回答是否成立"},
+    {"plan",     "plan run <prog> | plan reset | plan restore <snap_id>",         "hello|fork|badptr", 0, "生成执行计划但不执行"},
     {"plans",    "plans",                   "",                0, "列出待执行的计划"},
     {"apply",    "apply <plan_id>",         "",                0, "执行指定计划"},
     {"snapshot", "snapshot",                "",                0, "保存当前进程状态快照"},
@@ -235,12 +250,15 @@ static const cap_t g_caps[] = {
 
 /* 统一状态入口：AI 一次调用就能拿到全貌，
    不必分别去调 ps / log / plans / snaps 再自己拼。 */
-void status_json(void)
+void status_json(int at_prompt)
 {
     extern int plan_count(void);
     extern int snap_count(void);
-    kprintf("{\"status\":{\"nproc\":%d,\"events\":%d,\"plans\":%d,\"snaps\":%d}}\n",
-            proc_count_live(), evt_count_all(), plan_count(), snap_count());
+    extern u32 uart_tail_len(void);
+    kprintf("{\"status\":{\"nproc\":%d,\"events\":%d,\"plans\":%d,\"snaps\":%d,"
+            "\"uart_len\":%d,\"at_prompt\":%s}}\n",
+            proc_count_live(), evt_count_all(), plan_count(), snap_count(),
+            (int)uart_tail_len(), at_prompt ? "true" : "false");
 }
 
 void cap_manifest(void)
@@ -686,27 +704,29 @@ static void kstrcpy_n(char *d, const char *s, u32 cap)
     d[i] = 0;
 }
 
-/* 登记一个 run 计划，返回计划 id；槽位用尽返回 0 */
-u32 plan_make_run(const char *prog)
+/* 登记一个计划；槽位用尽返回 0。arg 可为 NULL（无参计划）。 */
+u32 plan_make(u8 kind, const char *arg)
 {
     for (u32 i = 0; i < PLAN_SLOTS; i++) {
         if (!g_plans[i].used) {
             g_plans[i].used = 1;
             g_plans[i].id   = ++g_plan_seq;
-            g_plans[i].kind = PLAN_RUN;
-            kstrcpy_n(g_plans[i].arg, prog, sizeof(g_plans[i].arg));
+            g_plans[i].kind = kind;
+            if (arg) kstrcpy_n(g_plans[i].arg, arg, sizeof(g_plans[i].arg));
+            else     g_plans[i].arg[0] = 0;
             return g_plans[i].id;
         }
     }
     return 0;
 }
 
-/* 取出并消费某计划要跑的程序名。找到返回 1。 */
-int plan_take_run(u32 id, char *out, u32 cap)
+/* 取出并消费某计划。找到返回 1，并通过 kind_out/arg_out 交回内容。 */
+int plan_take(u32 id, u8 *kind_out, char *arg_out, u32 cap)
 {
     for (u32 i = 0; i < PLAN_SLOTS; i++) {
-        if (g_plans[i].used && g_plans[i].id == id && g_plans[i].kind == PLAN_RUN) {
-            kstrcpy_n(out, g_plans[i].arg, cap);
+        if (g_plans[i].used && g_plans[i].id == id) {
+            *kind_out = g_plans[i].kind;
+            kstrcpy_n(arg_out, g_plans[i].arg, cap);
             g_plans[i].used = 0;
             return 1;
         }
@@ -729,10 +749,25 @@ void plan_list(void)
         if (!g_plans[i].used) continue;
         if (!first) kprintf(",");
         first = 0;
-        kprintf("{\"id\":%d,\"intent\":\"run\",\"prog\":\"%s\"}",
-                (int)g_plans[i].id, g_plans[i].arg);
+        const char *in = g_plans[i].kind == PLAN_RUN ? "run" :
+                         g_plans[i].kind == PLAN_RESET ? "reset" : "restore";
+        kprintf("{\"id\":%d,\"intent\":\"%s\",\"arg\":\"%s\"}",
+                (int)g_plans[i].id, in, g_plans[i].arg);
     }
     kprintf("]}\n");
+}
+
+/* 执行 reset 计划：重置进程到就绪，返回 */
+void kernel_apply_reset(void)
+{
+    int n = krestart();
+    kprintf("[S] 已重置 %d 个进程\n", n);
+}
+
+/* 执行 restore 计划：回滚到指定快照，返回 1 表示成功 */
+int kernel_apply_restore(u32 id)
+{
+    return snap_restore(id);
 }
 
 /* 真正执行：装载、重置、调度、进用户态。不返回。 */

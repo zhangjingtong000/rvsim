@@ -24,6 +24,19 @@ void uart_putc(char c)
 
 u32 uart_tail_len(void) { return g_uart_tail_n; }
 
+/* mark 处之前是否以 "rvsh> " 结尾 —— AI 用它判断「发命令时系统是否空闲」。
+   传入命令起始位置而不是当前末尾：命令回显已经把 prompt 挤走了，
+   拿当前末尾判断永远是 false。 */
+int uart_at_prompt(u32 mark)
+{
+    static const char *pat = "rvsh> ";
+    if (mark > g_uart_tail_n) mark = g_uart_tail_n;
+    if (mark < 6) return 0;
+    for (u32 i = 0; i < 6; i++)
+        if (g_uart_tail[mark - 6 + i] != pat[i]) return 0;
+    return 1;
+}
+
 /* 在 [0, mark) 范围内查找子串，避免匹配到当前命令的回显 */
 int uart_tail_has(u32 mark, const char *needle)
 {
