@@ -97,17 +97,49 @@ A 组的失败**不是待修的问题**——它没有事件流，答不出历�
 
 ---
 
-## 剩余可优化项（不是局限，是待办）
+## 第二轮：待办全部完成
 
-1. **`assert` 仍要求 `key=value`**：已支持 `key value`，但不支持 `key: value` 等变体。
-2. **没有 `log find <pattern>`**：目前只能按类型计数或取尾部，不能搜索。
-3. **`plan` 只支持 `run`**：未来可扩展到 `reset`、`restore` 等破坏性操作。
-4. **`status` 不含 UART 摘要**：AI 要判断"系统是否还在动"需要额外调 `tail`。
-5. **A 组可以补一个只读的"当前快照"**：让它至少能回答"现在几个进程"，虽然仍然答不了历史。
+| 待办 | 状态 | 实现要点 |
+|---|---|---|
+| `assert` 支持 `key: value` | ✅ | key 解析在 `=`、`:`、空格三处终止 |
+| `log find <pid>` | ✅ | 按 actor 过滤，回答「某进程经历过什么」 |
+| `status` 含 UART 状态 | ✅ | `uart_len` + `at_prompt` |
+| `plan` 扩展到 reset / restore | ✅ | 计划带 kind，apply 按 kind 分派 |
+
+### 一个值得记下的实现陷阱
+
+`status` 的 `at_prompt` 最初恒为 false。
+
+原因：UART 尾部缓冲是**滑动窗口**（满了丢最旧），
+而 `g_cmd_mark` 是**绝对位置**。缓冲满之后 mark 指向的内容早就移位了。
+
+**修法**：不在命令执行时回看，而是在**命令第一个字符到达的那一刻**
+立刻判定并保存结果。
+
+> 滑动窗口 + 绝对索引 不兼容，这是缓冲类设计的老坑。
+
+### 现在的完整能力
+
+```
+help     manifest  status   ps       run      reset    mem
+uptime   log       tail     assert   plan     plans    apply
+snapshot snaps     restore
+```
+
+`log` 的四种形态：`log`（全部+摘要）、`log count`（计数）、
+`log count <type>`（分类计数）、`log last <n>`（尾部）、`log find <pid>`（按进程）。
+
+`plan` 的三种意图：`plan run <prog>`、`plan reset`、`plan restore <snap_id>`。
 
 ---
 
-## 一句话
+## 下一轮实验该测什么
 
-> **上一轮记进文档的「三种失败模式」，有六条其实是我们自己的接口问题。
-> 改完之后，同一任务同一模型的成本降了一半。**
+**破坏性操作**比「计数」更能拉开 A/B 差距：
+
+> 任务：先存档，运行演示，然后回滚到存档前，并证明恢复成功。
+
+- A 组：**根本没有 snapshot/restore**，做不到
+- B 组：`snapshot` → `run` → `restore` → `assert nproc=3`
+
+这个差异是**能力有无**，不是**效率高低**，比计数任务更绝对。
