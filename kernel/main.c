@@ -246,6 +246,7 @@ static const cap_t g_caps[] = {
     {"snapshot", "snapshot",                "",                0, "保存当前进程状态快照，返回快照编号"},
     {"snaps",    "snaps",                   "",                0, "列出快照：id 用于 restore，evt_seq 是该快照时的事件序号"},
     {"restore",  "restore <snap_id>",       "",                1, "恢复到指定快照（回滚，改变当前进程状态）"},
+    {"guide",    "guide",                   "",                0, "使用指南：事件字段语义、序号体系、易错点"},
 };
 
 /* 统一状态入口：AI 一次调用就能拿到全貌，
@@ -269,6 +270,31 @@ void cap_help(void)
     kprintf("命令:");
     for (u32 i = 0; i < n; i++) kprintf(" %s", g_caps[i].name);
     kprintf("\n");
+}
+
+/* ── 面向 AI 的使用指南 ──
+   manifest 的 desc 只够写一句话，装不下的东西放这里。
+   这份内容需要长期维护：新增能力、改变语义时同步更新。 */
+void cap_guide(void)
+{
+    kprintf("{\"guide\":{\n");
+    kprintf(" \"shell\":\"非 POSIX：不支持管道/重定向/通配符\",\n");
+    kprintf(" \"output\":\"用户程序直接写串口；run 之后的 AAABBBCCC/PPPPCCCC 是程序输出，不是内核日志\",\n");
+    kprintf(" \"events\":{\n");
+    kprintf("  \"spawn\":\"arg0=入口地址 arg1=用户栈地址\",\n");
+    kprintf("  \"exit\":\"arg0=退出码\",\n");
+    kprintf("  \"ecall\":\"arg0=缓冲区 arg1=长度 result=写出字节数 code=0成功/1地址非法/2超长\",\n");
+    kprintf("  \"restore\":\"arg0=快照id arg1=该快照时的事件序号\"\n");
+    kprintf(" },\n");
+    kprintf(" \"seq\":\"log 的 seq 是全局单调序号（含已被覆盖的）；log count 的 total 是当前缓冲区条数，两者不同\",\n");
+    kprintf(" \"tips\":[\n");
+    kprintf("  \"assert 三种写法等价：key=value、key: value、key value\",\n");
+    kprintf("  \"log 默认只给最近 30 条，全量用 log all\",\n");
+    kprintf("  \"apply 之后计划即被消耗，plans 会变空\",\n");
+    kprintf("  \"restore 只恢复进程状态，事件流 append-only 不可回滚\",\n");
+    kprintf("  \"run fork 会额外创建子进程，共 4 个进程\"\n");
+    kprintf(" ]\n");
+    kprintf("}}\n");
 }
 
 void cap_manifest(void)

@@ -295,6 +295,10 @@ void shell_input(char ch)
             else if (ADV && starts_with(g_line, "assert ")) {
                 cmd_assert(g_line);
             }
+            else if (ADV && streq(g_line, "guide")) {
+                extern void cap_guide(void);
+                cap_guide();
+            }
             else if (ADV && streq(g_line, "manifest")) {
                 extern void cap_manifest(void);
                 cap_manifest();
