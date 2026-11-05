@@ -70,7 +70,16 @@ button.wide{flex:1}
 @keyframes bl{50%{opacity:0}}
 
 /* 进程表 */
-#procs{font-family:var(--mono);font-size:11.5px}
+#procs,#caps{font-family:var(--mono);font-size:11.5px}
+#caps{max-height:38vh;overflow-y:auto;padding-right:4px}
+.prow{display:grid;grid-template-columns:32px 52px 1fr 32px;gap:4px;padding:2px 0;
+  border-bottom:1px solid var(--line)}
+.prow.ph{color:var(--fg3);font-size:10px;text-transform:uppercase;letter-spacing:.06em}
+.prow.run{color:var(--acc)}.prow.ready{color:var(--fg)}
+.prow.exit{color:var(--fg3)}
+.cap{padding:2px 0;border-bottom:1px solid var(--line);line-height:1.35}
+.cap b{color:var(--acc);font-weight:500}
+.cap span{color:var(--fg3);font-size:10.5px;margin-left:4px}
 .pt{display:grid;grid-template-columns:26px 1fr 44px;gap:6px;padding:3px 6px;border-radius:4px;color:var(--fg2)}
 .pt:hover{background:var(--s2)}
 .pt.run{background:rgba(94,234,212,.08);color:var(--fg)}
@@ -85,9 +94,6 @@ button.wide{flex:1}
 .rg input{width:66px;background:var(--bg);color:var(--acc);border:1px solid var(--acc);
           border-radius:3px;font:11.5px var(--mono);padding:0 3px;outline:none}
 
-#hot{display:grid;grid-template-columns:repeat(32,1fr);gap:1px}
-#hot i{aspect-ratio:1;background:#0e1115;border-radius:1px;display:block;transition:transform .1s}
-#hot i:hover{transform:scale(1.6);outline:1px solid var(--acc);position:relative;z-index:3}
 .hint{font-family:var(--mono);font-size:10px;color:var(--fg3);margin-top:7px}
 
 #tip{position:fixed;display:none;background:var(--s3);border:1px solid var(--line2);border-radius:6px;
@@ -152,9 +158,8 @@ button.wide{flex:1}
     <div class="lbl" style="margin-top:20px">寄存器</div>
     <div id="reg"></div>
 
-    <div class="lbl" style="margin-top:20px">热图 <em>4KB×512</em></div>
-    <div id="hot"></div>
-    <div class="hint" id="hHint">悬停查看</div>
+    <div class="lbl" style="margin-top:20px">能力 <em>manifest</em></div>
+    <div id="caps"><div class="hint">启动后自动读取</div></div>
   </div>
 </main>
 
@@ -180,6 +185,48 @@ function termWrite(txt){
   if(!txt)return;
   term.textContent=term.textContent.replace(/\u200b|\u2588/g,"");
 }
+/* ── 结构化状态嗅探 ──
+   内核现在输出 JSON（ps / status / manifest），前端不需要另开通道，
+   直接从 UART 流里认出来即可，零侵入。 */
+let sniffBuf = "";
+const capsSeen = new Map();
+
+function renderProcs(o){
+  let h = '<div class="prow ph"><span>PID</span><span>状态</span><span>PC</span><span>轮</span></div>';
+  for(const p of o.procs){
+    if(p.state === "UNUSED") continue;
+    const cls = p.state==="RUN" ? "run" : p.state==="READY" ? "ready" : "exit";
+    h += `<div class="prow ${cls}"><span>${p.pid}</span><span>${p.state}</span>`
+       + `<span>${p.pc}</span><span>${p.nrun}</span></div>`;
+  }
+  $("procs").innerHTML = h;
+}
+
+function renderCaps(){
+  if(!capsSeen.size) return;
+  let h = "";
+  for(const [name, v] of capsSeen) h += `<div class="cap"><b>${name}</b><span>${v}</span></div>`;
+  $("caps").innerHTML = h;
+}
+
+function sniff(s){
+  sniffBuf = (sniffBuf + s).slice(-12000);
+
+  const mPs = sniffBuf.match(/\{"nproc":\d+,"procs":\[[^\]]*\]\}/);
+  if(mPs){ try{ renderProcs(JSON.parse(mPs[0])); }catch(e){} }
+
+  const re = /\{"cap":"([^"]+)","usage":"([^"]*)"/g;
+  let m, before = capsSeen.size;
+  while((m = re.exec(sniffBuf)) !== null) capsSeen.set(m[1], m[2]);
+  if(capsSeen.size !== before) renderCaps();
+}
+
+/* 只注入，不阻塞：由执行引擎在下一帧处理 */
+function sendCmd(cmd){
+  if(!M || !loaded) return;
+  for(const ch of cmd + "\r") M._rv_uart_write(ch.charCodeAt(0));
+}
+
 function appendOut(s){
   const t=term;
   // 光标一直留在末尾
@@ -206,6 +253,11 @@ function boot(bytes,name){
   /* 不在 boot 里同步跑几十万步：那会把主线程钉死，浏览器连一次重绘
      都做不了，看起来就是"卡住"。交给分片执行引擎，边跑边渲染。 */
   startTicking();
+
+  /* 进入 shell 后主动问一次能力与进程状态。
+     前端不另开通道，就走同一根 UART —— 与「单一权威接口」一致。 */
+  setTimeout(()=>{ sendCmd("manifest"); }, 900);
+  setTimeout(()=>{ sendCmd("ps"); }, 1600);
 }
 async function bootUrl(u,name){
   try{
@@ -216,15 +268,20 @@ async function bootUrl(u,name){
 }
 
 /* 取 UART 输出 */
+/* 必须用流式解码：分块读取会切断 UTF-8 多字节序列，
+   非流式 decode 会把半个汉字解成乱码（◆◆）。 */
+const uartDecoder = new TextDecoder();
+
 function pumpUart(){
   if(!M)return;
   let n; let s="";
   while((n=M._rv_uart_read(ubuf,4096))>0){
     const arr=M.HEAPU8.subarray(ubuf,ubuf+n);
-    s+=new TextDecoder().decode(arr);
+    s+=uartDecoder.decode(arr,{stream:true});
     total+=n;
   }
   if(s){ appendOut(s); tailBuf=(tailBuf+s).slice(-160); }
+  if(s) sniff(s);
   /* 提示符可能被拆到相邻两帧，所以用累积窗口判断。
      进 shell 后降到低预算常驻：仍能响应键盘，但不再把 CPU 跑满。 */
   if(speed>1&&tailBuf.indexOf("rvsh>")>=0) speed=1;
@@ -319,15 +376,6 @@ function render(){
   }
   $("reg").innerHTML=r;
 
-  const el=$("hot").children;
-  let mx=1;const hs=new Uint32Array(512);
-  for(let p=0;p<512;p++){hs[p]=M._rv_hot_r(p)+M._rv_hot_w(p);if(hs[p]>mx)mx=hs[p];}
-  for(let p=0;p<512;p++){
-    const n=hs[p];
-    if(!n){el[p].style.background="#0e1115";continue;}
-    el[p].style.background=`rgba(94,234,212,${Math.max(.1,Math.log(n+1)/Math.log(mx+1)).toFixed(3)})`;
-    el[p].dataset.n=n;
-  }
 }
 
 /* 事件 */
@@ -359,20 +407,9 @@ $("reg").onclick=e=>{
   inp.onkeydown=k=>{if(k.key==="Enter")inp.blur();if(k.key==="Escape"){inp.value=hx(cur);inp.blur();}};
 };
 
-// 热图
-$("hot").onmousemove=e=>{
-  const d=e.target.closest("#hot i[data-n]");if(!d)return;
-  const p=+d.dataset.p;
-  const t=$("tip");t.style.display="block";
-  t.style.left=(e.clientX+14)+"px";t.style.top=(e.clientY+14)+"px";
-  t.textContent=`页 #${p}\n${hx(0x80000000+p*4096)}\n读 ${M._rv_hot_r(p)} · 写 ${M._rv_hot_w(p)}`;
-  $("hHint").textContent=`#${p}`;
-};
-$("hot").onmouseleave=()=>{$("tip").style.display="none";};
 
 createRvsim().then(m=>{
   M=m;ubuf=m._malloc(4096);
-  $("hot").innerHTML=Array.from({length:512},(_,p)=>`<i data-p="${p}"></i>`).join("");
   setState("就绪","");
   // 自动启动内核，让用户一打开就看到东西
   bootUrl("images/kernel.elf","mini-kernel");
