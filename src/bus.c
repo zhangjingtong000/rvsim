@@ -6,6 +6,27 @@
 
 clint_t  g_clint;
 uart_t   g_uart;
+
+/* UART 输出环形缓冲。WASM 环境没有真正的终端，前端靠它拿到 guest 的输出；
+   原生环境只是额外存一份，不影响 putchar 行为。 */
+#define UOUT_CAP 16384
+static u8  g_uout[UOUT_CAP];
+static u32 g_uout_head, g_uout_tail;
+
+int bus_uart_out_pending(void)
+{
+    return (int)((g_uout_tail - g_uout_head) & (UOUT_CAP - 1));
+}
+void bus_uart_out_clear(void) { g_uout_head = g_uout_tail = 0; }
+int bus_uart_out_take(u8 *dst, int max)
+{
+    int n = 0;
+    while (n < max && g_uout_head != g_uout_tail) {
+        dst[n++] = g_uout[g_uout_head];
+        g_uout_head = (g_uout_head + 1) & (UOUT_CAP - 1);
+    }
+    return n;
+}
 plic_t   g_plic;
 syscon_t g_syscon;
 bool g_login_seen = false;
@@ -109,6 +130,10 @@ static bool uart_write(u32 off, int len, u32 val)
     case 0: {                                                    /* THR */
         char ch = (char)(val & 0xFF);
         putchar(ch); fflush(stdout);
+        {   /* 同时进环形缓冲，供前端取走 */
+            u32 nxt = (g_uout_tail + 1) & (UOUT_CAP - 1);
+            if (nxt != g_uout_head) { g_uout[g_uout_tail] = (u8)ch; g_uout_tail = nxt; }
+        }
         /* 滚动窗口，检测 "login:" 与 "# " 提示符 */
         memmove(g_out_win, g_out_win + 1, 7);
         g_out_win[7] = ch;

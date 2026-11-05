@@ -27,8 +27,10 @@ u32 *page_alloc(void)
 /* 建立恒等映射（VA == PA），用于 S 模式平直访问 */
 static void map_identity_1g(u32 *root)
 {
-    /* Sv32：一个 4MB 超页覆盖 0..4MB；这里映射 0x80000000..0x80400000 */
-    for (u32 i = 0; i < 2; i++) {
+    /* Sv32 的一个 L1 表覆盖 4MB。这里把全部 64MB RAM 恒等映射进内核页表：
+       只映射前 8MB 时，内核访问 RAM 顶部（比如前端进程表所在的最后一页）
+       会缺页，而在中断上下文里缺页会递归，直接把内核栈冲掉。 */
+    for (u32 i = 0; i < (RAM_SIZE / 0x400000u); i++) {
         u32 va = 0x80000000u + i * 0x400000u;
         u32 *l1 = page_alloc();
         root[VPN2(va)] = ((u32)l1 >> 12 << 10) | PTE_V;

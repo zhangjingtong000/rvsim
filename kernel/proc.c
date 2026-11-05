@@ -24,8 +24,28 @@ void proc_create(u32 pid, u32 entry, u32 stack_pa)
     procs[pid].regs[10] = pid;            /* x10 = a0 = pid */
 }
 
+/* 前端进程视图：把进程表写进 RAM 最后一页。
+   page_alloc 从 _kernel_end(0x80007000) 往上分配，永远碰不到这一页，
+   所以不会和任何内核数据结构冲突。Web 端用 rv_read32 逐字读。 */
+#define FRONT_PAGE 0x83FFF000u
+
+void front_sync(void)
+{
+    volatile u32 *t = (volatile u32 *)FRONT_PAGE;
+    t[0] = 0x52565350u;          /* 'RVSP' 魔数，前端用来确认表有效 */
+    t[1] = NPROC;
+    for (u32 i = 0; i < NPROC; i++) {
+        t[2 + i * 4 + 0] = procs[i].pid;
+        t[2 + i * 4 + 1] = procs[i].state;
+        t[2 + i * 4 + 2] = procs[i].pc;
+        t[2 + i * 4 + 3] = procs[i].nrun;
+    }
+}
+
 proc_t *proc_schedule(void)
 {
+    proc_t *ret = NULL;
+
     if (cur_proc >= 0 && procs[cur_proc].state == PROC_RUN)
         procs[cur_proc].state = PROC_READY;
 
@@ -35,10 +55,12 @@ proc_t *proc_schedule(void)
             procs[idx].state = PROC_RUN;
             cur_proc = idx;
             procs[idx].nrun++;
-            return &procs[idx];
+            ret = &procs[idx];
+            break;
         }
     }
-    return NULL;
+    front_sync();
+    return ret;
 }
 
 /* 设置 CLINT mtimecmp，delta 为相对当前 mtime 的周期数 */

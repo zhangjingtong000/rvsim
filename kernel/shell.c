@@ -15,7 +15,7 @@ static int streq(const char *a, const char *b)
 
 static void cmd_help(void)
 {
-    uart_puts("命令: help ps run [fork|badptr] reset mem uptime\n");
+    uart_puts("命令: help ps run [fork|badptr] reset mem uptime log\n");
 }
 
 static void cmd_ps(void)
@@ -60,6 +60,10 @@ void shell_input(char ch)
                 uart_puts("已重置 ");
                 uart_dec(n2);
                 uart_puts(" 个进程到就绪状态\n");
+            }
+            else if (streq(g_line, "log")) {
+                extern void evt_dump(void);
+                evt_dump();
             }
             else if (streq(g_line, "mem")) {
                 extern u32 g_pf_count;

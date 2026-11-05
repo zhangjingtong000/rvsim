@@ -5,6 +5,7 @@
 #include "../src/include/bus.h"
 #include "../src/include/loader.h"
 #include "../src/include/disasm.h"
+#include "../src/include/fdt.h"
 extern unsigned bus_hot_read(unsigned page);
 extern unsigned bus_hot_write(unsigned page);
 extern void bus_hot_clear(void);
@@ -15,6 +16,11 @@ static int   g_last_result = 0;
 EMSCRIPTEN_KEEPALIVE
 void rv_reset(void)
 {
+    /* 必须先填设备基址表：g_devmap 在 fdt.c 里是 BSS 全零，
+       不调用本函数则 uart/clint/plic 的 base 全是 0，
+       guest 访问 0x10000005 这类 MMIO 会落到 bus_read 的
+       "无设备匹配"分支并返回 false，最终变成 load access fault。 */
+    devmap_defaults();
     bus_init();
     cpu_reset(&g_cpu);
     g_cpu.max_cycles = 0x7FFFFFFFFFFFFFFFull;
@@ -34,6 +40,10 @@ EMSCRIPTEN_KEEPALIVE
 int rv_step(void)
 {
     if (!g_cpu.running || g_cpu.halted) return 1;
+    /* 推进 CLINT mtime / PLIC 中断，并把到期中断打进 mip。
+       原生主循环每步都做这件事；WASM 路径此前漏了，导致内核的
+       定时器中断永不触发，一进 wfi 就卡死在 trap 里。 */
+    bus_tick(&g_cpu.csr, g_cpu.cycles);
     if (!cpu_step(&g_cpu)) return 1;
     /* tohost 检查 */
     if (g_cpu.img.has_tohost) {
@@ -48,12 +58,30 @@ int rv_step(void)
 
 EMSCRIPTEN_KEEPALIVE int rv_pc(void)      { return (int)g_cpu.pc; }
 EMSCRIPTEN_KEEPALIVE int rv_reg(int i)    { return (i >= 0 && i < 32) ? (int)g_cpu.x[i] : 0; }
+/* 写寄存器：让前端能改 x0-x31（x0 保持只读 0）。
+   没有这个接口时，UI 只能"看"，现场演示没法改 PC 跳转。 */
+EMSCRIPTEN_KEEPALIVE
+void rv_set_reg(int i, int v)
+{
+    if (i > 0 && i < 32) g_cpu.x[i] = (u32)v;
+}
+EMSCRIPTEN_KEEPALIVE
+void rv_set_pc(int v) { g_cpu.pc = (u32)v; }
+/* 内存写入（单字节），供前端 hex 编辑 */
+EMSCRIPTEN_KEEPALIVE
+int rv_mem_write(int a, int v) { return bus_write((u32)a, 1, (u32)(v & 0xFF)) ? 1 : 0; }
 EMSCRIPTEN_KEEPALIVE int rv_priv(void)    { return (int)g_cpu.csr.priv; }
 EMSCRIPTEN_KEEPALIVE int rv_cycles(void)  { return (int)g_cpu.cycles; }
 EMSCRIPTEN_KEEPALIVE int rv_result(void)  { return g_last_result; }
 EMSCRIPTEN_KEEPALIVE int rv_insn(void)    { return (int)g_cpu.cur_instr; }
 EMSCRIPTEN_KEEPALIVE int rv_csr(int a)    { u32 v = 0; csr_read_priv(&g_cpu.csr, (u32)a, &v); return (int)v; }
 EMSCRIPTEN_KEEPALIVE int rv_mem(int a)    { u32 v = 0; bus_read((u32)a, 1, &v); return (int)v; }
+/* 读 32 位：前端用它读内核导出的进程表（RAM 顶页 0x83FFF000） */
+EMSCRIPTEN_KEEPALIVE int rv_read32(int a) { u32 v = 0; bus_read((u32)a, 4, &v); return (int)v; }
+/* 终端：取走 guest 的 UART 输出 / 注入键盘输入 */
+EMSCRIPTEN_KEEPALIVE int  rv_uart_read(unsigned char *dst, int max) { return bus_uart_out_take(dst, max); }
+EMSCRIPTEN_KEEPALIVE void rv_uart_write(int ch) { uart_push_rx((u8)(ch & 0xFF)); }
+EMSCRIPTEN_KEEPALIVE void rv_uart_clear(void) { bus_uart_out_clear(); }
 EMSCRIPTEN_KEEPALIVE int rv_tohost(void)  { return (int)g_cpu.img.tohost_addr; }
 /* ── 可视化扩展接口 ── */
 EMSCRIPTEN_KEEPALIVE

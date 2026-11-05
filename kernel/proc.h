@@ -32,5 +32,7 @@ proc_t *proc_schedule(void);
 void proc_switch(u32 *old_pc, u32 *old_sp, u32 new_pc, u32 new_sp);
 /* 设置下一次定时器中断 */
 void proc_set_timer(u32 delta);
+/* 把进程表同步到 RAM 顶页，供 Web 前端读取 */
+void front_sync(void);
 
 #endif

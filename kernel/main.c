@@ -26,6 +26,7 @@ static void proc_switch_satp(u32 *pgtbl)
 
 extern u32 *kernel_pgtbl(void);
 extern void enter_u_mode(u32 entry, u32 stack, u32 pid);
+void shell_loop(void);   /* shell 主循环：开机与进程全退出后共用 */
 extern const u8 user_prog_start[];
 extern const u8 user_prog_end[];
 extern const u8 fork_prog_start[];
@@ -38,6 +39,68 @@ static u32  g_user_base = 0x80400000u;
 
 /* 每个进程的用户栈（物理页） */
 static u32 g_ustack[NPROC];
+
+/* ── 事件日志 ──
+   内核的真相不是「当前状态」，而是「发生过什么」。
+   状态可以从事件流重放出来，反过来不成立。
+   这是可审计、可回放、可回滚三件事的共同底座。 */
+#define EVT_CAP   512
+#define EVT_SPAWN 1
+#define EVT_EXIT  2
+#define EVT_ECALL 3
+
+typedef struct {
+    u32 seq;
+    u32 actor;      /* 谁发起的：进程号；-1 表示内核自身 */
+    u16 type;
+    u16 pad;
+    u32 arg0;
+    u32 arg1;
+    s32 result;
+} evt_t;
+
+static evt_t g_evts[EVT_CAP];
+static u32 g_evt_head, g_evt_tail, g_evt_seq;
+
+void evt_emit(u16 type, u32 actor, u32 a0, u32 a1, s32 result)
+{
+    u32 nxt = (g_evt_tail + 1u) % EVT_CAP;
+    if (nxt == g_evt_head)                       /* 满了就覆盖最旧的一条 */
+        g_evt_head = (g_evt_head + 1u) % EVT_CAP;
+    evt_t *e = &g_evts[g_evt_tail];
+    e->seq    = ++g_evt_seq;
+    e->actor  = actor;
+    e->type   = type;
+    e->arg0   = a0;
+    e->arg1   = a1;
+    e->result = result;
+    g_evt_tail = nxt;
+}
+
+static const char *evt_name(u16 t)
+{
+    switch (t) {
+    case EVT_SPAWN: return "spawn";
+    case EVT_EXIT:  return "exit";
+    case EVT_ECALL: return "ecall";
+    default:        return "?";
+    }
+}
+
+/* 把事件流按发生顺序打印出来。这是「真相」视图，不是状态投影。 */
+void evt_dump(void)
+{
+    u32 i = g_evt_head;
+    /* 内核 kprintf 是精简实现，不支持宽度/对齐说明符，只用基本格式 */
+    kprintf("seq actor type arg0 arg1 result\n");
+    while (i != g_evt_tail) {
+        evt_t *e = &g_evts[i];
+        kprintf("%d %d %s %x %x %d\n",
+                (int)e->seq, (int)e->actor, evt_name(e->type),
+                (u32)e->arg0, (u32)e->arg1, (int)e->result);
+        i = (i + 1u) % EVT_CAP;
+    }
+}
 
 /* ── M 模式 trap：只处理定时器，切进程 ── */
 u32 m_trap_handler(u32 cause, u32 epc, u32 tval, u32 *regs)
@@ -136,34 +199,18 @@ u32 s_trap_handler(u32 cause, u32 epc, u32 tval, u32 *regs)
             }
             /* 一个字节都没写出去说明指针整体非法，返回 -1 让用户程序能察觉 */
             regs[R_A0] = (n == 0 && len > 0) ? (u32)-1 : n;
+            evt_emit(EVT_ECALL, (u32)cur_proc, buf, len,
+                     (n == 0 && len > 0) ? -1 : (s32)n);
             return epc + 4;
         }
         if (a7 == 0) {           /* exit */
             kprintf("\n[U] proc %d exit(%d)\n", cur_proc, a0);
+            evt_emit(EVT_EXIT, (u32)cur_proc, a0, 0, 0);
             procs[cur_proc].state = PROC_EXIT;
             proc_t *next = proc_schedule();
             if (!next) {
-                kprintf("\n[S] 所有进程结束，进入 shell\n");
-                extern void shell_start(void);
-                extern void shell_input(char);
-                shell_start();
-                volatile u8 *lsr2 = (volatile u8 *)(UART_BASE + 5);
-                volatile u8 *rbr2 = (volatile u8 *)(UART_BASE + 0);
-                for (;;) {
-                    if (*lsr2 & 0x01) shell_input((char)*rbr2);
-                    if (g_run_flag) {
-                        g_run_flag = 0;
-                        kload_prog(g_badptr_flag ? "badptr" : (g_fork_flag ? "fork" : "hello"));
-                        g_badptr_flag = 0;
-                        /* run = 重置所有进程 + 立即调度（不需要先敲 reset） */
-                        int n2 = krestart();
-                        kprintf("[S] run: 已重置 %d 个进程，重新调度\n", n2);
-                        proc_t *p = proc_schedule();
-                        if (!p) { kprintf("[S] 调度失败\n"); continue; }
-                        if (p->pgtbl) proc_switch_satp(p->pgtbl);
-                        enter_u_mode(p->pc, p->sp, p->pid);
-                    }
-                }
+                kprintf("\n[S] 所有进程结束，回到 shell\n");
+                shell_loop();          /* 不返回 */
             }
             for (int i = 0; i < 32; i++) regs[i] = next->regs[i];
             return next->pc;
@@ -303,6 +350,7 @@ int krestart(void)
     }
     for (u32 k = NPROC_INIT; k < NPROC; k++) procs[k].state = PROC_EXIT;
     cur_proc = -1;
+    front_sync();
     return (int)NPROC_INIT;
 }
 
@@ -346,6 +394,7 @@ void kmain(void)
         g_ustack[i] = g_user_base + 0x10000u + i * 0x2000u;   /* 64KB 之后，间隔 8KB */
         memset((void *)g_ustack[i], 0, 4096);
         proc_create(i, g_user_base, g_ustack[i]);
+        evt_emit(EVT_SPAWN, i, g_user_base, g_ustack[i], 0);
         /* 每个进程独立的页表，只映射代码页 */
         procs[i].pgtbl = vm_proc_pgtbl();
         vm_map_code(procs[i].pgtbl, g_user_base, g_user_base);
@@ -365,6 +414,46 @@ void kmain(void)
     enter_s_mode((u32)s_main, 0x803FF000u);
 }
 
+/* shell 主循环：轮询 UART 收字符；收到 run 就装载镜像、重置进程并调度。
+   开机时由 s_main 直接调用；所有用户进程退出后由 trap 处理程序调用。
+   enter_u_mode 不返回，所以一旦真正启动进程，本函数就被"挂起"在
+   内核栈上，等进程全部退出后基址重新进入。 */
+void shell_loop(void)
+{
+    extern void shell_start(void);
+    extern void shell_input(char);
+    extern int g_run_flag, g_fork_flag, g_badptr_flag;
+
+    /* shell 不是进程，不该被时间片打断：此时 satp 指向内核页表，
+       一旦 s_trap_handler 把 PC 切到用户进程就会指令缺页。
+       停掉定时器，等真正要进用户态前再恢复。 */
+    proc_set_timer(0x7FFFFFF0u);
+
+    /* S 模式默认 SUM=0，不能读写用户页（U 位）的映射。
+       kload_prog 要把镜像写进 0x80400000 这个用户页，必须开 SUM。
+       原来的 shell 跑在 M 模式 trap 里不受此限制，挪到 S 模式后必须显式打开。 */
+    __asm__ volatile("csrs sstatus, %0" : : "r"(0x40000u));
+
+    shell_start();
+    volatile u8 *lsr = (volatile u8 *)(UART_BASE + 5);
+    volatile u8 *rbr = (volatile u8 *)(UART_BASE + 0);
+    for (;;) {
+        if (*lsr & 0x01) shell_input((char)*rbr);
+        if (g_run_flag) {
+            g_run_flag = 0;
+            kload_prog(g_badptr_flag ? "badptr" : (g_fork_flag ? "fork" : "hello"));
+            g_badptr_flag = 0;
+            int n2 = krestart();
+            kprintf("[S] run: 已重置 %d 个进程，重新调度\n", n2);
+            proc_t *p = proc_schedule();
+            if (!p) { kprintf("[S] 调度失败\n"); continue; }
+            if (p->pgtbl) proc_switch_satp(p->pgtbl);
+            proc_set_timer(20000);      /* 恢复时间片，进程才能轮转 */
+            enter_u_mode(p->pc, p->sp, p->pid);
+        }
+    }
+}
+
 void s_main(void)
 {
     kprintf("[S] 进入 S 模式\n");
@@ -373,15 +462,9 @@ void s_main(void)
     __asm__ volatile("csrs sie, %0" : : "r"(SIE_STIE));
     __asm__ volatile("csrs sstatus, %0" : : "r"(SSTATUS_SIE));
 
-    proc_t *p0 = proc_schedule();
-    if (!p0) { kprintf("[S] 无进程\n"); for (;;) { } }
-    kprintf("[S] 启动 proc %d pc=%x sp=%x pt=%x\n", p0->pid, p0->pc, p0->sp, (u32)p0->pgtbl);
-    if (p0->pgtbl) {
-        proc_switch_satp(p0->pgtbl);
-        u32 satp_now = 0;
-        __asm__ volatile("csrr %0, satp" : "=r"(satp_now));
-        kprintf("[S] satp 实际=%x\n", satp_now);
-    }
-    enter_u_mode(p0->pc, p0->sp, p0->pid);
+    /* 开机直接进 shell。多进程演示改由 run 命令触发：
+       否则要先空转约 3000 万条指令看完 60 个 A/B/C 才看得到提示符，
+       开机体验等于不可用。 */
+    shell_loop();
     for (;;) { }
 }

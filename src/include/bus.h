@@ -63,4 +63,10 @@ void bus_hot_clear(void);
 
 void uart_push_rx(u8 byte);
 
+/* UART 输出环形缓冲：供 WASM/前端取走 guest 打印的字符。
+   原生跑的时候这些字符同时打到 stdout，这里只是多存一份。 */
+int  bus_uart_out_take(u8 *dst, int max);   /* 取走并返回字节数 */
+void bus_uart_out_clear(void);
+int  bus_uart_out_pending(void);
+
 #endif /* RV_BUS_H */
