@@ -12,7 +12,8 @@
 #endif
 
 static char g_line[SHELL_BUF];
-static u32  g_cmd_mark;   /* 命令回显之前的输出长度，供 assert 查产物 */
+static u32  g_cmd_mark;   /* 命令回显之前的输出长度 */
+static char g_cmd_snap[176];  /* 命令开始时的输出快照，供 assert uart 查找 */
 static int  g_cmd_at_prompt; /* 命令开始时系统是否停在提示符 */
 static int  g_len = 0;
 
@@ -73,8 +74,8 @@ static void cmd_assert(const char *line)
 
     /* uart=<子串>：检查命令回显之前的输出里有没有它 */
     if (streq(key, "uart")) {
-        extern int uart_tail_has(u32, const char *);
-        int ok = uart_tail_has(g_cmd_mark, p);
+        extern int mem_has(const char *, u32, const char *);
+        int ok = mem_has(g_cmd_snap, g_cmd_mark, p);
         uart_puts("{\"assert\":\"uart\",\"want\":\"");
         uart_puts(p);
         uart_puts("\",\"ok\":");
@@ -137,6 +138,13 @@ static void cmd_plan(const char *line)
     if (kind != PLAN_RESET && !argstr[0]) {
         uart_puts("{\"ok\":false,\"why\":\"缺少参数\"}\n");
         return;
+    }
+    if (kind == PLAN_RUN) {
+        extern int kprog_valid(const char *);
+        if (!kprog_valid(argstr)) {
+            uart_puts("{\"ok\":false,\"why\":\"未知程序\",\"hint\":\"hello|fork|badptr\"}\n");
+            return;
+        }
     }
 
     u32 id = plan_make(kind, argstr[0] ? argstr : 0);
@@ -380,6 +388,8 @@ void shell_input(char ch)
             extern int uart_at_prompt(u32);
             g_cmd_mark = uart_tail_len();
             g_cmd_at_prompt = uart_at_prompt(g_cmd_mark);
+            /* 快照一份：滑动窗口会让绝对位置失效，assert uart 必须查这份 */
+            uart_tail_copy(g_cmd_snap, g_cmd_mark);
         }
         g_line[g_len++] = ch;
         uart_putc(ch);

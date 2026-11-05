@@ -481,6 +481,9 @@ u32 s_trap_handler(u32 cause, u32 epc, u32 tval, u32 *regs)
             *cc = *pp;
             cc->pid   = child;
             cc->state = PROC_READY;
+            /* 必须记账：否则 ps 里 4 个进程、事件流里 spawn 只有 3，
+               assert spawn=3 会在说谎。 */
+            evt_emit(EVT_SPAWN, (u32)child, pp->pc, pp->sp, 0);
             /* 复制当前寄存器（不是上次保存的快照） */
             for (int k = 0; k < 32; k++) cc->regs[k] = regs[k];
 
@@ -532,6 +535,18 @@ int g_fork_flag = 0;
 int g_badptr_flag = 0;
 
 /* 重置所有进程到入口（shell 的 run 命令用） */
+/* 供 plan 在登记阶段就校验参数，而不是等到 apply 才静默跑错 */
+int kprog_valid(const char *name)
+{
+    const char *ok[] = {"hello", "fork", "badptr"};
+    for (u32 i = 0; i < 3; i++) {
+        const char *a = ok[i]; const char *b = name;
+        while (*a && *b && *a == *b) { a++; b++; }
+        if (!*a && !*b) return 1;
+    }
+    return 0;
+}
+
 /* 按名字选择要加载的用户程序（hello / fork）。len 返回镜像长度。 */
 
 int kload_prog(const char *name)
@@ -556,6 +571,14 @@ int kload_prog(const char *name)
             if (is_bad && name[6] == 0) {
                 src = badptr_prog_start;
                 len = (u32)(badptr_prog_end - badptr_prog_start);
+            } else {
+                /* 未匹配到 hello：未知名字必须报错。
+                   静默回退到默认镜像会让 plan run zzz 悄悄跑别的程序。 */
+                const char *w_h = "hello";
+                int is_h = 1;
+                for (int i = 0; w_h[i]; i++)
+                    if (name[i] != w_h[i]) { is_h = 0; break; }
+                if (!(is_h && name[5] == 0)) return -1;
             }
         }
     }
@@ -848,9 +871,14 @@ void shell_loop(void)
     for (;;) {
         if (*lsr & 0x01) shell_input((char)*rbr);
         if (g_run_flag) {
-            g_run_flag = 0;
-            kernel_apply_run(g_badptr_flag ? "badptr" : (g_fork_flag ? "fork" : "hello"));
+            /* 必须在调用前算好并清零：kernel_apply_run 进用户态后不返回，
+               写在它后面的清零是死代码，第二次 run 会沿用上一次的程序。 */
+            const char *prog = g_badptr_flag ? "badptr" :
+                               (g_fork_flag ? "fork" : "hello");
+            g_run_flag   = 0;
             g_badptr_flag = 0;
+            g_fork_flag  = 0;
+            kernel_apply_run(prog);
         }
     }
 }

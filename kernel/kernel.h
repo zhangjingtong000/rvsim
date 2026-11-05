@@ -72,6 +72,8 @@ void uart_dec(int v);
 u32  uart_tail_len(void);
 int  uart_tail_has(u32 mark, const char *needle);
 int  uart_at_prompt(u32 mark);
+void uart_tail_copy(char *dst, u32 len);
+int  mem_has(const char *buf, u32 len, const char *needle);
 void uart_tail_dump(void);
 void kprintf(const char *fmt, ...);
 void shell_input(char ch);

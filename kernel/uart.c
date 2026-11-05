@@ -27,6 +27,30 @@ u32 uart_tail_len(void) { return g_uart_tail_n; }
 /* mark 处之前是否以 "rvsh> " 结尾 —— AI 用它判断「发命令时系统是否空闲」。
    传入命令起始位置而不是当前末尾：命令回显已经把 prompt 挤走了，
    拿当前末尾判断永远是 false。 */
+/* 把当前尾部内容复制到调用方缓冲。
+   为什么要复制：缓冲是滑动窗口，命令回显会挤掉最旧的内容，
+   用绝对位置 mark 去回头查找，位置早就失效了（assert uart 会假阳性）。 */
+void uart_tail_copy(char *dst, u32 len)
+{
+    if (len > g_uart_tail_n) len = g_uart_tail_n;
+    for (u32 i = 0; i < len; i++) dst[i] = g_uart_tail[i];
+    dst[len] = 0;
+}
+
+/* 在任意缓冲里查找子串 */
+int mem_has(const char *buf, u32 len, const char *needle)
+{
+    u32 nl = 0;
+    while (needle[nl]) nl++;
+    if (nl == 0 || nl > len) return 0;
+    for (u32 i = 0; i + nl <= len; i++) {
+        u32 j = 0;
+        while (j < nl && buf[i + j] == needle[j]) j++;
+        if (j == nl) return 1;
+    }
+    return 0;
+}
+
 int uart_at_prompt(u32 mark)
 {
     static const char *pat = "rvsh> ";
