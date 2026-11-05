@@ -53,6 +53,7 @@ rvsh> help         # 只有命令名
 | `replay` | `replay` | 从事件流重建存活进程，与 `ps` 交叉验证 |
 | `regs` | `regs [pid]` | 读某进程的 32 个寄存器 |
 | `setreg` | `setreg <pid> <reg> <val>` | 改写寄存器（不可逆，调试用） |
+| `setpc` | `setpc <pid> <addr>` | 改写执行点（不可逆，调试用） |
 | `verify` | `verify` | 交叉验证：trap 侧计数 vs 事件流 |
 
 ---
@@ -110,7 +111,10 @@ assert nproc 3
 | `events` | 事件总条数 |
 | `nproc` | 活跃进程数（就绪 + 运行） |
 | `oob` | 被拒绝的写入次数（`code != 0`） |
-| `uart` | 历史输出里是否包含指定子串 |
+| `uart` | 最近 4KB 历史输出里是否包含指定子串 |
+| `reset` / `snapshot` / `plan` / `apply` / `sbrk` / `fork` / `setreg` / `getpid` / `yield` | 各类事件条数 |
+| `plans` / `snaps` | 待执行计划数 / 快照数 |
+| `at_prompt` | 发命令时系统是否停在提示符（1/0） |
 
 `uart` 是字符串比较，其余都是整数比较。
 
@@ -180,13 +184,13 @@ apply 2                   # 真的执行
 | `ps -ef` / `grep` / 管道 | 直接用 `ps`，它已经是 JSON |
 | `run prog=badptr` | `run badptr`（参数直接跟在后面，不是键值对） |
 | 自己数 `log` 的行 | 读末尾的 `[summary]` 或 `assert` |
-| 以为 `snapshot` 会存事件流 | 只存进程状态；事件流有界（2048 条），会被覆盖 |
+| 以为 `snapshot` 会存事件流 | 只存进程状态；事件流有界（16384 条），会被覆盖 |
 | 以为 `restore` 可撤销 | 标了 `irreversible: true`，执行前先 `snapshot` |
 | 以为 `run fork` 是 3 个进程 | fork 演示会多一个子进程，共 4 个 |
 | 用 `log` 被刷屏 | 默认只给 30 条，要全量用 `log all` |
 | `restore` 之后直接 `ps` 就以为完事 | 进程只是 READY，要 `resume` 才真的继续跑 |
 | 以为 `restore` 是「暂停恢复」 | 它是「回到快照时的进程表与代码，然后从头重跑」 |
-| 以为 `log` 是完整历史 | 它是有界缓冲（2048 条）；`replay` 的 `complete` 说明是否被覆盖 |
+| 以为 `log` 是完整历史 | 它是有界缓冲（16384 条）；`replay` 的 `complete` 说明是否被覆盖 |
 | 用 `ps` 判断事件流对不对 | 用 `replay` 交叉验证，它只看事件不读 `procs` |
 
 ---

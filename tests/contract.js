@@ -174,9 +174,7 @@ function record(name, ok, detail) {
     send("run badptr");
     send("restore 1");
     const ps = json(send("ps"));
-    const rpRaw = send("replay");
-    const rp = json(rpRaw);
-    console.log("      [dbg] replay raw: " + rpRaw.replace(/\s+/g," ").slice(-120));
+    const rp = json(send("replay"));
     const alive = rp && rp.replay ? rp.replay.alive : null;
     const ready = ps && ps.procs ? ps.procs.filter(p => p.state === "READY" || p.state === "RUN").map(p => p.pid) : null;
     record("replay 回滚后与 ps 一致",

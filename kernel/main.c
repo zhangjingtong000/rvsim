@@ -359,7 +359,7 @@ static const cap_t g_caps[] = {
     {"uptime",   "uptime",                  "",                0, "读取虚拟时钟 mtime"},
     {"log",      "log [all] | log count [type] | log last <n> | log find <pid>", "spawn|exit|ecall|restore", 0, "事件流：全部（带摘要）/计数/最近 n 条/按进程过滤"},
     {"tail",     "tail",                    "",                0, "输出最近一段串口内容，换行显示为 |"},
-    {"assert",   "assert <key>=<value> | <key>: <value> | <key> <value>",    "spawn|exit|ecall|restore|reset|snapshot|plan|apply|sbrk|fork|setreg=各类事件条数; events=总条数; nproc=活跃进程数; oob=被拒绝的写入次数; uart=<要在历史输出里查找的子串>", 0, "断言：内核直接回答是否成立，返回 want/got/ok"},
+    {"assert",   "assert <key>=<value> | <key>: <value> | <key> <value>",    "spawn|exit|ecall|restore|reset|snapshot|plan|apply|sbrk|fork|setreg|getpid|yield=各类事件条数; events=总条数; nproc=活跃进程数; oob=被拒绝的写入次数; plans/snaps=计划数/快照数; at_prompt=是否停在提示符; uart=<要在最近 4KB 输出里查找的子串>", 0, "断言：内核直接回答是否成立，返回 want/got/ok"},
     {"plan",     "plan run <prog> | plan reset | plan restore <snap_id>",         "run 时 prog 取 hello|fork|badptr；restore 时 snap_id 取 snaps 返回的 id", 0, "登记一个计划但不执行；用 apply <id> 执行"},
     {"plans",    "plans",                   "",                0, "列出待执行的计划"},
     {"apply",    "apply <plan_id>",         "",                1, "执行指定计划"},

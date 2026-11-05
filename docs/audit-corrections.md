@@ -67,7 +67,7 @@ fork 实验已经证明 `spawn` 计数曾经是错的。
 | 人机接口不平等 | 新增 `regs`（读）与 `setreg`（写），两端能力对齐 | `setreg 0 10 0x1234` 生效 |
 | **没有独立 oracle** | 新增 `verify`：trap 侧独立计数，完全不经过 `evt_emit` | 见下 |
 | 缓冲 512 太小 | 扩到 2048，口径改为「有界事件流」 | `replay` 报 `complete` |
-| e2e.js 过期 | 删除，由 `tests/contract.js` 承担 | 契约 12/12 |
+| e2e.js 过期 | 删除，由 `tests/contract.js` 承担 | 契约 18/18 |
 
 ### 独立 oracle 抓到的第一个真问题
 
