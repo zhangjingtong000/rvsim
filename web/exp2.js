@@ -1,7 +1,10 @@
 const fs=require("fs");
 
 const KEY=process.env.DS_KEY;
-const MODEL="deepseek-flash";
+/* 端点与模型都可配置：同一脚本既能打 DeepSeek 官方，
+   也能打 SiliconFlow 之类的聚合平台，便于跨模型复现。 */
+const BASE=process.env.BASE_URL||"https://api.deepseek.com";
+const MODEL=process.env.MODEL||"deepseek-flash";
 const TRIALS=parseInt(process.env.TRIALS||"3",10);
 const MAX_STEPS=parseInt(process.env.MAX_STEPS||"14",10);
 const KERNEL={A:"/home/rvsim/build/kernel-min.elf", B:"/home/rvsim/build/kernel.elf"};
@@ -30,7 +33,7 @@ function taskBlock(term){
 }
 
 async function llm(messages){
-  const r=await fetch("https://api.deepseek.com/chat/completions",{
+  const r=await fetch(BASE+"/chat/completions",{
     method:"POST",
     headers:{"Content-Type":"application/json","Authorization":"Bearer "+KEY},
     body:JSON.stringify({model:MODEL,messages,temperature:0,max_tokens:4000})
@@ -94,6 +97,7 @@ async function runTrial(group){
   if(!KEY){ console.error("缺少 DS_KEY"); process.exit(2); }
   const all={A:[],B:[]};
   const ONLY=process.env.ONLY||"AB";
+  console.log("端点:", BASE, " 模型:", MODEL);
   console.log("真值:", JSON.stringify(TRUTH));
   for(const g of ["A","B"].filter(x=>ONLY.includes(x))){
     console.log("\n=== "+g+" 组（"+(g==="A"?"无事件流：只有 ps 当前状态":"事件流 + assert")+"）===");
