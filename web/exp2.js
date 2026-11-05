@@ -28,7 +28,10 @@ const SYS="你是终端操作员。规则：\n"
  + "不要复述任务，直接行动。";
 
 function taskBlock(term){
-  const tail = term.slice(-2000);
+  /* 窗口是硬约束：39 条事件的 log 输出约 2000 字符，
+     恰好卡在上限附近，模型会「没看全却照样数」。
+     放宽到 4000 可以验证这一点。 */
+  const tail = term.slice(-4000);
   return "任务：\n"+TASK+"\n\n当前终端：\n----------------\n"+tail+"\n----------------\n\n下一条命令（或最终 ANSWER 行）：";
 }
 
