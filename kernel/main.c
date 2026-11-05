@@ -121,6 +121,19 @@ int evt_count_named(const char *name)
     return n;
 }
 
+/* 被拒绝的操作数：ecall 且 code != 0。
+   「发生过几次越权」是审计的核心指标，AI 不该自己去数。 */
+int evt_count_denied(void)
+{
+    int n = 0;
+    u32 i = g_evt_head;
+    while (i != g_evt_tail) {
+        if (g_evts[i].type == EVT_ECALL && g_evts[i].code != 0) n++;
+        i = (i + 1u) % EVT_CAP;
+    }
+    return n;
+}
+
 int evt_count_all(void)
 {
     int n = 0;
@@ -157,7 +170,7 @@ static const cap_t g_caps[] = {
     {"mem",      "",                       0, "物理内存与缺页统计"},
     {"uptime",   "",                       0, "读取虚拟时钟 mtime"},
     {"log",      "",                       0, "按发生顺序输出事件流"},
-    {"assert",   "key=spawn|exit|ecall|restore|events|nproc|uart, value", 0, "断言：内核直接回答是否成立"},
+    {"assert",   "key=spawn|exit|ecall|restore|events|nproc|oob|uart, value", 0, "断言：内核直接回答是否成立"},
     {"plan",     "run <prog>",             0, "生成执行计划但不执行"},
     {"plans",    "",                       0, "列出待执行的计划"},
     {"apply",    "<plan_id>",              0, "执行指定计划"},

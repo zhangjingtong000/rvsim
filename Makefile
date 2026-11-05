@@ -81,6 +81,12 @@ $(OBJDIR)/kernel.elf: $(KSRCS) $(KASMS) $(OBJDIR)/user_prog.bin $(OBJDIR)/fork_p
 	$(CROSS)gcc $(KCFLAGS) -T kernel/linker.ld -o $@ \
 		$(KASMS) $(KSRCS) -lgcc
 
+# 精简内核（A/B 实验的基线组）：能力集只含基础命令
+$(OBJDIR)/kernel-min.elf: $(KSRCS) $(KASMS) $(OBJDIR)/user_prog.bin $(OBJDIR)/fork_prog.bin $(OBJDIR)/badptr_prog.bin kernel/linker.ld
+	@mkdir -p $(OBJDIR)
+	$(CROSS)gcc $(KCFLAGS) -DAIOS_MINIMAL -T kernel/linker.ld -o $@ \
+		$(KASMS) $(KSRCS) -lgcc
+
 # CoreMark：与迷你内核共用 uart/vm，链接到 0x80000000
 CM_SRCS = bench/core_list_join.c bench/core_matrix.c bench/core_state.c \
           bench/core_util.c bench/core_main.c bench/core_portme.c bench/ee_printf_official.c

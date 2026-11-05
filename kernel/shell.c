@@ -2,6 +2,15 @@
 
 #define SHELL_BUF 128
 
+/* A/B 对照实验的基线组：只保留基础命令。
+   manifest / assert / plan / apply / status 这些「AI 友好」能力在 A 组
+   里根本不存在——两组的能力集必须真的不同，否则测的只是提示词。 */
+#ifdef AIOS_MINIMAL
+#define ADV 0
+#else
+#define ADV 1
+#endif
+
 static char g_line[SHELL_BUF];
 static u32  g_cmd_mark;   /* 命令回显之前的输出长度，供 assert 查产物 */
 static int  g_len = 0;
@@ -16,7 +25,11 @@ static int streq(const char *a, const char *b)
 
 static void cmd_help(void)
 {
-    uart_puts("命令: help status manifest ps run reset mem uptime log assert plan apply plans snapshot snaps restore\n");
+    if (ADV) {
+        uart_puts("命令: help status manifest ps run reset mem uptime log assert plan apply plans snapshot snaps restore tail\n");
+    } else {
+        uart_puts("命令: help ps run reset mem uptime\n");
+    }
 }
 
 static void cmd_ps(void)
@@ -42,10 +55,19 @@ static void cmd_assert(const char *line)
 
     const char *p = line + 7;          /* 跳过 "assert " */
     char key[16]; int kl = 0;
-    while (*p && *p != '=' && kl < 15) key[kl++] = *p++;
+    /* 键在 '=' 或空格处结束——否则 "oob 18" 会被整个当成键名 */
+    while (*p && *p != '=' && *p != ' ' && kl < 15) key[kl++] = *p++;
     key[kl] = 0;
-    if (*p != '=') { uart_puts("{\"ok\":false,\"why\":\"格式应为 key=value\"}\n"); return; }
-    p++;
+    /* 同时接受 key=value 与 key value：实测 AI 经常写成后者，
+       每错一次就浪费一步。这是可用性缺陷，不是被测变量。 */
+    if (*p == '=') {
+        p++;
+    } else if (*p == ' ') {
+        p++;
+    } else {
+        uart_puts("{\"ok\":false,\"why\":\"格式应为 key=value\"}\n");
+        return;
+    }
 
     /* uart=<子串>：检查命令回显之前的输出里有没有它 */
     if (streq(key, "uart")) {
@@ -68,6 +90,10 @@ static void cmd_assert(const char *line)
     if (streq(key, "spawn") || streq(key, "exit") || streq(key, "ecall")
         || streq(key, "restore"))
         got = evt_count_named(key);
+    else if (streq(key, "oob")) {
+        extern int evt_count_denied(void);
+        got = evt_count_denied();
+    }
     else if (streq(key, "events"))
         got = evt_count_all();
     else if (streq(key, "nproc"))
@@ -196,7 +222,7 @@ void shell_input(char ch)
                 uart_dec(n2);
                 uart_puts(" 个进程到就绪状态\n");
             }
-            else if (streq(g_line, "tail")) {
+            else if (ADV && streq(g_line, "tail")) {
                 extern void uart_tail_dump(void);
                 extern u32  uart_tail_len(void);
                 uart_puts("mark=");
@@ -206,38 +232,38 @@ void shell_input(char ch)
                 uart_puts(" : ");
                 uart_tail_dump();
             }
-            else if (streq(g_line, "status")) {
+            else if (ADV && streq(g_line, "status")) {
                 extern void status_json(void);
                 status_json();
             }
-            else if (streq(g_line, "snapshot")) {
+            else if (ADV && streq(g_line, "snapshot")) {
                 cmd_snapshot();
             }
-            else if (streq(g_line, "snaps")) {
+            else if (ADV && streq(g_line, "snaps")) {
                 extern void snap_list(void);
                 snap_list();
             }
-            else if (starts_with(g_line, "restore ")) {
+            else if (ADV && starts_with(g_line, "restore ")) {
                 cmd_restore(g_line);
             }
-            else if (starts_with(g_line, "plan ")) {
+            else if (ADV && starts_with(g_line, "plan ")) {
                 cmd_plan(g_line);
             }
-            else if (starts_with(g_line, "apply ")) {
+            else if (ADV && starts_with(g_line, "apply ")) {
                 cmd_apply(g_line);
             }
-            else if (streq(g_line, "plans")) {
+            else if (ADV && streq(g_line, "plans")) {
                 extern void plan_list(void);
                 plan_list();
             }
-            else if (starts_with(g_line, "assert ")) {
+            else if (ADV && starts_with(g_line, "assert ")) {
                 cmd_assert(g_line);
             }
-            else if (streq(g_line, "manifest")) {
+            else if (ADV && streq(g_line, "manifest")) {
                 extern void cap_manifest(void);
                 cap_manifest();
             }
-            else if (streq(g_line, "log")) {
+            else if (ADV && streq(g_line, "log")) {
                 extern void evt_dump(void);
                 evt_dump();
             }
