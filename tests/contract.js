@@ -131,6 +131,22 @@ function record(name, ok, detail) {
   record("verify 的 exit/fork 计数与事件流一致", exitOk && forkOk,
     JSON.stringify(vv ? { exit: vv.exit, fork: vv.fork, unaccounted: vv.unaccounted_ecall } : null));
 
+  // ── T12: manifest 里每个无副作用的 cap 都必须能调通 ──
+  {
+    /* 用能力名本身作为命令：usage 里的 [all] 之类是说明写作，不是可执行文本。
+       tail 不参与——它回显历史，历史里本来就可能有 unknown command。 */
+    const safe = ["help","manifest","guide","status","ps","mem","uptime",
+                  "log","plans","snaps","replay","verify","reset"];
+    const bad2 = [];
+    for(const c of caps){
+      if(!safe.includes(c.cap)) continue;
+      const o = send(c.cap);
+      /* 只看本次输出的前 120 字符，避免被历史回显干扰 */
+      if(/unknown command|未知命令/.test(o.slice(0, 120))) bad2.push(c.cap);
+    }
+    record("所有无副作用能力都能调用", bad2.length === 0, bad2.join(",") || "全部可调用");
+  }
+
   // ── 汇总 ──
   const pass = results.filter(r => r.ok).length;
   console.log(`\n契约测试: ${pass}/${results.length} 通过`);
