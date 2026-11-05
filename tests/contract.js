@@ -168,6 +168,39 @@ function record(name, ok, detail) {
     record("setpc 改写执行点", r && r.pc === "0x80400200", "pc=" + (r && r.pc));
   }
 
+  // ── T16: replay 在回滚后必须与 ps 一致（此前 replay 忽略 restore）──
+  {
+    send("snapshot");
+    send("run badptr");
+    send("restore 1");
+    const ps = json(send("ps"));
+    const rpRaw = send("replay");
+    const rp = json(rpRaw);
+    console.log("      [dbg] replay raw: " + rpRaw.replace(/\s+/g," ").slice(-120));
+    const alive = rp && rp.replay ? rp.replay.alive : null;
+    const ready = ps && ps.procs ? ps.procs.filter(p => p.state === "READY" || p.state === "RUN").map(p => p.pid) : null;
+    record("replay 回滚后与 ps 一致",
+      JSON.stringify(alive) === JSON.stringify(ready),
+      "replay=" + JSON.stringify(alive) + " ps=" + JSON.stringify(ready));
+  }
+
+  // ── T17: assert uart 的正例（此前只测了反例，窗口过小被漏掉）──
+  {
+    send("run hello");
+    const a = json(send("assert uart=AAABBBCCC"));
+    record("assert uart 能查到程序输出", a && a.ok === true, JSON.stringify(a));
+  }
+
+  // ── T18: 不可逆命令缺参必须拒绝，不能静默执行 ──
+  {
+    const a = json(send("setpc 0"));
+    const b = json(send("setreg 0 1"));
+    const c = json(send("regs abc"));
+    record("缺参的 setpc/setreg/regs 被拒绝",
+      a && a.ok === false && b && b.ok === false && c && c.ok === false,
+      [a, b, c].map(x => x && x.why).join(" / "));
+  }
+
   // ── 汇总 ──
   const pass = results.filter(r => r.ok).length;
   console.log(`\n契约测试: ${pass}/${results.length} 通过`);

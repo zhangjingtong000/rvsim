@@ -215,6 +215,28 @@ int proc_count_live(void)
    这是审计要的独立 oracle：结果不来自 procs[]，而是只看 spawn/exit 事件。
    把它和 ps 对比，就能发现事件流漏记或多记。
    注意：事件缓冲是环形的，被覆盖过就只能承认 complete=false。 */
+/* 把存活集合折叠到 seq <= target 为止的状态 */
+static void replay_fold_to(u8 *alive, u32 target)
+{
+    for (u32 k = 0; k < NPROC; k++) alive[k] = 0;
+    u32 i = g_evt_head;
+    while (i != g_evt_tail) {
+        evt_t *e = &g_evts[i];
+        if (e->seq > target) break;
+        if (e->type == EVT_SPAWN && e->actor < NPROC) alive[e->actor] = 1;
+        else if (e->type == EVT_EXIT && e->actor < NPROC) alive[e->actor] = 0;
+        else if (e->type == EVT_RESET) {
+            /* reset 也必须折叠：否则回滚到 reset 之后的快照时，
+               会把此前已 exit 的进程全算成存活。 */
+            for (u32 k = 0; k < NPROC; k++) alive[k] = (k < e->arg0);
+        }
+        i = (i + 1u) % EVT_CAP;
+    }
+}
+
+/* 从事件流重建「谁还活着」。
+   这是审计要的独立 oracle：结果不来自 procs[]，而是只看事件。
+   注意 restore/reset 也必须折叠——否则回滚之后 replay 会给出与 ps 矛盾的答案。 */
 void evt_replay(void)
 {
     u32 total  = (u32)evt_count_all();
@@ -228,7 +250,15 @@ void evt_replay(void)
     while (i != g_evt_tail) {
         evt_t *e = &g_evts[i];
         if (e->type == EVT_SPAWN && e->actor < NPROC) alive[e->actor] = 1;
-        if (e->type == EVT_EXIT  && e->actor < NPROC) alive[e->actor] = 0;
+        else if (e->type == EVT_EXIT && e->actor < NPROC) alive[e->actor] = 0;
+        else if (e->type == EVT_RESTORE) {
+            /* 回滚：状态回到快照时（arg1 = 该快照的事件序号） */
+            replay_fold_to(alive, e->arg1);
+        }
+        else if (e->type == EVT_RESET) {
+            /* 重置：前 arg0 个进程回到就绪（视为存活） */
+            for (u32 k = 0; k < NPROC; k++) alive[k] = (k < e->arg0);
+        }
         i = (i + 1u) % EVT_CAP;
     }
 
@@ -877,6 +907,14 @@ u32 snap_take(void)
             return g_snaps[i].id;
         }
     }
+    return 0;
+}
+
+/* 只查存在性，不执行——让 plan/apply 能在「真的做」之前拒绝 */
+int snap_exists(u32 id)
+{
+    for (u32 i = 0; i < SNAP_SLOTS; i++)
+        if (g_snaps[i].used && g_snaps[i].id == id) return 1;
     return 0;
 }
 

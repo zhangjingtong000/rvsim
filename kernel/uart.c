@@ -3,9 +3,14 @@
 
 /* 最近输出的尾部。assert 用它检查「产物」，而不只是内核状态。
    注意命令回显也会进这里，所以调用方要给出 mark，只查 mark 之前的部分。 */
-#define UART_TAIL_CAP 160
+#define UART_TAIL_CAP 4096   /* 可搜索窗口；tail 只显示尾部，避免刷屏 */
+#define UART_TAIL_SHOW 200
+/* 环形缓冲：满了之后覆盖最旧的一个字节。
+   先前用「整体左移一位」的写法，窗口一扩大到 4KB，
+   每输出一个字符就要搬 4095 字节，直接把内核拖死。 */
 static char g_uart_tail[UART_TAIL_CAP];
-static u32  g_uart_tail_n;
+static u32  g_uart_head;     /* 下一个写入位置 */
+static u32  g_uart_tail_n;   /* 当前有效字节数 */
 
 void uart_putc(char c)
 {
@@ -14,12 +19,9 @@ void uart_putc(char c)
     while (!(*lsr & 0x20)) { }   /* 等 THRE */
     *thr = (u8)c;
 
-    if (g_uart_tail_n < UART_TAIL_CAP - 1) {
-        g_uart_tail[g_uart_tail_n++] = c;
-    } else {
-        for (u32 i = 1; i < UART_TAIL_CAP - 1; i++) g_uart_tail[i - 1] = g_uart_tail[i];
-        g_uart_tail[UART_TAIL_CAP - 2] = c;
-    }
+    g_uart_tail[g_uart_head] = c;
+    g_uart_head = (g_uart_head + 1u) % UART_TAIL_CAP;
+    if (g_uart_tail_n < UART_TAIL_CAP) g_uart_tail_n++;
 }
 
 u32 uart_tail_len(void) { return g_uart_tail_n; }
@@ -33,7 +35,9 @@ u32 uart_tail_len(void) { return g_uart_tail_n; }
 void uart_tail_copy(char *dst, u32 len)
 {
     if (len > g_uart_tail_n) len = g_uart_tail_n;
-    for (u32 i = 0; i < len; i++) dst[i] = g_uart_tail[i];
+    u32 start = (g_uart_head + UART_TAIL_CAP - g_uart_tail_n) % UART_TAIL_CAP;
+    for (u32 i = 0; i < len; i++)
+        dst[i] = g_uart_tail[(start + i) % UART_TAIL_CAP];
     dst[len] = 0;
 }
 
@@ -135,11 +139,14 @@ void *memcpy(void *d, const void *s, size_t n)
 /* 输出最近内容（调试与审计用）。换行替换成 | 便于单行显示。 */
 void uart_tail_dump(void)
 {
-    /* 必须先快照：uart_putc 自己会移位这个缓冲，
-       直接边遍历边输出会把内容改坏（自毁）。 */
-    char tmp[UART_TAIL_CAP];
+    /* 只输出尾部 200 字符：缓冲有 4KB，全给出去会刷屏；
+       但 assert uart 搜索的是完整 4KB，两者用途不同。 */
     u32 n = g_uart_tail_n;
-    for (u32 i = 0; i < n; i++) tmp[i] = g_uart_tail[i];
-    for (u32 i = 0; i < n; i++) uart_putc(tmp[i] == '\n' ? '|' : tmp[i]);
+    u32 start = (g_uart_head + UART_TAIL_CAP - n) % UART_TAIL_CAP;
+    u32 from = (n > UART_TAIL_SHOW) ? (n - UART_TAIL_SHOW) : 0;
+    for (u32 i = from; i < n; i++) {
+        char c = g_uart_tail[(start + i) % UART_TAIL_CAP];
+        uart_putc(c == '\n' ? '|' : c);
+    }
     uart_putc('\n');
 }

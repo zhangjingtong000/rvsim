@@ -13,7 +13,7 @@
 
 static char g_line[SHELL_BUF];
 static u32  g_cmd_mark;   /* 命令回显之前的输出长度 */
-static char g_cmd_snap[176];  /* 命令开始时的输出快照，供 assert uart 查找 */
+static char g_cmd_snap[4096];  /* 命令开始时的输出快照，供 assert uart 查找 */
 static int  g_cmd_at_prompt; /* 命令开始时系统是否停在提示符 */
 static int  g_len = 0;
 
@@ -156,6 +156,15 @@ static void cmd_plan(const char *line)
             return;
         }
     }
+    if (kind == PLAN_RESTORE) {
+        extern int snap_exists(u32);
+        int sid = 0;
+        for (const char *q = argstr; *q >= '0' && *q <= '9'; q++) sid = sid * 10 + (*q - '0');
+        if (!snap_exists((u32)sid)) {
+            uart_puts("{\"ok\":false,\"why\":\"快照不存在\",\"hint\":\"先 snapshot 或看 snaps\"}\n");
+            return;
+        }
+    }
 
     u32 id = plan_make(kind, argstr[0] ? argstr : 0);
     if (!id) { uart_puts("{\"ok\":false,\"why\":\"计划槽已满\"}\n"); return; }
@@ -187,6 +196,21 @@ static void cmd_apply(const char *line)
     if (!plan_take((u32)id, &kind, arg, sizeof(arg))) {
         uart_puts("{\"ok\":false,\"why\":\"计划不存在或已被执行\"}\n");
         return;
+    }
+
+    /* 先把能预见的失败挡在这里：一次调用只给一个结论，
+       不能先报成功再报失败。 */
+    if (kind == PLAN_RESTORE) {
+        extern int snap_exists(u32);
+        int sid = 0;
+        for (const char *q = arg; *q >= '0' && *q <= '9'; q++) sid = sid * 10 + (*q - '0');
+        if (!snap_exists((u32)sid)) {
+            uart_puts("{\"apply\":false,\"plan\":");
+            uart_dec(id);
+            uart_puts(",\"why\":\"快照不存在\"}\n");
+            g_len = 0; g_line[0] = 0;
+            return;
+        }
     }
 
     uart_puts("{\"apply\":true,\"plan\":");
@@ -318,8 +342,10 @@ void shell_input(char ch)
                 extern void proc_set_pc(int, u32);
                 const char *q = g_line + 6;
                 int pid = 0; u32 addr = 0;
-                while (*q >= '0' && *q <= '9') { pid = pid * 10 + (*q - '0'); q++; }
+                int got_pid = 0, got_addr = 0;
+                while (*q >= '0' && *q <= '9') { pid = pid * 10 + (*q - '0'); q++; got_pid = 1; }
                 while (*q == ' ') q++;
+                if (!got_pid) { uart_puts("{\"ok\":false,\"why\":\"用法: setpc <pid> <addr>\"}\n"); g_len = 0; g_line[0] = 0; return; }
                 if (q[0] == '0' && (q[1] == 'x' || q[1] == 'X')) {
                     q += 2;
                     while (*q) {
@@ -328,11 +354,12 @@ void shell_input(char ch)
                         else if (*q >= 'a' && *q <= 'f') d = (u32)(*q - 'a' + 10);
                         else if (*q >= 'A' && *q <= 'F') d = (u32)(*q - 'A' + 10);
                         else break;
-                        addr = addr * 16u + d; q++;
+                        addr = addr * 16u + d; q++; got_addr = 1;
                     }
                 } else {
-                    while (*q >= '0' && *q <= '9') { addr = addr * 10u + (u32)(*q - '0'); q++; }
+                    while (*q >= '0' && *q <= '9') { addr = addr * 10u + (u32)(*q - '0'); q++; got_addr = 1; }
                 }
+                if (!got_addr || *q) { uart_puts("{\"ok\":false,\"why\":\"用法: setpc <pid> <addr>\"}\n"); g_len = 0; g_line[0] = 0; return; }
                 proc_set_pc(pid, addr);
             }
             else if (ADV && starts_with(g_line, "setreg ")) {
@@ -340,10 +367,15 @@ void shell_input(char ch)
                 const char *q = g_line + 7;
                 int pid = 0, reg = 0;
                 u32 val = 0;
-                while (*q >= '0' && *q <= '9') { pid = pid * 10 + (*q - '0'); q++; }
+                int got_pid = 0, got_reg = 0, got_val = 0;
+                while (*q >= '0' && *q <= '9') { pid = pid * 10 + (*q - '0'); q++; got_pid = 1; }
                 while (*q == ' ') q++;
-                while (*q >= '0' && *q <= '9') { reg = reg * 10 + (*q - '0'); q++; }
+                while (*q >= '0' && *q <= '9') { reg = reg * 10 + (*q - '0'); q++; got_reg = 1; }
                 while (*q == ' ') q++;
+                if (!got_pid || !got_reg) {
+                    uart_puts("{\"ok\":false,\"why\":\"用法: setreg <pid> <reg> <val>\"}\n");
+                    g_len = 0; g_line[0] = 0; return;
+                }
                 /* 支持十进制与 0x 前缀 */
                 if (q[0] == '0' && (q[1] == 'x' || q[1] == 'X')) {
                     q += 2;
@@ -353,10 +385,14 @@ void shell_input(char ch)
                         else if (*q >= 'a' && *q <= 'f') d = (u32)(*q - 'a' + 10);
                         else if (*q >= 'A' && *q <= 'F') d = (u32)(*q - 'A' + 10);
                         else break;
-                        val = val * 16u + d; q++;
+                        val = val * 16u + d; q++; got_val = 1;
                     }
                 } else {
-                    while (*q >= '0' && *q <= '9') { val = val * 10u + (u32)(*q - '0'); q++; }
+                    while (*q >= '0' && *q <= '9') { val = val * 10u + (u32)(*q - '0'); q++; got_val = 1; }
+                }
+                if (!got_val || *q) {
+                    uart_puts("{\"ok\":false,\"why\":\"用法: setreg <pid> <reg> <val>\"}\n");
+                    g_len = 0; g_line[0] = 0; return;
                 }
                 proc_set_reg(pid, reg, val);
             }
@@ -366,7 +402,12 @@ void shell_input(char ch)
                 const char *q = g_line + 4;
                 if (*q == ' ') {
                     q++;
-                    while (*q >= '0' && *q <= '9') { pid = pid * 10 + (*q - '0'); q++; }
+                    int got = 0;
+                    while (*q >= '0' && *q <= '9') { pid = pid * 10 + (*q - '0'); q++; got = 1; }
+                    if (!got || *q) {
+                        uart_puts("{\"ok\":false,\"why\":\"用法: regs [pid]\"}\n");
+                        g_len = 0; g_line[0] = 0; return;
+                    }
                 }
                 proc_dump_regs(pid);
             }
