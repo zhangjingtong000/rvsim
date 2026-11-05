@@ -314,6 +314,27 @@ void shell_input(char ch)
             else if (ADV && starts_with(g_line, "assert ")) {
                 cmd_assert(g_line);
             }
+            else if (ADV && starts_with(g_line, "setpc ")) {
+                extern void proc_set_pc(int, u32);
+                const char *q = g_line + 6;
+                int pid = 0; u32 addr = 0;
+                while (*q >= '0' && *q <= '9') { pid = pid * 10 + (*q - '0'); q++; }
+                while (*q == ' ') q++;
+                if (q[0] == '0' && (q[1] == 'x' || q[1] == 'X')) {
+                    q += 2;
+                    while (*q) {
+                        u32 d;
+                        if (*q >= '0' && *q <= '9') d = (u32)(*q - '0');
+                        else if (*q >= 'a' && *q <= 'f') d = (u32)(*q - 'a' + 10);
+                        else if (*q >= 'A' && *q <= 'F') d = (u32)(*q - 'A' + 10);
+                        else break;
+                        addr = addr * 16u + d; q++;
+                    }
+                } else {
+                    while (*q >= '0' && *q <= '9') { addr = addr * 10u + (u32)(*q - '0'); q++; }
+                }
+                proc_set_pc(pid, addr);
+            }
             else if (ADV && starts_with(g_line, "setreg ")) {
                 extern void proc_set_reg(int, int, u32);
                 const char *q = g_line + 7;

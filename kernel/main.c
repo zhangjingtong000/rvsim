@@ -316,6 +316,7 @@ static const cap_t g_caps[] = {
     {"regs",     "regs [pid]",              "",                0, "读某进程的 32 个寄存器（默认 pid 0）"},
     {"verify",   "verify",                  "",                0, "交叉验证：trap 侧独立计数 vs 事件流"},
     {"setreg",   "setreg <pid> <reg> <val>", "",               1, "改写进程寄存器（调试用，不可逆）"},
+    {"setpc",    "setpc <pid> <addr>",      "",                1, "改写进程执行点（调试用，不可逆）"},
 };
 
 /* 统一状态入口：AI 一次调用就能拿到全貌，
@@ -974,6 +975,19 @@ void proc_set_reg(int pid, int reg, u32 val)
     procs[pid].regs[reg] = val;
     evt_emit(EVT_SETREG, (u32)pid, (u32)reg, val, 1);
     kprintf("{\"setreg\":{\"pid\":%d,\"reg\":%d,\"val\":\"%x\"}}\n", pid, reg, val);
+}
+
+/* 改写执行点。前端一直能 _rv_set_pc，AI 侧也要有才叫对称。
+   比改通用寄存器更危险（可以跳到任意指令），标 irreversible。 */
+void proc_set_pc(int pid, u32 addr)
+{
+    if (pid < 0 || pid >= NPROC || procs[pid].stack_pa == 0) {
+        kprintf("{\"ok\":false,\"why\":\"进程不存在\"}\n");
+        return;
+    }
+    procs[pid].pc = addr;
+    evt_emit(EVT_SETREG, (u32)pid, 32u, addr, 1);   /* reg=32 约定表示 pc */
+    kprintf("{\"setpc\":{\"pid\":%d,\"pc\":\"%x\"}}\n", pid, addr);
 }
 
 void proc_dump_regs(int pid)
