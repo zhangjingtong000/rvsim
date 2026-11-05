@@ -26,11 +26,14 @@ static int streq(const char *a, const char *b)
 
 static void cmd_help(void)
 {
-    if (ADV) {
-        uart_puts("命令: help status manifest ps run reset mem uptime log assert plan apply plans snapshot snaps restore tail\n");
-    } else {
-        uart_puts("命令: help ps run reset mem uptime\n");
-    }
+#ifdef AIOS_MINIMAL
+    /* 基线组的能力集是固定的，手写即可 */
+    uart_puts("命令: help ps run reset mem uptime\n");
+#else
+    extern void cap_help(void);
+    cap_help();
+    uart_puts("输入 manifest 查看每个能力的用法与参数\n");
+#endif
 }
 
 static void cmd_ps(void)
@@ -297,8 +300,13 @@ void shell_input(char ch)
                 cap_manifest();
             }
             else if (ADV && streq(g_line, "log")) {
-                extern void evt_dump(void);
-                evt_dump();
+                /* 默认只给最近 30 条：全量倾倒会刷屏并挤爆上下文窗口 */
+                extern void evt_dump_last(u32);
+                evt_dump_last(30);
+            }
+            else if (ADV && streq(g_line, "log all")) {
+                extern void evt_dump_all(void);
+                evt_dump_all();
             }
             else if (ADV && streq(g_line, "log count")) {
                 extern void evt_count_dump(void);

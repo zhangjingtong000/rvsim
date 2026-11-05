@@ -231,20 +231,20 @@ typedef struct {
 static const cap_t g_caps[] = {
     {"help",     "help",                    "",                0, "列出全部命令"},
     {"manifest", "manifest",                "",                0, "输出本能力清单（机器可解析）"},
-    {"status",   "status",                  "",                0, "统一状态入口（JSON）"},
-    {"ps",       "ps",                      "",                0, "进程表（JSON）"},
-    {"run",      "run <prog>",              "hello|fork|badptr", 0, "装载指定程序并启动 3 个进程，跑完后回到 shell"},
+    {"status",   "status",                  "",                0, "统一状态入口（JSON）：at_prompt 表示发命令时系统是否停在提示符"},
+    {"ps",       "ps",                      "",                0, "进程表（JSON）：pc=用户态入口，nrun=被调度次数"},
+    {"run",      "run <prog>",              "hello|fork|badptr", 0, "装载指定程序并启动 3 个初始进程；fork 演示会额外创建子进程（共 4 个）"},
     {"reset",    "reset",                   "",                0, "把全部进程重置到就绪"},
     {"mem",      "mem",                     "",                0, "物理内存大小与累计缺页次数（自启动起）"},
     {"uptime",   "uptime",                  "",                0, "读取虚拟时钟 mtime"},
-    {"log",      "log | log count [type] | log last <n> | log find <pid>", "spawn|exit|ecall|restore", 0, "事件流：全部（带摘要）/计数/最近 n 条/按进程过滤"},
+    {"log",      "log [all] | log count [type] | log last <n> | log find <pid>", "spawn|exit|ecall|restore", 0, "事件流：全部（带摘要）/计数/最近 n 条/按进程过滤"},
     {"tail",     "tail",                    "",                0, "输出最近一段串口内容，换行显示为 |"},
-    {"assert",   "assert <key>=<value> | <key>: <value> | <key> <value>",    "spawn|exit|ecall|restore|events|nproc|oob|uart", 0, "断言：内核直接回答是否成立，返回 want/got/ok"},
+    {"assert",   "assert <key>=<value> | <key>: <value> | <key> <value>",    "spawn|exit|ecall|restore=事件条数; events=总条数; nproc=活跃进程数; oob=被拒绝的写入次数; uart=<要在历史输出里查找的子串>", 0, "断言：内核直接回答是否成立，返回 want/got/ok"},
     {"plan",     "plan run <prog> | plan reset | plan restore <snap_id>",         "run 时 prog 取 hello|fork|badptr；restore 时 snap_id 取 snaps 返回的 id", 0, "登记一个计划但不执行；用 apply <id> 执行"},
     {"plans",    "plans",                   "",                0, "列出待执行的计划"},
     {"apply",    "apply <plan_id>",         "",                0, "执行指定计划"},
     {"snapshot", "snapshot",                "",                0, "保存当前进程状态快照，返回快照编号"},
-    {"snaps",    "snaps",                   "",                0, "列出快照"},
+    {"snaps",    "snaps",                   "",                0, "列出快照：id 用于 restore，evt_seq 是该快照时的事件序号"},
     {"restore",  "restore <snap_id>",       "",                1, "恢复到指定快照（回滚，改变当前进程状态）"},
 };
 
@@ -261,20 +261,33 @@ void status_json(int at_prompt)
             (int)uart_tail_len(), at_prompt ? "true" : "false");
 }
 
+/* help 由能力表生成，不再手写字符串——
+   手写的那份和 manifest 不同步，顺序也不一致。 */
+void cap_help(void)
+{
+    u32 n = (u32)(sizeof(g_caps) / sizeof(g_caps[0]));
+    kprintf("命令:");
+    for (u32 i = 0; i < n; i++) kprintf(" %s", g_caps[i].name);
+    kprintf("\n");
+}
+
 void cap_manifest(void)
 {
     u32 n = (u32)(sizeof(g_caps) / sizeof(g_caps[0]));
-    kprintf("{\"manifest\":1,\"caps\":%d}\n", (int)n);
+    /* 输出单个 JSON 对象（caps 为数组），而不是逐行独立对象：
+       逐行形式要调用方自己拼，容易只解析到第一条。 */
+    kprintf("{\"manifest\":1,\"caps\":%d,\"list\":[\n", (int)n);
     for (u32 i = 0; i < n; i++) {
         const cap_t *c = &g_caps[i];
-        kprintf("{\"cap\":\"%s\",\"usage\":\"%s\",\"values\":\"%s\",\"irreversible\":%s,\"desc\":\"%s\"}\n",
-                c->name, c->usage, c->values,
+        kprintf("%s{\"cap\":\"%s\",\"usage\":\"%s\",\"values\":\"%s\",\"irreversible\":%s,\"desc\":\"%s\"}",
+                i ? ",\n" : "", c->name, c->usage, c->values,
                 c->irreversible ? "true" : "false", c->desc);
     }
+    kprintf("\n]}\n");
 }
 
 /* 把事件流按发生顺序打印出来。这是「真相」视图，不是状态投影。 */
-void evt_dump(void)
+void evt_dump_all(void)
 {
     u32 i = g_evt_head;
     /* 内核 kprintf 是精简实现，不支持宽度/对齐说明符，只用基本格式 */

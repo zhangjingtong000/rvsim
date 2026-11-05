@@ -69,6 +69,7 @@ async function llm(messages){
   let term=send("help");
 
   // 先拿到能力清单，供核对
+  const trace0=[];
   const mOut=send("manifest");
   const caps=[];
   for(const l of mOut.split("\n").map(x=>x.trim()).filter(x=>x.startsWith("{"))){
@@ -76,12 +77,14 @@ async function llm(messages){
     if(o.cap) caps.push(o);
   }
   term += mOut;
+  /* 这次调用也要计入轨迹，否则统计会把 manifest 误报为「未使用」 */
+  trace0.push({cmd:"manifest", out:"(开局读取)"});
   console.log("manifest 声明:", caps.length, "个能力");
   console.log(caps.map(c=>c.cap).join(" "), "\n");
 
   const messages=[{role:"system",content:SYS},{role:"user",content:taskBlock(term)}];
   let steps=0, tokens=0, report=null, err=null;
-  const trace=[];
+  const trace=trace0;
 
   while(steps<MAX_STEPS){
     let reply;
