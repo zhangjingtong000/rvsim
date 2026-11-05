@@ -176,7 +176,7 @@ AI 不必自己解析事件流或翻输出：内核直接回答「是不是这�
 
 ```
 rvsh> status
-{"status":{"nproc":3,"events":3,"plans":0,"snaps":0}}
+{"status":{"nproc":3,"events":3,"plans":0,"snaps":0,"uart_len":159,"at_prompt":true}}
 ```
 
 一次调用拿到全貌，AI 不必分别调 ps / log / plans / snaps 再自己拼。
