@@ -143,6 +143,10 @@ static const cap_t g_caps[] = {
     {"mem",      "",                       0, "物理内存与缺页统计"},
     {"uptime",   "",                       0, "读取虚拟时钟 mtime"},
     {"log",      "",                       0, "按发生顺序输出事件流"},
+    {"assert",   "key=spawn|exit|ecall|events|nproc, n", 0, "断言：内核直接回答是否成立"},
+    {"plan",     "run <prog>",             0, "生成执行计划但不执行"},
+    {"plans",    "",                       0, "列出待执行的计划"},
+    {"apply",    "<plan_id>",              0, "执行指定计划"},
 };
 
 void cap_manifest(void)
@@ -484,6 +488,85 @@ void kmain(void)
     enter_s_mode((u32)s_main, 0x803FF000u);
 }
 
+/* ── 执行计划：先看后做 ──
+   AI 不该盲试破坏性操作。plan 只生成「会做什么」的描述，apply 才真的执行。
+   这就是「预演与提交分离」：预演和提交共享同一份计划，不会走样。 */
+#define PLAN_SLOTS 4
+#define PLAN_RUN   1
+
+typedef struct {
+    u8   used;
+    u32  id;
+    u8   kind;
+    char arg[12];
+} plan_t;
+
+static plan_t g_plans[PLAN_SLOTS];
+static u32    g_plan_seq;
+
+/* 内核没有 libc，自带一个带边界的复制 */
+static void kstrcpy_n(char *d, const char *s, u32 cap)
+{
+    u32 i = 0;
+    while (i + 1u < cap && s[i]) { d[i] = s[i]; i++; }
+    d[i] = 0;
+}
+
+/* 登记一个 run 计划，返回计划 id；槽位用尽返回 0 */
+u32 plan_make_run(const char *prog)
+{
+    for (u32 i = 0; i < PLAN_SLOTS; i++) {
+        if (!g_plans[i].used) {
+            g_plans[i].used = 1;
+            g_plans[i].id   = ++g_plan_seq;
+            g_plans[i].kind = PLAN_RUN;
+            kstrcpy_n(g_plans[i].arg, prog, sizeof(g_plans[i].arg));
+            return g_plans[i].id;
+        }
+    }
+    return 0;
+}
+
+/* 取出并消费某计划要跑的程序名。找到返回 1。 */
+int plan_take_run(u32 id, char *out, u32 cap)
+{
+    for (u32 i = 0; i < PLAN_SLOTS; i++) {
+        if (g_plans[i].used && g_plans[i].id == id && g_plans[i].kind == PLAN_RUN) {
+            kstrcpy_n(out, g_plans[i].arg, cap);
+            g_plans[i].used = 0;
+            return 1;
+        }
+    }
+    return 0;
+}
+
+void plan_list(void)
+{
+    int first = 1;
+    kprintf("{\"plans\":[");
+    for (u32 i = 0; i < PLAN_SLOTS; i++) {
+        if (!g_plans[i].used) continue;
+        if (!first) kprintf(",");
+        first = 0;
+        kprintf("{\"id\":%d,\"intent\":\"run\",\"prog\":\"%s\"}",
+                (int)g_plans[i].id, g_plans[i].arg);
+    }
+    kprintf("]}\n");
+}
+
+/* 真正执行：装载、重置、调度、进用户态。不返回。 */
+void kernel_apply_run(const char *prog)
+{
+    kload_prog(prog);
+    int n2 = krestart();
+    kprintf("[S] 已重置 %d 个进程，重新调度\n", n2);
+    proc_t *p = proc_schedule();
+    if (!p) { kprintf("[S] 调度失败\n"); return; }
+    if (p->pgtbl) proc_switch_satp(p->pgtbl);
+    proc_set_timer(20000);      /* 恢复时间片，进程才能轮转 */
+    enter_u_mode(p->pc, p->sp, p->pid);
+}
+
 /* shell 主循环：轮询 UART 收字符；收到 run 就装载镜像、重置进程并调度。
    开机时由 s_main 直接调用；所有用户进程退出后由 trap 处理程序调用。
    enter_u_mode 不返回，所以一旦真正启动进程，本函数就被"挂起"在
@@ -511,15 +594,8 @@ void shell_loop(void)
         if (*lsr & 0x01) shell_input((char)*rbr);
         if (g_run_flag) {
             g_run_flag = 0;
-            kload_prog(g_badptr_flag ? "badptr" : (g_fork_flag ? "fork" : "hello"));
+            kernel_apply_run(g_badptr_flag ? "badptr" : (g_fork_flag ? "fork" : "hello"));
             g_badptr_flag = 0;
-            int n2 = krestart();
-            kprintf("[S] run: 已重置 %d 个进程，重新调度\n", n2);
-            proc_t *p = proc_schedule();
-            if (!p) { kprintf("[S] 调度失败\n"); continue; }
-            if (p->pgtbl) proc_switch_satp(p->pgtbl);
-            proc_set_timer(20000);      /* 恢复时间片，进程才能轮转 */
-            enter_u_mode(p->pc, p->sp, p->pid);
         }
     }
 }

@@ -15,7 +15,7 @@ static int streq(const char *a, const char *b)
 
 static void cmd_help(void)
 {
-    uart_puts("命令: help manifest ps run [fork|badptr] reset mem uptime log assert\n");
+    uart_puts("命令: help manifest ps run reset mem uptime log assert plan apply plans\n");
 }
 
 static void cmd_ps(void)
@@ -73,6 +73,52 @@ static void cmd_assert(const char *line)
     uart_puts("}\n");
 }
 
+static void cmd_plan(const char *line)
+{
+    extern u32 plan_make_run(const char *);
+    const char *p = line + 5;                 /* 跳过 "plan " */
+    if (!(p[0] == 'r' && p[1] == 'u' && p[2] == 'n' && p[3] == ' ')) {
+        uart_puts("{\"ok\":false,\"why\":\"用法: plan run <prog>\"}\n");
+        return;
+    }
+    p += 4;
+    if (!p[0]) { uart_puts("{\"ok\":false,\"why\":\"缺少程序名\"}\n"); return; }
+    u32 id = plan_make_run(p);
+    if (!id) { uart_puts("{\"ok\":false,\"why\":\"计划槽已满\"}\n"); return; }
+    uart_puts("{\"plan\":");
+    uart_dec((int)id);
+    uart_puts(",\"intent\":\"run\",\"prog\":\"");
+    uart_puts(p);
+    uart_puts("\",\"will\":\"spawn 3 procs\",\"irreversible\":false}\n");
+}
+
+static void cmd_apply(const char *line)
+{
+    extern int plan_take_run(u32, char *, u32);
+    extern void kernel_apply_run(const char *);
+    const char *p = line + 6;                 /* 跳过 "apply " */
+    int id = 0;
+    while (*p >= '0' && *p <= '9') { id = id * 10 + (*p - '0'); p++; }
+    if (id <= 0) { uart_puts("{\"ok\":false,\"why\":\"用法: apply <plan_id>\"}\n"); return; }
+    char prog[12];
+    if (!plan_take_run((u32)id, prog, sizeof(prog))) {
+        uart_puts("{\"ok\":false,\"why\":\"计划不存在或已被执行\"}\n");
+        return;
+    }
+    /* 先确认再执行：apply 成功的信息必须在进入用户态之前发出去 */
+    uart_puts("{\"apply\":true,\"plan\":");
+    uart_dec(id);
+    uart_puts("}\n");
+
+    /* kernel_apply_run 进用户态后不返回，shell_input 尾部的
+       g_len = 0 永远执行不到。必须在这里手动清行缓冲，
+       否则下次回到 shell 会把新输入接在旧命令后面。 */
+    g_len = 0;
+    g_line[0] = 0;
+
+    kernel_apply_run(prog);
+}
+
 void shell_input(char ch)
 {
     if (ch == '\r' || ch == '\n') {
@@ -108,6 +154,16 @@ void shell_input(char ch)
                 uart_puts("已重置 ");
                 uart_dec(n2);
                 uart_puts(" 个进程到就绪状态\n");
+            }
+            else if (starts_with(g_line, "plan ")) {
+                cmd_plan(g_line);
+            }
+            else if (starts_with(g_line, "apply ")) {
+                cmd_apply(g_line);
+            }
+            else if (streq(g_line, "plans")) {
+                extern void plan_list(void);
+                plan_list();
             }
             else if (starts_with(g_line, "assert ")) {
                 cmd_assert(g_line);
