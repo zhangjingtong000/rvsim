@@ -72,9 +72,14 @@ async function llm(messages){
   const trace0=[];
   const mOut=send("manifest");
   const caps=[];
-  for(const l of mOut.split("\n").map(x=>x.trim()).filter(x=>x.startsWith("{"))){
-    let o; try{ o=JSON.parse(l); }catch(e){ continue; }
-    if(o.cap) caps.push(o);
+  /* manifest 现在是 {"manifest":1,"caps":N,"list":[...]}，
+     逐行 JSON.parse 会被行尾逗号打断，必须整段解析。 */
+  {
+    const ms = mOut.indexOf('{"manifest"');
+    const me = mOut.lastIndexOf("]}");
+    if(ms >= 0 && me > ms){
+      try{ const o = JSON.parse(mOut.slice(ms, me+2)); if(o.list) caps.push(...o.list); }catch(e){}
+    }
   }
   term += mOut;
   /* 这次调用也要计入轨迹，否则统计会把 manifest 误报为「未使用」 */
