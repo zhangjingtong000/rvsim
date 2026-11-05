@@ -15,7 +15,7 @@ static int streq(const char *a, const char *b)
 
 static void cmd_help(void)
 {
-    uart_puts("命令: help ps run [fork|badptr] reset mem uptime log\n");
+    uart_puts("命令: help manifest ps run [fork|badptr] reset mem uptime log\n");
 }
 
 static void cmd_ps(void)
@@ -61,6 +61,10 @@ void shell_input(char ch)
                 uart_dec(n2);
                 uart_puts(" 个进程到就绪状态\n");
             }
+            else if (streq(g_line, "manifest")) {
+                extern void cap_manifest(void);
+                cap_manifest();
+            }
             else if (streq(g_line, "log")) {
                 extern void evt_dump(void);
                 evt_dump();
@@ -87,6 +91,6 @@ void shell_input(char ch)
 void shell_start(void)
 {
     uart_puts("\n=== rvsh ===\n");
-    uart_puts("简易 shell，输入 help 查看命令\n");
+    uart_puts("简易 shell，输入 help 或 manifest 查看能力\n");
     prompt();
 }

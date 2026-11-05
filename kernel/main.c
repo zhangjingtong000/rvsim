@@ -87,6 +87,39 @@ static const char *evt_name(u16 t)
     }
 }
 
+/* ── 能力清单 ──
+   AI 读这一份就知道能做什么、参数取值、哪个操作不可逆。
+   关键：清单由内核生成，不由应用注册——应用注册的清单会撒谎。 */
+typedef struct {
+    const char *name;
+    const char *args;
+    u8          irreversible;
+    const char *desc;
+} cap_t;
+
+static const cap_t g_caps[] = {
+    {"help",     "",                       0, "列出全部命令"},
+    {"manifest", "",                       0, "输出本能力清单（机器可解析）"},
+    {"ps",       "",                       0, "进程表：PID/状态/PC"},
+    {"run",      "prog=hello|fork|badptr", 0, "装载程序并调度三个进程"},
+    {"reset",    "",                       0, "把全部进程重置到就绪"},
+    {"mem",      "",                       0, "物理内存与缺页统计"},
+    {"uptime",   "",                       0, "读取虚拟时钟 mtime"},
+    {"log",      "",                       0, "按发生顺序输出事件流"},
+};
+
+void cap_manifest(void)
+{
+    u32 n = (u32)(sizeof(g_caps) / sizeof(g_caps[0]));
+    kprintf("{\"manifest\":1,\"caps\":%d}\n", (int)n);
+    for (u32 i = 0; i < n; i++) {
+        const cap_t *c = &g_caps[i];
+        kprintf("{\"cap\":\"%s\",\"args\":\"%s\",\"irreversible\":%s,\"desc\":\"%s\"}\n",
+                c->name, c->args,
+                c->irreversible ? "true" : "false", c->desc);
+    }
+}
+
 /* 把事件流按发生顺序打印出来。这是「真相」视图，不是状态投影。 */
 void evt_dump(void)
 {
