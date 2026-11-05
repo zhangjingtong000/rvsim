@@ -147,6 +147,27 @@ function record(name, ok, detail) {
     record("所有无副作用能力都能调用", bad2.length === 0, bad2.join(",") || "全部可调用");
   }
 
+  // ── T13: regs 带参数不能挂死（此前缺 q++ 会死循环）──
+  {
+    const r = send("regs 0");
+    record("regs <pid> 有响应", /"pid":0/.test(r), r.trim().slice(-50));
+  }
+
+  // ── T14: setreg 必须真的写进去 ──
+  {
+    send("setreg 0 18 1234");
+    const r = json(send("regs 0"));
+    const got = r && r.regs ? r.regs.x18 : null;
+    record("setreg 写入可观测", got === "0x000004d2", "x18=" + got);
+  }
+
+  // ── T15: setpc 必须真的改执行点 ──
+  {
+    send("setpc 0 0x80400200");
+    const r = json(send("regs 0"));
+    record("setpc 改写执行点", r && r.pc === "0x80400200", "pc=" + (r && r.pc));
+  }
+
   // ── 汇总 ──
   const pass = results.filter(r => r.ok).length;
   console.log(`\n契约测试: ${pass}/${results.length} 通过`);
