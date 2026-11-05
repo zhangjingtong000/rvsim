@@ -226,8 +226,13 @@ rvsh> restore 1
 [10] 回滚后状态复原           nproc=3 ok
 [11] 回滚本身被记录           restore=1 ok
 
-11/11 通过
+10/10 通过（迁移到 tests/contract.js，已并入 run_tests.sh）
 ```
+
+> **2026-11-05 更正**：原脚本 `web/e2e.js` 已过期（9/11 且崩溃），
+> 且它的「manifest 可解析」一项是假阳性——把 wrapper 对象当成了一个 cap。
+> 现在由 `tests/contract.js` 承担，oracle 也换成了不与被测事件流同源的来源
+> （进程数用 ps、存活进程用 replay 独立重建）。
 
 **关键：第 3 步和第 11 步没有任何硬编码**——程序名是 manifest 告诉它的，结果对不对是事件流告诉它的。
 

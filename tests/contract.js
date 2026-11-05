@@ -120,7 +120,7 @@ function record(name, ok, detail) {
   const cntAll = json(send("log count"));
   const total = cntAll && cntAll.log ? cntAll.log.total : -1;
   const full = send("log all");
-  const lines = full.split("\n").filter(l => /^-?\d+ -?\d+ (spawn|exit|ecall|restore)/.test(l.trim())).length;
+  const lines = full.split("\n").filter(l => /^-?\d+ -?\d+ (spawn|exit|ecall|restore|reset|snapshot|plan|apply|sbrk)/.test(l.trim())).length;
   record("log all 条数与 log count 一致", total === lines, `count.total=${total} 实际行=${lines}`);
 
   // ── 汇总 ──

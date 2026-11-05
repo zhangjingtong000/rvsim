@@ -90,20 +90,30 @@ static void cmd_assert(const char *line)
     if (neg) want = -want;
 
     int got;
-    if (streq(key, "spawn") || streq(key, "exit") || streq(key, "ecall")
-        || streq(key, "restore"))
-        got = evt_count_named(key);
-    else if (streq(key, "oob")) {
+    {
+        extern int evt_type_known(const char *);
         extern int evt_count_denied(void);
-        got = evt_count_denied();
-    }
-    else if (streq(key, "events"))
-        got = evt_count_all();
-    else if (streq(key, "nproc"))
-        got = proc_count_live();
-    else {
-        uart_puts("{\"ok\":false,\"why\":\"未知断言键\"}\n");
-        return;
+        extern int plan_count(void);
+        extern int snap_count(void);
+
+        if (evt_type_known(key)) {
+            got = evt_count_named(key);
+        } else if (streq(key, "oob")) {
+            got = evt_count_denied();
+        } else if (streq(key, "events")) {
+            got = evt_count_all();
+        } else if (streq(key, "nproc")) {
+            got = proc_count_live();
+        } else if (streq(key, "plans")) {
+            got = plan_count();
+        } else if (streq(key, "snaps")) {
+            got = snap_count();
+        } else if (streq(key, "at_prompt")) {
+            got = g_cmd_at_prompt;
+        } else {
+            uart_puts("{\"ok\":false,\"why\":\"未知断言键\",\"hint\":\"spawn|exit|ecall|restore|reset|snapshot|plan|apply|sbrk|events|nproc|oob|plans|snaps|at_prompt|uart\"}\n");
+            return;
+        }
     }
 
     uart_puts("{\"assert\":\"");
@@ -182,6 +192,7 @@ static void cmd_apply(const char *line)
     uart_puts("{\"apply\":true,\"plan\":");
     uart_dec(id);
     uart_puts("}\n");
+    { extern void kernel_note_apply(u32); kernel_note_apply((u32)id); }
 
     /* kernel_apply_run 进用户态后不返回，shell_input 尾部的
        g_len = 0 永远执行不到，必须在这里手动清行缓冲。 */
@@ -302,6 +313,20 @@ void shell_input(char ch)
             }
             else if (ADV && starts_with(g_line, "assert ")) {
                 cmd_assert(g_line);
+            }
+            else if (ADV && starts_with(g_line, "regs")) {
+                extern void proc_dump_regs(int);
+                int pid = 0;
+                const char *q = g_line + 4;
+                if (*q == ' ') {
+                    q++;
+                    while (*q >= '0' && *q <= '9') pid = pid * 10 + (*q - '0');
+                }
+                proc_dump_regs(pid);
+            }
+            else if (ADV && streq(g_line, "replay")) {
+                extern void evt_replay(void);
+                evt_replay();
             }
             else if (ADV && streq(g_line, "resume")) {
                 extern void kernel_resume(void);

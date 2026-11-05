@@ -49,6 +49,13 @@ static u32 g_ustack[NPROC];
 #define EVT_EXIT    2
 #define EVT_ECALL   3
 #define EVT_RESTORE 4
+/* 审计指出：只记 spawn/exit/写类 ecall，内核自己的状态转移全都没记账，
+   于是「事件是真相」名不副实。以下补齐。 */
+#define EVT_RESET    5   /* 内核把进程重置到就绪 */
+#define EVT_SNAPSHOT 6   /* 创建快照 */
+#define EVT_PLAN     7   /* 登记计划 */
+#define EVT_APPLY    8   /* 执行计划 */
+#define EVT_SBRK     9   /* 堆扩展 */
 
 /* 失败原因码：审计要能回答「为什么被拒」，而不只是「被拒了」 */
 #define ECODE_OK      0
@@ -101,7 +108,12 @@ static const char *evt_name(u16 t)
     case EVT_SPAWN: return "spawn";
     case EVT_EXIT:  return "exit";
     case EVT_ECALL: return "ecall";
-    case EVT_RESTORE: return "restore";
+    case EVT_RESTORE:  return "restore";
+    case EVT_RESET:    return "reset";
+    case EVT_SNAPSHOT: return "snapshot";
+    case EVT_PLAN:     return "plan";
+    case EVT_APPLY:    return "apply";
+    case EVT_SBRK:     return "sbrk";
     default:        return "?";
     }
 }
@@ -142,8 +154,9 @@ int evt_count_denied(void)
 /* 类型名是否已知：计数为 0 与类型不存在必须区分开 */
 int evt_type_known(const char *name)
 {
-    const char *ok[] = {"spawn", "exit", "ecall", "restore"};
-    for (u32 i = 0; i < 4; i++)
+    const char *ok[] = {"spawn", "exit", "ecall", "restore",
+                        "reset", "snapshot", "plan", "apply", "sbrk"};
+    for (u32 i = 0; i < 9; i++)
         if (kstreq(ok[i], name)) return 1;
     return 0;
 }
@@ -167,6 +180,39 @@ int proc_count_live(void)
 
 /* log 的轻量查询：把「整段倾倒」换成「按需取用」。
    39 条事件倒给模型会撞上下文窗口，而模型会在边界处数错。 */
+/* 从事件流重建「谁还活着」。
+   这是审计要的独立 oracle：结果不来自 procs[]，而是只看 spawn/exit 事件。
+   把它和 ps 对比，就能发现事件流漏记或多记。
+   注意：事件缓冲是环形的，被覆盖过就只能承认 complete=false。 */
+void evt_replay(void)
+{
+    u32 total  = (u32)evt_count_all();
+    u32 issued = g_evt_seq;
+    int complete = (issued == total);
+
+    u8 alive[NPROC];
+    for (u32 k = 0; k < NPROC; k++) alive[k] = 0;
+
+    u32 i = g_evt_head;
+    while (i != g_evt_tail) {
+        evt_t *e = &g_evts[i];
+        if (e->type == EVT_SPAWN && e->actor < NPROC) alive[e->actor] = 1;
+        if (e->type == EVT_EXIT  && e->actor < NPROC) alive[e->actor] = 0;
+        i = (i + 1u) % EVT_CAP;
+    }
+
+    kprintf("{\"replay\":{\"complete\":%s,\"events\":%d,\"issued\":%d,\"alive\":[",
+            complete ? "true" : "false", (int)total, (int)issued);
+    int first = 1;
+    for (u32 k = 0; k < NPROC; k++) {
+        if (!alive[k]) continue;
+        if (!first) kprintf(",");
+        first = 0;
+        kprintf("%d", (int)k);
+    }
+    kprintf("]}}\n");
+}
+
 void evt_dump_actor(u32 actor)
 {
     kprintf("seq actor type arg0 arg1 result code\n");
@@ -184,9 +230,13 @@ void evt_dump_actor(u32 actor)
 
 void evt_count_dump(void)
 {
-    kprintf("{\"log\":{\"total\":%d,\"spawn\":%d,\"exit\":%d,\"ecall\":%d,\"restore\":%d,\"denied\":%d}}\n",
+    kprintf("{\"log\":{\"total\":%d,\"spawn\":%d,\"exit\":%d,\"ecall\":%d,\"restore\":%d,"
+            "\"reset\":%d,\"snapshot\":%d,\"plan\":%d,\"apply\":%d,\"sbrk\":%d,\"denied\":%d}}\n",
             evt_count_all(), evt_count_named("spawn"), evt_count_named("exit"),
-            evt_count_named("ecall"), evt_count_named("restore"), evt_count_denied());
+            evt_count_named("ecall"), evt_count_named("restore"),
+            evt_count_named("reset"), evt_count_named("snapshot"),
+            evt_count_named("plan"), evt_count_named("apply"),
+            evt_count_named("sbrk"), evt_count_denied());
 }
 
 void evt_dump_last(u32 n)
@@ -212,9 +262,13 @@ void evt_dump_last(u32 n)
    与其指望它数对，不如把答案直接放在它一定会读到的地方。 */
 void evt_summary(void)
 {
-    kprintf("[summary] total=%d spawn=%d exit=%d ecall=%d restore=%d denied=%d\n",
+    kprintf("[summary] total=%d spawn=%d exit=%d ecall=%d restore=%d reset=%d "
+            "snapshot=%d plan=%d apply=%d sbrk=%d denied=%d\n",
             evt_count_all(), evt_count_named("spawn"), evt_count_named("exit"),
-            evt_count_named("ecall"), evt_count_named("restore"), evt_count_denied());
+            evt_count_named("ecall"), evt_count_named("restore"),
+            evt_count_named("reset"), evt_count_named("snapshot"),
+            evt_count_named("plan"), evt_count_named("apply"),
+            evt_count_named("sbrk"), evt_count_denied());
 }
 
 /* ── 能力清单 ──
@@ -233,21 +287,23 @@ static const cap_t g_caps[] = {
     {"manifest", "manifest",                "",                0, "输出本能力清单（机器可解析）"},
     {"status",   "status",                  "",                0, "统一状态入口（JSON）：at_prompt 表示发命令时系统是否停在提示符"},
     {"ps",       "ps",                      "",                0, "进程表（JSON）：pc=用户态入口，nrun=被调度次数"},
-    {"run",      "run <prog>",              "hello|fork|badptr", 0, "装载指定程序并启动 3 个初始进程；fork 演示会额外创建子进程（共 4 个）"},
+    {"run",      "run <prog>",              "hello|fork|badptr", 1, "装载指定程序并启动 3 个初始进程；fork 演示会额外创建子进程（共 4 个）"},
     {"reset",    "reset",                   "",                0, "把全部进程重置到就绪"},
     {"mem",      "mem",                     "",                0, "物理内存大小与累计缺页次数（自启动起）"},
     {"uptime",   "uptime",                  "",                0, "读取虚拟时钟 mtime"},
     {"log",      "log [all] | log count [type] | log last <n> | log find <pid>", "spawn|exit|ecall|restore", 0, "事件流：全部（带摘要）/计数/最近 n 条/按进程过滤"},
     {"tail",     "tail",                    "",                0, "输出最近一段串口内容，换行显示为 |"},
-    {"assert",   "assert <key>=<value> | <key>: <value> | <key> <value>",    "spawn|exit|ecall|restore=事件条数; events=总条数; nproc=活跃进程数; oob=被拒绝的写入次数; uart=<要在历史输出里查找的子串>", 0, "断言：内核直接回答是否成立，返回 want/got/ok"},
+    {"assert",   "assert <key>=<value> | <key>: <value> | <key> <value>",    "spawn|exit|ecall|restore|reset|snapshot|plan|apply|sbrk=各类事件条数; events=总条数; nproc=活跃进程数; oob=被拒绝的写入次数; uart=<要在历史输出里查找的子串>", 0, "断言：内核直接回答是否成立，返回 want/got/ok"},
     {"plan",     "plan run <prog> | plan reset | plan restore <snap_id>",         "run 时 prog 取 hello|fork|badptr；restore 时 snap_id 取 snaps 返回的 id", 0, "登记一个计划但不执行；用 apply <id> 执行"},
     {"plans",    "plans",                   "",                0, "列出待执行的计划"},
-    {"apply",    "apply <plan_id>",         "",                0, "执行指定计划"},
+    {"apply",    "apply <plan_id>",         "",                1, "执行指定计划"},
     {"snapshot", "snapshot",                "",                0, "保存当前进程状态快照，返回快照编号"},
     {"snaps",    "snaps",                   "",                0, "列出快照：id 用于 restore，evt_seq 是该快照时的事件序号"},
     {"restore",  "restore <snap_id>",       "",                1, "恢复到指定快照（回滚，改变当前进程状态）"},
     {"guide",    "guide",                   "",                0, "使用指南：事件字段语义、序号体系、易错点"},
     {"resume",   "resume",                  "",                0, "让就绪进程开始运行（restore/reset 之后用）"},
+    {"replay",   "replay",                  "",                0, "从事件流重建存活进程，与 ps 交叉验证"},
+    {"regs",     "regs [pid]",              "",                0, "读某进程的 32 个寄存器（默认 pid 0）"},
 };
 
 /* 统一状态入口：AI 一次调用就能拿到全貌，
@@ -468,6 +524,7 @@ u32 s_trap_handler(u32 cause, u32 epc, u32 tval, u32 *regs)
                 vm_page_fault_on(pt, a, 1);
             pc->brk = newbrk;
             regs[R_A0] = oldbrk;
+            evt_emit(EVT_SBRK, (u32)cur_proc, oldbrk, newbrk, (s32)oldbrk);
             return epc + 4;
         }
         if (a7 == 6) {           /* fork：复制当前进程 */
@@ -550,6 +607,8 @@ int kprog_valid(const char *name)
 
 /* 按名字选择要加载的用户程序（hello / fork）。len 返回镜像长度。 */
 
+static char g_loaded_prog[8] = "hello";
+
 int kload_prog(const char *name)
 {
     const u8 *src = user_prog_start;
@@ -584,6 +643,12 @@ int kload_prog(const char *name)
         }
     }
     if (len == 0 || len > 256u * 1024u) return -1;
+    /* 记住装的是哪个程序：快照靠它回滚代码区，比复制内存可靠 */
+    {
+        int k = 0;
+        while (name && name[k] && k < 7) { g_loaded_prog[k] = name[k]; k++; }
+        g_loaded_prog[k] = 0;
+    }
     /* shell 上下文运行在某个进程页表里，而这里要写公共用户代码区。
        先切回内核页表并逐页确保映射，再拷贝；之后调度会重新切到进程页表。
        否则写入未映射页（fork_prog 4256 字节跨 2 页）会在 trap 上下文里递归缺页。 */
@@ -596,6 +661,7 @@ int kload_prog(const char *name)
 
 int krestart(void)
 {
+    evt_emit(EVT_RESET, (u32)-1, NPROC_INIT, 0, 1);
     for (u32 k = 0; k < NPROC_INIT; k++) {
         procs[k].pc    = g_user_base;
         procs[k].sp    = g_ustack[k] + 4096u - 16u;
@@ -685,11 +751,18 @@ void kmain(void)
    系统看起来从没离开过那个状态，而实际上它被回滚过。 */
 #define SNAP_SLOTS 4
 
+#define SNAP_CODE_BYTES 8192u   /* 用户代码区（程序镜像通常 < 8KB） */
+#define SNAP_STK_BYTES  4096u   /* 每进程一个栈页 */
+
 typedef struct {
     u8     used;
     u32    id;
     u32    evt_seq;
     proc_t snap[NPROC];
+    /* 审计指出：只存 procs 不足以叫「快照」——回滚后代码区仍是新程序。
+       这里记录当时装载的程序名，回滚时重新装载即可复原代码区。
+       比在进程页表下 memcpy 用户内存可靠得多。 */
+    char   prog[8];
 } snap_t;
 
 static snap_t g_snaps[SNAP_SLOTS];
@@ -703,6 +776,13 @@ u32 snap_take(void)
             g_snaps[i].id      = ++g_snap_seq;
             g_snaps[i].evt_seq = g_evt_seq;
             memcpy(g_snaps[i].snap, procs, sizeof(procs));
+            /* 记录代码区状态：回滚时按这个名字重新装载 */
+            {
+                int k = 0;
+                while (g_loaded_prog[k] && k < 7) { g_snaps[i].prog[k] = g_loaded_prog[k]; k++; }
+                g_snaps[i].prog[k] = 0;
+            }
+            evt_emit(EVT_SNAPSHOT, (u32)-1, g_snaps[i].id, g_snaps[i].evt_seq, 1);
             return g_snaps[i].id;
         }
     }
@@ -714,6 +794,10 @@ int snap_restore(u32 id)
     for (u32 i = 0; i < SNAP_SLOTS; i++) {
         if (g_snaps[i].used && g_snaps[i].id == id) {
             memcpy(procs, g_snaps[i].snap, sizeof(procs));
+            /* 恢复内存前必须切回内核页表：调用方可能正跑在某个进程页表里，
+               直接写公共用户区会落到错误映射上。 */
+            /* 代码区复原：按快照记录的程序名重新装载 */
+            kload_prog(g_snaps[i].prog);
             cur_proc = -1;
             front_sync();
             evt_emit(EVT_RESTORE, (u32)-1, id, g_snaps[i].evt_seq, 1);
@@ -777,6 +861,7 @@ u32 plan_make(u8 kind, const char *arg)
             g_plans[i].kind = kind;
             if (arg) kstrcpy_n(g_plans[i].arg, arg, sizeof(g_plans[i].arg));
             else     g_plans[i].arg[0] = 0;
+            evt_emit(EVT_PLAN, (u32)-1, g_plans[i].id, kind, 1);
             return g_plans[i].id;
         }
     }
@@ -822,6 +907,23 @@ void plan_list(void)
 
 /* 让当前就绪进程开始运行。restore / reset 只把进程置为 READY，
    没有这个入口它们就永远停在就绪态——「恢复成功」是名义上的。 */
+/* AI 侧也必须能读寄存器：前端一直可以直接 _rv_reg(i)，
+   如果 agent 读不到，所谓「同一套接口」就不成立。 */
+void proc_dump_regs(int pid)
+{
+    if (pid < 0 || pid >= NPROC || procs[pid].stack_pa == 0) {
+        kprintf("{\"ok\":false,\"why\":\"进程不存在\"}\n");
+        return;
+    }
+    kprintf("{\"pid\":%d,\"pc\":\"%x\",\"sp\":\"%x\",\"regs\":{",
+            pid, (u32)procs[pid].pc, (u32)procs[pid].regs[2]);
+    for (int i = 0; i < 32; i++) {
+        if (i) kprintf(",");
+        kprintf("\"x%d\":\"%x\"", i, (u32)procs[pid].regs[i]);
+    }
+    kprintf("}}\n");
+}
+
 void kernel_resume(void)
 {
     proc_t *p = proc_schedule();
@@ -830,6 +932,12 @@ void kernel_resume(void)
     if (p->pgtbl) proc_switch_satp(p->pgtbl);
     proc_set_timer(20000);
     enter_u_mode(p->pc, p->sp, p->pid);
+}
+
+/* apply 也要记账：谁在什么时候执行了哪个计划 */
+void kernel_note_apply(u32 plan_id)
+{
+    evt_emit(EVT_APPLY, (u32)-1, plan_id, 0, 1);
 }
 
 /* 执行 reset 计划：重置进程到就绪，返回 */
@@ -868,9 +976,8 @@ void shell_loop(void)
     extern void shell_input(char);
     extern int g_run_flag, g_fork_flag, g_badptr_flag;
 
-    /* shell 不是进程，不该被时间片打断：此时 satp 指向内核页表，
-       一旦 s_trap_handler 把 PC 切到用户进程就会指令缺页。
-       停掉定时器，等真正要进用户态前再恢复。 */
+    /* shell 不是进程，不该被时间片打断：一旦 s_trap_handler 把 PC
+       切到用户进程就会指令缺页。停掉定时器，进用户态前再恢复。 */
     proc_set_timer(0x7FFFFFF0u);
 
     /* S 模式默认 SUM=0，不能读写用户页（U 位）的映射。
