@@ -247,6 +247,7 @@ static const cap_t g_caps[] = {
     {"snaps",    "snaps",                   "",                0, "列出快照：id 用于 restore，evt_seq 是该快照时的事件序号"},
     {"restore",  "restore <snap_id>",       "",                1, "恢复到指定快照（回滚，改变当前进程状态）"},
     {"guide",    "guide",                   "",                0, "使用指南：事件字段语义、序号体系、易错点"},
+    {"resume",   "resume",                  "",                0, "让就绪进程开始运行（restore/reset 之后用）"},
 };
 
 /* 统一状态入口：AI 一次调用就能拿到全貌，
@@ -817,6 +818,18 @@ void plan_list(void)
                 (int)g_plans[i].id, in, g_plans[i].arg);
     }
     kprintf("]}\n");
+}
+
+/* 让当前就绪进程开始运行。restore / reset 只把进程置为 READY，
+   没有这个入口它们就永远停在就绪态——「恢复成功」是名义上的。 */
+void kernel_resume(void)
+{
+    proc_t *p = proc_schedule();
+    if (!p) { kprintf("{\"ok\":false,\"why\":\"没有可运行的进程\"}\n"); return; }
+    kprintf("{\"resume\":true,\"pid\":%d}\n", (int)p->pid);
+    if (p->pgtbl) proc_switch_satp(p->pgtbl);
+    proc_set_timer(20000);
+    enter_u_mode(p->pc, p->sp, p->pid);
 }
 
 /* 执行 reset 计划：重置进程到就绪，返回 */

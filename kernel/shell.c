@@ -303,6 +303,12 @@ void shell_input(char ch)
             else if (ADV && starts_with(g_line, "assert ")) {
                 cmd_assert(g_line);
             }
+            else if (ADV && streq(g_line, "resume")) {
+                extern void kernel_resume(void);
+                g_len = 0;
+                g_line[0] = 0;
+                kernel_resume();
+            }
             else if (ADV && streq(g_line, "guide")) {
                 extern void cap_guide(void);
                 cap_guide();

@@ -86,3 +86,16 @@ if [ $failed -gt 0 ]; then
 else
   echo "（全部通过）"
 fi
+
+# ── 能力契约回归 ──
+# 上面那些只验证模拟器指令，完全不覆盖 manifest/assert/plan/snapshot 这一层。
+# 没有这一段，「AI 能否使用这个 OS」就只能靠读文档判断。
+echo ""
+echo "=== 能力契约（manifest 声明的行为是否真的成立）==="
+if command -v node >/dev/null 2>&1; then
+  node "$(dirname "$0")/contract.js" || failed=$((failed + 1))
+else
+  echo "  跳过：未安装 node"
+fi
+
+exit $failed
