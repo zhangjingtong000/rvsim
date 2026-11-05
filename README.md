@@ -1,12 +1,26 @@
 # rvsim · RISC-V 模拟器与迷你内核
 
-从零实现的 RV32IMA 模拟器 + 迷你内核 + 可视化调试界面。本科项目项目。
+从零实现的 RV32IMA 模拟器 + 迷你内核 + 可视化界面。
 
-## 当前状态（2026-10-26）
+**当前目标：让 AI agent 能完整地使用这个操作系统。**
+
+具体做法是把内核状态建模成**可审计、可断言、可回滚**的对象：
+
+- **事件是真相**：内核维护事件日志，`log` 按发生顺序输出
+- **能力清单由内核生成**：`manifest` 输出全部能力的结构化清单
+- **一次调用自证**：`assert key=value` 让内核直接回答是否成立，AI 不必自己数
+- **预演与提交分离**：`plan` 登记，`apply` 执行
+- **可回滚**：`snapshot` 存档，`restore` 回滚，`resume` 续跑
+
+面向 AI 的使用说明见 `docs/ai-guide.md`；终端内可执行 `guide` 与 `manifest`。
+
+---
+
+## 当前状态（2026-11-05）
 
 | 验收门 | 目标 | 状态 | 证据 |
 |---|---|---|---|
-| Gate 0 环境 | 工具链可用、82 个测试可编译 | ✅ | `build/` 产物 |
+| Gate 0 环境 | 工具链可用、91 个测试可编译 | ✅ | `build/` 产物 |
 | Gate 1 最小可执行环境 | ELF 加载 + trap + U 模式 + tohost | ✅ | `rv32ui-p-add` PASS |
 | Gate 2 RV32I | 42/42 | ✅ | `./tests/run_tests.sh rv32ui` |
 | Gate 3 RV32M + RV32A | 8/8 + 10/10 | ✅ | `./tests/run_tests.sh rv32um` / `rv32ua` |
@@ -21,7 +35,10 @@
 | **QEMU 语义对照** | 与 QEMU 比对计算结果 | ✅ | 四个 CRC 值完全一致 |
 | Gate 7b WASM 可视化 | 浏览器调试界面 | ✅ | 90 KB wasm，Node + 浏览器双验证 |
 
-**riscv-tests：82/82 全通过。**
+**riscv-tests：91/91 全通过；能力契约：10/10 全通过。**
+
+91 项只覆盖模拟器指令。能力层（manifest/assert/plan/snapshot）由
+`tests/contract.js` 覆盖，已并入 `tests/run_tests.sh`。
 
 ## 数字
 
@@ -30,8 +47,8 @@
 
 | 项 | 值 |
 |---|---|
-| 模拟器源码 | 2,284 行（`src/`，含 FDT 解析 219 行、反汇编适配 70 行） |
-| 迷你内核 | 1,139 行（`kernel/`） |
+| 模拟器源码 | 约 2,500 行（`src/`，含 FDT 解析、反汇编适配） |
+| 迷你内核 | 约 1,270 行（`kernel/`，含事件日志、能力清单、快照、计划） |
 | 解释速度 | **约 25.8 MIPS**（CoreMark 12.58 亿条 / 48.7 秒；轻负载微基准可达 32） |
 | WASM 体积 | 90 KB |
 | Linux 启动 | 6.1.14，约 3 亿条指令到 shell |
@@ -47,10 +64,29 @@ tests/        riscv-tests + 批量跑分器
 docs/         需求文档、设计文档、调研
 ```
 
+## AI-OS 能力
+
+| 能力 | 用途 |
+|---|---|
+| `manifest` | 全部能力的结构化清单（内核生成，非手写） |
+| `guide` | 面向 AI 的使用指南（事件语义、序号体系、易错点） |
+| `log` | 事件流：全部 / count / last / find，末尾自带摘要 |
+| `assert` | 一次调用自证，三种写法等价 |
+| `plan` / `apply` | 预演与提交分离，执行后计划被消耗 |
+| `snapshot` / `restore` / `resume` | 存档、回滚、续跑 |
+| `status` | 一次拿到进程数、事件数、计划数、快照数、是否空闲 |
+
+**已知未完成**（详见 `docs/audit-corrections.md`）：
+
+- 事件流是 512 条环形缓冲，不是真正的 append-only；`sbrk`/`getpid`/
+  `yield`/`reset`/`snapshot` 尚未记事件；没有 replay 实现
+- `snapshot` 只保存进程表，不保存用户内存与页表，所以回滚后代码区可能不一致
+- 前端可以直接读写寄存器，AI 没有对等能力
+
 ## 运行
 
 ```bash
-# 回归（82 个测试）
+# 回归（91 个指令测试 + 10 项能力契约）
 ./tests/run_tests.sh all
 
 # 跑单个测试
@@ -75,7 +111,7 @@ cd web && python3 -m http.server 8777
 make                          # 构建 build/rvsim
 make directed                 # 构建 4 个定向测试 ELF
 make dts                      # 构建 dts/minimal.dtb
-./tests/run_tests.sh all      # 回归（应 86/86）
+./tests/run_tests.sh all      # 回归（应 91/91 + 契约 10/10）
 ```
 
 缺 capstone 时 `make` 会直接提示 `先执行：make deps`，不会只丢一个 `capstone.h not found`。
