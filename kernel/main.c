@@ -292,6 +292,12 @@ int kload_prog(const char *name)
         }
     }
     if (len == 0 || len > 256u * 1024u) return -1;
+    /* shell 上下文运行在某个进程页表里，而这里要写公共用户代码区。
+       先切回内核页表并逐页确保映射，再拷贝；之后调度会重新切到进程页表。
+       否则写入未映射页（fork_prog 4256 字节跨 2 页）会在 trap 上下文里递归缺页。 */
+    proc_switch_satp(g_kroot);
+    for (u32 a = g_user_base; a < g_user_base + len; a += 4096u)
+        if (!vm_page_fault_on(g_kroot, a & ~0xFFFu, 1)) break;
     memcpy((void *)g_user_base, src, len);
     g_cur_prog_len = len;
     return (int)len;
