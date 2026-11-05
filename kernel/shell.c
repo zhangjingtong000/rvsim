@@ -240,6 +240,11 @@ void shell_input(char ch)
                 g_badptr_flag = 1;
                 g_run_flag = 1;
             }
+            else if (streq(g_line, "run hello")) {
+                extern int g_run_flag, g_fork_flag;
+                g_fork_flag = 0;
+                g_run_flag = 1;
+            }
             else if (streq(g_line, "run fork")) {
                 extern int g_run_flag, g_fork_flag;
                 g_fork_flag = 1;
@@ -254,12 +259,6 @@ void shell_input(char ch)
             }
             else if (ADV && streq(g_line, "tail")) {
                 extern void uart_tail_dump(void);
-                extern u32  uart_tail_len(void);
-                uart_puts("mark=");
-                uart_dec((int)g_cmd_mark);
-                uart_puts(" len=");
-                uart_dec((int)uart_tail_len());
-                uart_puts(" : ");
                 uart_tail_dump();
             }
             else if (ADV && streq(g_line, "status")) {

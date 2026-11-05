@@ -233,19 +233,19 @@ static const cap_t g_caps[] = {
     {"manifest", "manifest",                "",                0, "输出本能力清单（机器可解析）"},
     {"status",   "status",                  "",                0, "统一状态入口（JSON）"},
     {"ps",       "ps",                      "",                0, "进程表（JSON）"},
-    {"run",      "run <prog>",              "hello|fork|badptr", 0, "装载程序并调度三个进程"},
+    {"run",      "run <prog>",              "hello|fork|badptr", 0, "装载指定程序并启动 3 个进程，跑完后回到 shell"},
     {"reset",    "reset",                   "",                0, "把全部进程重置到就绪"},
-    {"mem",      "mem",                     "",                0, "物理内存与缺页统计"},
+    {"mem",      "mem",                     "",                0, "物理内存大小与累计缺页次数（自启动起）"},
     {"uptime",   "uptime",                  "",                0, "读取虚拟时钟 mtime"},
-    {"log",      "log | log count [type] | log last <n> | log find <pid>", "", 0, "事件流：全部/计数/最近 n 条"},
-    {"tail",     "tail",                    "",                0, "输出最近一段串口内容（审计用）"},
-    {"assert",   "assert <key>=<value> | <key>: <value> | <key> <value>",    "spawn|exit|ecall|restore|events|nproc|oob|uart", 0, "断言：内核直接回答是否成立"},
-    {"plan",     "plan run <prog> | plan reset | plan restore <snap_id>",         "hello|fork|badptr", 0, "生成执行计划但不执行"},
+    {"log",      "log | log count [type] | log last <n> | log find <pid>", "spawn|exit|ecall|restore", 0, "事件流：全部（带摘要）/计数/最近 n 条/按进程过滤"},
+    {"tail",     "tail",                    "",                0, "输出最近一段串口内容，换行显示为 |"},
+    {"assert",   "assert <key>=<value> | <key>: <value> | <key> <value>",    "spawn|exit|ecall|restore|events|nproc|oob|uart", 0, "断言：内核直接回答是否成立，返回 want/got/ok"},
+    {"plan",     "plan run <prog> | plan reset | plan restore <snap_id>",         "hello|fork|badptr", 0, "登记一个计划但不执行；用 apply <id> 执行"},
     {"plans",    "plans",                   "",                0, "列出待执行的计划"},
     {"apply",    "apply <plan_id>",         "",                0, "执行指定计划"},
-    {"snapshot", "snapshot",                "",                0, "保存当前进程状态快照"},
+    {"snapshot", "snapshot",                "",                0, "保存当前进程状态快照，返回快照编号"},
     {"snaps",    "snaps",                   "",                0, "列出快照"},
-    {"restore",  "restore <snap_id>",       "",                0, "恢复到指定快照（回滚）"},
+    {"restore",  "restore <snap_id>",       "",                1, "恢复到指定快照（回滚，改变当前进程状态）"},
 };
 
 /* 统一状态入口：AI 一次调用就能拿到全貌，
@@ -551,19 +551,18 @@ int krestart(void)
 /* 供 shell 的 ps 命令调用 */
 void shell_ps_hook(void)
 {
-    /* JSON 而不是表格：空格分隔的表格要靠猜列边界，机器读容易错位 */
-    /* 显式给出有效进程数：列表里有 UNUSED 槽，让模型自己数容易多数 */
+    /* 只输出真正用过的槽：夹着 UNUSED 会让模型以为进程更多，
+       而且那些槽的 pid 都是 0，看起来像重复项。 */
     kprintf("{\"nproc\":%d,\"procs\":[", proc_count_live());
+    int first = 1;
     for (int i = 0; i < NPROC; i++) {
-        if (i) kprintf(",");
-        /* stack_pa == 0 说明这个槽从未被 proc_create 使用过 */
-        const char *st = procs[i].stack_pa == 0 ? "UNUSED" :
-                         procs[i].state == PROC_RUN ? "RUN" :
+        if (procs[i].stack_pa == 0) continue;
+        if (!first) kprintf(",");
+        first = 0;
+        const char *st = procs[i].state == PROC_RUN ? "RUN" :
                          procs[i].state == PROC_READY ? "READY" : "EXIT";
-        {   /* kprintf 的 %x 已自带 0x 前缀，不能再加 */
-            kprintf("{\"pid\":%d,\"state\":\"%s\",\"pc\":\"%x\",\"nrun\":%d}",
-                    (int)procs[i].pid, st, (u32)procs[i].pc, (int)procs[i].nrun);
-        }
+        kprintf("{\"pid\":%d,\"state\":\"%s\",\"pc\":\"%x\",\"nrun\":%d}",
+                (int)procs[i].pid, st, (u32)procs[i].pc, (int)procs[i].nrun);
     }
     kprintf("]}\n");
 }
