@@ -49,6 +49,9 @@ rvsh> help         # 只有命令名
 | `snapshot` | `snapshot` | 保存进程状态快照 |
 | `snaps` | `snaps` | 列出快照 |
 | `restore` | `restore <id>` | 回滚（不可逆） |
+| `resume` | `resume` | 让就绪进程开跑（restore/reset 之后必须用它） |
+| `replay` | `replay` | 从事件流重建存活进程，与 `ps` 交叉验证 |
+| `regs` | `regs [pid]` | 读某进程的 32 个寄存器 |
 
 ---
 
@@ -179,6 +182,8 @@ apply 2                   # 真的执行
 | 以为 `restore` 可撤销 | 标了 `irreversible: true`，执行前先 `snapshot` |
 | 以为 `run fork` 是 3 个进程 | fork 演示会多一个子进程，共 4 个 |
 | 用 `log` 被刷屏 | 默认只给 30 条，要全量用 `log all` |
+| `restore` 之后直接 `ps` 就以为完事 | 进程只是 READY，要 `resume` 才真的继续跑 |
+| 用 `ps` 判断事件流对不对 | 用 `replay` 交叉验证，它只看事件不读 `procs` |
 
 ---
 
