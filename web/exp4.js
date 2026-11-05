@@ -48,7 +48,15 @@ async function llm(messages){
   const p=M._malloc(elf.length); M.HEAPU8.set(elf,p); M._rv_load(p,elf.length);
   const ub=M._malloc(65536);
   let out="";
-  function drain(){ let n; while((n=M._rv_uart_read(ub,65536))>0) out+=Buffer.from(M.HEAPU8.subarray(ub,ub+n)).toString(); }
+  /* 必须用 StringDecoder：Buffer.toString() 每次独立解码，
+     跨块的 UTF-8 多字节字符会被切断成乱码（◆◆），
+     导致模型看到的中文 desc 是坏的。 */
+  const { StringDecoder } = require("string_decoder");
+  const sd = new StringDecoder("utf8");
+  function drain(){
+    let n;
+    while((n=M._rv_uart_read(ub,65536))>0) out += sd.write(Buffer.from(M.HEAPU8.subarray(ub,ub+n)));
+  }
   function step(n){ for(let i=0;i<n;i++){ if(M._rv_step()!==0) return; } }
   function send(cmd,maxB=300){
     out="";

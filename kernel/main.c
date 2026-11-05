@@ -240,7 +240,7 @@ static const cap_t g_caps[] = {
     {"log",      "log | log count [type] | log last <n> | log find <pid>", "spawn|exit|ecall|restore", 0, "事件流：全部（带摘要）/计数/最近 n 条/按进程过滤"},
     {"tail",     "tail",                    "",                0, "输出最近一段串口内容，换行显示为 |"},
     {"assert",   "assert <key>=<value> | <key>: <value> | <key> <value>",    "spawn|exit|ecall|restore|events|nproc|oob|uart", 0, "断言：内核直接回答是否成立，返回 want/got/ok"},
-    {"plan",     "plan run <prog> | plan reset | plan restore <snap_id>",         "hello|fork|badptr", 0, "登记一个计划但不执行；用 apply <id> 执行"},
+    {"plan",     "plan run <prog> | plan reset | plan restore <snap_id>",         "run 时 prog 取 hello|fork|badptr；restore 时 snap_id 取 snaps 返回的 id", 0, "登记一个计划但不执行；用 apply <id> 执行"},
     {"plans",    "plans",                   "",                0, "列出待执行的计划"},
     {"apply",    "apply <plan_id>",         "",                0, "执行指定计划"},
     {"snapshot", "snapshot",                "",                0, "保存当前进程状态快照，返回快照编号"},
@@ -278,7 +278,7 @@ void evt_dump(void)
 {
     u32 i = g_evt_head;
     /* 内核 kprintf 是精简实现，不支持宽度/对齐说明符，只用基本格式 */
-    kprintf("seq actor type arg0 arg1 result\n");
+    kprintf("seq actor type arg0 arg1 result code\n");
     while (i != g_evt_tail) {
         evt_t *e = &g_evts[i];
         kprintf("%d %d %s %x %x %d code=%d\n",

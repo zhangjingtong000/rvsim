@@ -187,6 +187,10 @@ static void cmd_apply(const char *line)
             sid = sid * 10 + (*q - '0');
         if (!kernel_apply_restore((u32)sid))
             uart_puts("{\"ok\":false,\"why\":\"快照不存在\"}\n");
+        else
+            /* 计划标了 irreversible，执行后就必须给出可见的后果提示，
+               否则「不可逆」只是清单上的一句话。 */
+            uart_puts("{\"warning\":\"进程状态已被回滚，此操作不可撤销\"}\n");
     }
 }
 
