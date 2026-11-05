@@ -35,6 +35,12 @@ extern const u8 badptr_prog_start[];
 extern const u8 badptr_prog_end[];
 
 u32 *g_kroot;   /* 供 vm.c 的按需分页使用 */
+
+/* ── 独立计数器 ──
+   审计指出：assert 和 log 都读同一份 g_evts，事件流记错了也发现不了。
+   这里在 trap 分派处单独计数，完全不经过 evt_emit。
+   两边对不上，就说明事件流漏记或多记。 */
+static u32 g_trap_ecall, g_trap_exit, g_trap_fork, g_trap_sbrk;
 static u32  g_user_base = 0x80400000u;
 
 /* 每个进程的用户栈（物理页） */
@@ -44,7 +50,7 @@ static u32 g_ustack[NPROC];
    内核的真相不是「当前状态」，而是「发生过什么」。
    状态可以从事件流重放出来，反过来不成立。
    这是可审计、可回放、可回滚三件事的共同底座。 */
-#define EVT_CAP   512
+#define EVT_CAP   2048
 #define EVT_SPAWN   1
 #define EVT_EXIT    2
 #define EVT_ECALL   3
@@ -56,6 +62,8 @@ static u32 g_ustack[NPROC];
 #define EVT_PLAN     7   /* 登记计划 */
 #define EVT_APPLY    8   /* 执行计划 */
 #define EVT_SBRK     9   /* 堆扩展 */
+#define EVT_FORK     10  /* fork：父进程视角的派生事件 */
+#define EVT_SETREG   11  /* 外部改写进程寄存器（调试） */
 
 /* 失败原因码：审计要能回答「为什么被拒」，而不只是「被拒了」 */
 #define ECODE_OK      0
@@ -114,6 +122,8 @@ static const char *evt_name(u16 t)
     case EVT_PLAN:     return "plan";
     case EVT_APPLY:    return "apply";
     case EVT_SBRK:     return "sbrk";
+    case EVT_FORK:     return "fork";
+    case EVT_SETREG:   return "setreg";
     default:        return "?";
     }
 }
@@ -155,8 +165,8 @@ int evt_count_denied(void)
 int evt_type_known(const char *name)
 {
     const char *ok[] = {"spawn", "exit", "ecall", "restore",
-                        "reset", "snapshot", "plan", "apply", "sbrk"};
-    for (u32 i = 0; i < 9; i++)
+                        "reset", "snapshot", "plan", "apply", "sbrk", "fork", "setreg"};
+    for (u32 i = 0; i < 11; i++)
         if (kstreq(ok[i], name)) return 1;
     return 0;
 }
@@ -231,12 +241,12 @@ void evt_dump_actor(u32 actor)
 void evt_count_dump(void)
 {
     kprintf("{\"log\":{\"total\":%d,\"spawn\":%d,\"exit\":%d,\"ecall\":%d,\"restore\":%d,"
-            "\"reset\":%d,\"snapshot\":%d,\"plan\":%d,\"apply\":%d,\"sbrk\":%d,\"denied\":%d}}\n",
+            "\"reset\":%d,\"snapshot\":%d,\"plan\":%d,\"apply\":%d,\"sbrk\":%d,\"fork\":%d,\"denied\":%d}}\n",
             evt_count_all(), evt_count_named("spawn"), evt_count_named("exit"),
             evt_count_named("ecall"), evt_count_named("restore"),
             evt_count_named("reset"), evt_count_named("snapshot"),
             evt_count_named("plan"), evt_count_named("apply"),
-            evt_count_named("sbrk"), evt_count_denied());
+            evt_count_named("sbrk"), evt_count_named("fork"), evt_count_denied());
 }
 
 void evt_dump_last(u32 n)
@@ -263,12 +273,12 @@ void evt_dump_last(u32 n)
 void evt_summary(void)
 {
     kprintf("[summary] total=%d spawn=%d exit=%d ecall=%d restore=%d reset=%d "
-            "snapshot=%d plan=%d apply=%d sbrk=%d denied=%d\n",
+            "snapshot=%d plan=%d apply=%d sbrk=%d fork=%d denied=%d\n",
             evt_count_all(), evt_count_named("spawn"), evt_count_named("exit"),
             evt_count_named("ecall"), evt_count_named("restore"),
             evt_count_named("reset"), evt_count_named("snapshot"),
             evt_count_named("plan"), evt_count_named("apply"),
-            evt_count_named("sbrk"), evt_count_denied());
+            evt_count_named("sbrk"), evt_count_named("fork"), evt_count_denied());
 }
 
 /* ── 能力清单 ──
@@ -293,7 +303,7 @@ static const cap_t g_caps[] = {
     {"uptime",   "uptime",                  "",                0, "读取虚拟时钟 mtime"},
     {"log",      "log [all] | log count [type] | log last <n> | log find <pid>", "spawn|exit|ecall|restore", 0, "事件流：全部（带摘要）/计数/最近 n 条/按进程过滤"},
     {"tail",     "tail",                    "",                0, "输出最近一段串口内容，换行显示为 |"},
-    {"assert",   "assert <key>=<value> | <key>: <value> | <key> <value>",    "spawn|exit|ecall|restore|reset|snapshot|plan|apply|sbrk=各类事件条数; events=总条数; nproc=活跃进程数; oob=被拒绝的写入次数; uart=<要在历史输出里查找的子串>", 0, "断言：内核直接回答是否成立，返回 want/got/ok"},
+    {"assert",   "assert <key>=<value> | <key>: <value> | <key> <value>",    "spawn|exit|ecall|restore|reset|snapshot|plan|apply|sbrk|fork|setreg=各类事件条数; events=总条数; nproc=活跃进程数; oob=被拒绝的写入次数; uart=<要在历史输出里查找的子串>", 0, "断言：内核直接回答是否成立，返回 want/got/ok"},
     {"plan",     "plan run <prog> | plan reset | plan restore <snap_id>",         "run 时 prog 取 hello|fork|badptr；restore 时 snap_id 取 snaps 返回的 id", 0, "登记一个计划但不执行；用 apply <id> 执行"},
     {"plans",    "plans",                   "",                0, "列出待执行的计划"},
     {"apply",    "apply <plan_id>",         "",                1, "执行指定计划"},
@@ -304,6 +314,8 @@ static const cap_t g_caps[] = {
     {"resume",   "resume",                  "",                0, "让就绪进程开始运行（restore/reset 之后用）"},
     {"replay",   "replay",                  "",                0, "从事件流重建存活进程，与 ps 交叉验证"},
     {"regs",     "regs [pid]",              "",                0, "读某进程的 32 个寄存器（默认 pid 0）"},
+    {"verify",   "verify",                  "",                0, "交叉验证：trap 侧独立计数 vs 事件流"},
+    {"setreg",   "setreg <pid> <reg> <val>", "",               1, "改写进程寄存器（调试用，不可逆）"},
 };
 
 /* 统一状态入口：AI 一次调用就能拿到全貌，
@@ -332,6 +344,36 @@ void cap_help(void)
 /* ── 面向 AI 的使用指南 ──
    manifest 的 desc 只够写一句话，装不下的东西放这里。
    这份内容需要长期维护：新增能力、改变语义时同步更新。 */
+/* 交叉验证：独立计数器 vs 事件流。两者不一致就是事件流的 bug。 */
+void verify_dump(void)
+{
+    int ec = evt_count_named("ecall"), ex = evt_count_named("exit");
+    int sp = evt_count_named("spawn"), sb = evt_count_named("sbrk");
+    int ok_e = ((int)g_trap_ecall == ec);
+    int ok_x = ((int)g_trap_exit  == ex);
+    int ok_s = ((int)g_trap_sbrk  == sb);
+    int fk = evt_count_named("fork");
+    int ok_f = ((int)g_trap_fork == fk);
+
+    /* 未能对应到任何事件记录的 ecall。
+       这不是 bug 本身——getpid/yield 这类高频无副作用的调用故意不记账，
+       但缺口必须能被量化，否则「事件是真相」就是一句空话。 */
+    (void)sp;
+    int unaccounted = (int)g_trap_ecall - ec - ex - sb - (int)g_trap_fork;
+
+    kprintf("{\"verify\":{");
+    kprintf("\"ecall\":{\"trap\":%d,\"evt\":%d,\"ok\":%s},",
+            (int)g_trap_ecall, ec, ok_e ? "true" : "false");
+    kprintf("\"exit\":{\"trap\":%d,\"evt\":%d,\"ok\":%s},",
+            (int)g_trap_exit, ex, ok_x ? "true" : "false");
+    kprintf("\"sbrk\":{\"trap\":%d,\"evt\":%d,\"ok\":%s},",
+            (int)g_trap_sbrk, sb, ok_s ? "true" : "false");
+    kprintf("\"fork\":{\"trap\":%d,\"evt\":%d,\"ok\":%s},",
+            (int)g_trap_fork, fk, ok_f ? "true" : "false");
+    kprintf("\"unaccounted_ecall\":%d", unaccounted);
+    kprintf("}}\n");
+}
+
 void cap_guide(void)
 {
     kprintf("{\"guide\":{\n");
@@ -466,6 +508,12 @@ u32 s_trap_handler(u32 cause, u32 epc, u32 tval, u32 *regs)
         u32 a7 = regs[R_A7];
         u32 a0 = regs[R_A0];
 
+        /* 独立计数：此处不做任何事件记录，纯计数 */
+        g_trap_ecall++;
+        if (a7 == 0) g_trap_exit++;
+        if (a7 == 5) g_trap_sbrk++;
+        if (a7 == 6) g_trap_fork++;
+
 
         if (a7 == 1) {           /* write(buf, len) */
             u32 buf = regs[R_A0];
@@ -539,8 +587,9 @@ u32 s_trap_handler(u32 cause, u32 epc, u32 tval, u32 *regs)
             *cc = *pp;
             cc->pid   = child;
             cc->state = PROC_READY;
-            /* 必须记账：否则 ps 里 4 个进程、事件流里 spawn 只有 3，
-               assert spawn=3 会在说谎。 */
+            /* 两条事件：一条是父进程视角的 fork，一条是子进程的 spawn。
+               只有 spawn 的话，分不清这个进程是开机创建的还是 fork 出来的。 */
+            evt_emit(EVT_FORK,  (u32)cur_proc, (u32)child, 0, 1);
             evt_emit(EVT_SPAWN, (u32)child, pp->pc, pp->sp, 0);
             /* 复制当前寄存器（不是上次保存的快照） */
             for (int k = 0; k < 32; k++) cc->regs[k] = regs[k];
@@ -909,6 +958,24 @@ void plan_list(void)
    没有这个入口它们就永远停在就绪态——「恢复成功」是名义上的。 */
 /* AI 侧也必须能读寄存器：前端一直可以直接 _rv_reg(i)，
    如果 agent 读不到，所谓「同一套接口」就不成立。 */
+/* 写寄存器：前端一直能通过 _rv_set_reg 做，AI 侧没有就是不对称。
+   这确实是危险操作（改 pc 会让系统跑飞），所以 manifest 里标 irreversible，
+   并且每次改写都记一条事件，事后可追。 */
+void proc_set_reg(int pid, int reg, u32 val)
+{
+    if (pid < 0 || pid >= NPROC || procs[pid].stack_pa == 0) {
+        kprintf("{\"ok\":false,\"why\":\"进程不存在\"}\n");
+        return;
+    }
+    if (reg < 0 || reg >= 32) {
+        kprintf("{\"ok\":false,\"why\":\"寄存器号应为 0..31\"}\n");
+        return;
+    }
+    procs[pid].regs[reg] = val;
+    evt_emit(EVT_SETREG, (u32)pid, (u32)reg, val, 1);
+    kprintf("{\"setreg\":{\"pid\":%d,\"reg\":%d,\"val\":\"%x\"}}\n", pid, reg, val);
+}
+
 void proc_dump_regs(int pid)
 {
     if (pid < 0 || pid >= NPROC || procs[pid].stack_pa == 0) {

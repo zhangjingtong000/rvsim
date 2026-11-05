@@ -314,6 +314,31 @@ void shell_input(char ch)
             else if (ADV && starts_with(g_line, "assert ")) {
                 cmd_assert(g_line);
             }
+            else if (ADV && starts_with(g_line, "setreg ")) {
+                extern void proc_set_reg(int, int, u32);
+                const char *q = g_line + 7;
+                int pid = 0, reg = 0;
+                u32 val = 0;
+                while (*q >= '0' && *q <= '9') { pid = pid * 10 + (*q - '0'); q++; }
+                while (*q == ' ') q++;
+                while (*q >= '0' && *q <= '9') { reg = reg * 10 + (*q - '0'); q++; }
+                while (*q == ' ') q++;
+                /* 支持十进制与 0x 前缀 */
+                if (q[0] == '0' && (q[1] == 'x' || q[1] == 'X')) {
+                    q += 2;
+                    while (*q) {
+                        u32 d;
+                        if (*q >= '0' && *q <= '9') d = (u32)(*q - '0');
+                        else if (*q >= 'a' && *q <= 'f') d = (u32)(*q - 'a' + 10);
+                        else if (*q >= 'A' && *q <= 'F') d = (u32)(*q - 'A' + 10);
+                        else break;
+                        val = val * 16u + d; q++;
+                    }
+                } else {
+                    while (*q >= '0' && *q <= '9') { val = val * 10u + (u32)(*q - '0'); q++; }
+                }
+                proc_set_reg(pid, reg, val);
+            }
             else if (ADV && starts_with(g_line, "regs")) {
                 extern void proc_dump_regs(int);
                 int pid = 0;
@@ -323,6 +348,10 @@ void shell_input(char ch)
                     while (*q >= '0' && *q <= '9') pid = pid * 10 + (*q - '0');
                 }
                 proc_dump_regs(pid);
+            }
+            else if (ADV && streq(g_line, "verify")) {
+                extern void verify_dump(void);
+                verify_dump();
             }
             else if (ADV && streq(g_line, "replay")) {
                 extern void evt_replay(void);

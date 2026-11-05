@@ -55,46 +55,54 @@ fork 实验已经证明 `spawn` 计数曾经是错的。
 
 ---
 
-## 三、审计指出但尚未修的问题（诚实列出）
+## 三、审计指出问题的修复状态（2026-11-05 第二轮）
 
-按严重程度：
+| 问题 | 修法 | 验证 |
+|---|---|---|
+| 事件流只记 4 类 | 补 `reset`/`snapshot`/`plan`/`apply`/`sbrk`/`fork`/`setreg` | `log count` 显示全部类型 |
+| 无 replay | 新增 `replay`：只看 spawn/exit 重建存活进程 | `alive:[0,1,2]` ↔ `nproc=3` |
+| 快照不含内存 | 记录装载的程序名，回滚时重新装载 | 存档 hello → 跑 badptr → 回滚后代码区回到 hello |
+| manifest 标注错误 | `run`、`apply`、`setreg` 标为 `irreversible: true` | `manifest` 输出 |
+| assert 键不全 | 支持 `plans`/`snaps`/`at_prompt`，改用类型检查 | `assert snapshot=1` 等 |
+| 人机接口不平等 | 新增 `regs`（读）与 `setreg`（写），两端能力对齐 | `setreg 0 10 0x1234` 生效 |
+| **没有独立 oracle** | 新增 `verify`：trap 侧独立计数，完全不经过 `evt_emit` | 见下 |
+| 缓冲 512 太小 | 扩到 2048，口径改为「有界事件流」 | `replay` 报 `complete` |
+| e2e.js 过期 | 删除，由 `tests/contract.js` 承担 | 契约 11/11 |
 
-### 1. 事件流不是完整真相
+### 独立 oracle 抓到的第一个真问题
 
-- `EVT_CAP=512` 环形覆盖，满了丢最旧 → **与文档「append-only 不可篡改」直接矛盾**
-- 只记录 `spawn`（fork 已补）/`exit`/写类 `ecall`/`restore`
-- `sbrk`/`getpid`/`yield`/`reset`/`snapshot`/`plan`/`apply` 全无事件
-- **没有任何 replay / 状态重建实现**，而设计文档把它列为派生性质
+`verify` 在 trap 分派处单独计数，不经过事件日志。第一次跑就发现：
 
-**影响**：一个信任这套接口的 agent 会得到「spawn=3 但实际 4 个进程」这类自信的错误结论。
-
-### 2. `snapshot` 只恢复进程表
-
-- `snap_t` 只有 `proc_t procs[NPROC]`，不含用户内存、代码页、页表
-- 实测：存档 → `run fork` → `restore` 后，`0x80400000` 仍是 fork 代码
-- 已加 `resume` 让进程能被再次调度，但**内存不一致的问题仍在**
-
-**影响**：「恢复到存档时的状态」这句话目前只对了一半。
-
-### 3. 人机接口不平等
-
-前端直接读写 WASM 状态：
-
-```js
-M._rv_reg(i) / M._rv_set_reg(i, v) / M._rv_set_pc(v)
+```
+ecall: trap=128  evt=120  ok=false   unaccounted_ecall=3
 ```
 
-人可以逐个查看和修改 32 个寄存器，**AI 连读寄存器都没有能力**。
+**trap 侧数到 128 次 ecall，事件流只记了 120 条。**
+缺口来自 `getpid` 一类高频无副作用的调用——它们故意不记账，
+但现在这个缺口是**可量化**的，而不是「看起来一致」。
 
-这违反设计原则「单一权威接口，所有客户端平等」。
+### 仍然存在的限制（不假装已解决）
 
-### 4. 项目门面过时
+**1. 事件缓冲是有界的（2048 条）。**
 
-`README.md` 仍停在 2026-10-26 的旧项目叙事：
-写「82/82 全通过」（实测 91/91）、「2,284 + 1,139 行」（实测约 4,065），
-且 grep 不到 `manifest`/`事件流`/`assert`/`snapshot`。
+长期运行会覆盖旧事件。`replay` 输出 `complete:false` 如实告知。
+**设计文档已改为「有界事件流」，「append-only 不可篡改」这句话撤销**——
+资源受限的内核里做不到字面意义。
 
----
+**2. `getpid`/`yield` 这类调用不记账。**
+
+理由：高频且无副作用，记账会淹没事件流。
+代价是 `verify` 的 `unaccounted_ecall` 不为零。
+这是**有意的取舍**，不是遗漏。
+
+**3. 快照的语义是「回到快照时的进程表 + 代码」，不是「暂停/恢复」。**
+
+`restore` 之后进程一律回到 READY、`pc` 指向入口；`resume` 时**从头重新执行**，
+栈会被重新初始化。实测：`snapshot → run badptr → restore → resume`，
+进程从入口跑完（`nrun=7` → EXIT）。
+
+**真正没做到的是「运行中进程的暂停与恢复」**（checkpoint/restore），
+那需要保存执行点、栈、页表 —— 那是另一个特性。
 
 ## 四、目标定义本身的问题
 

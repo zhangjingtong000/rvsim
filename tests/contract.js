@@ -120,8 +120,16 @@ function record(name, ok, detail) {
   const cntAll = json(send("log count"));
   const total = cntAll && cntAll.log ? cntAll.log.total : -1;
   const full = send("log all");
-  const lines = full.split("\n").filter(l => /^-?\d+ -?\d+ (spawn|exit|ecall|restore|reset|snapshot|plan|apply|sbrk)/.test(l.trim())).length;
+  const lines = full.split("\n").filter(l => /^-?\d+ -?\d+ (spawn|exit|ecall|restore|reset|snapshot|plan|apply|sbrk|fork|setreg)/.test(l.trim())).length;
   record("log all 条数与 log count 一致", total === lines, `count.total=${total} 实际行=${lines}`);
+
+  // ── T11: verify 的 trap 侧计数必须与事件流一致 ──
+  const v = json(send("verify"));
+  const vv = v && v.verify;
+  const exitOk = !!(vv && vv.exit && vv.exit.ok === true);
+  const forkOk = !!(vv && vv.fork && vv.fork.ok === true);
+  record("verify 的 exit/fork 计数与事件流一致", exitOk && forkOk,
+    JSON.stringify(vv ? { exit: vv.exit, fork: vv.fork, unaccounted: vv.unaccounted_ecall } : null));
 
   // ── 汇总 ──
   const pass = results.filter(r => r.ok).length;
