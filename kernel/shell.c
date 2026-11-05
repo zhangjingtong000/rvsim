@@ -15,7 +15,7 @@ static int streq(const char *a, const char *b)
 
 static void cmd_help(void)
 {
-    uart_puts("命令: help manifest ps run reset mem uptime log assert plan apply plans\n");
+    uart_puts("命令: help manifest ps run reset mem uptime log assert plan apply plans snapshot snaps restore\n");
 }
 
 static void cmd_ps(void)
@@ -51,7 +51,8 @@ static void cmd_assert(const char *line)
     if (neg) want = -want;
 
     int got;
-    if (streq(key, "spawn") || streq(key, "exit") || streq(key, "ecall"))
+    if (streq(key, "spawn") || streq(key, "exit") || streq(key, "ecall")
+        || streq(key, "restore"))
         got = evt_count_named(key);
     else if (streq(key, "events"))
         got = evt_count_all();
@@ -119,6 +120,32 @@ static void cmd_apply(const char *line)
     kernel_apply_run(prog);
 }
 
+static void cmd_snapshot(void)
+{
+    extern u32 snap_take(void);
+    u32 id = snap_take();
+    if (!id) { uart_puts("{\"ok\":false,\"why\":\"快照槽已满\"}\n"); return; }
+    uart_puts("{\"snapshot\":");
+    uart_dec((int)id);
+    uart_puts("}\n");
+}
+
+static void cmd_restore(const char *line)
+{
+    extern int snap_restore(u32);
+    const char *p = line + 8;                 /* 跳过 "restore " */
+    int id = 0;
+    while (*p >= '0' && *p <= '9') { id = id * 10 + (*p - '0'); p++; }
+    if (id <= 0) { uart_puts("{\"ok\":false,\"why\":\"用法: restore <snap_id>\"}\n"); return; }
+    if (!snap_restore((u32)id)) {
+        uart_puts("{\"ok\":false,\"why\":\"快照不存在\"}\n");
+        return;
+    }
+    uart_puts("{\"restore\":");
+    uart_dec(id);
+    uart_puts(",\"ok\":true}\n");
+}
+
 void shell_input(char ch)
 {
     if (ch == '\r' || ch == '\n') {
@@ -154,6 +181,16 @@ void shell_input(char ch)
                 uart_puts("已重置 ");
                 uart_dec(n2);
                 uart_puts(" 个进程到就绪状态\n");
+            }
+            else if (streq(g_line, "snapshot")) {
+                cmd_snapshot();
+            }
+            else if (streq(g_line, "snaps")) {
+                extern void snap_list(void);
+                snap_list();
+            }
+            else if (starts_with(g_line, "restore ")) {
+                cmd_restore(g_line);
             }
             else if (starts_with(g_line, "plan ")) {
                 cmd_plan(g_line);

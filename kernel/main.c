@@ -45,15 +45,22 @@ static u32 g_ustack[NPROC];
    状态可以从事件流重放出来，反过来不成立。
    这是可审计、可回放、可回滚三件事的共同底座。 */
 #define EVT_CAP   512
-#define EVT_SPAWN 1
-#define EVT_EXIT  2
-#define EVT_ECALL 3
+#define EVT_SPAWN   1
+#define EVT_EXIT    2
+#define EVT_ECALL   3
+#define EVT_RESTORE 4
+
+/* 失败原因码：审计要能回答「为什么被拒」，而不只是「被拒了」 */
+#define ECODE_OK      0
+#define ECODE_BAD_ADDR 1   /* 地址不在用户区间 */
+#define ECODE_TOO_LONG 2   /* 长度超限被截断 */
 
 typedef struct {
     u32 seq;
     u32 actor;      /* 谁发起的：进程号；-1 表示内核自身 */
     u16 type;
-    u16 pad;
+    u8  code;       /* 失败原因码，0 表示成功 */
+    u8  pad;
     u32 arg0;
     u32 arg1;
     s32 result;
@@ -62,7 +69,7 @@ typedef struct {
 static evt_t g_evts[EVT_CAP];
 static u32 g_evt_head, g_evt_tail, g_evt_seq;
 
-void evt_emit(u16 type, u32 actor, u32 a0, u32 a1, s32 result)
+void evt_emit_code(u16 type, u32 actor, u32 a0, u32 a1, s32 result, u8 code)
 {
     u32 nxt = (g_evt_tail + 1u) % EVT_CAP;
     if (nxt == g_evt_head)                       /* 满了就覆盖最旧的一条 */
@@ -71,10 +78,16 @@ void evt_emit(u16 type, u32 actor, u32 a0, u32 a1, s32 result)
     e->seq    = ++g_evt_seq;
     e->actor  = actor;
     e->type   = type;
+    e->code   = code;
     e->arg0   = a0;
     e->arg1   = a1;
     e->result = result;
     g_evt_tail = nxt;
+}
+
+void evt_emit(u16 type, u32 actor, u32 a0, u32 a1, s32 result)
+{
+    evt_emit_code(type, actor, a0, a1, result, ECODE_OK);
 }
 
 static const char *evt_name(u16 t)
@@ -83,6 +96,7 @@ static const char *evt_name(u16 t)
     case EVT_SPAWN: return "spawn";
     case EVT_EXIT:  return "exit";
     case EVT_ECALL: return "ecall";
+    case EVT_RESTORE: return "restore";
     default:        return "?";
     }
 }
@@ -147,6 +161,9 @@ static const cap_t g_caps[] = {
     {"plan",     "run <prog>",             0, "生成执行计划但不执行"},
     {"plans",    "",                       0, "列出待执行的计划"},
     {"apply",    "<plan_id>",              0, "执行指定计划"},
+    {"snapshot", "",                       0, "保存当前进程状态快照"},
+    {"snaps",    "",                       0, "列出快照"},
+    {"restore",  "<snap_id>",              0, "恢复到指定快照（回滚）"},
 };
 
 void cap_manifest(void)
@@ -169,9 +186,9 @@ void evt_dump(void)
     kprintf("seq actor type arg0 arg1 result\n");
     while (i != g_evt_tail) {
         evt_t *e = &g_evts[i];
-        kprintf("%d %d %s %x %x %d\n",
+        kprintf("%d %d %s %x %x %d code=%d\n",
                 (int)e->seq, (int)e->actor, evt_name(e->type),
-                (u32)e->arg0, (u32)e->arg1, (int)e->result);
+                (u32)e->arg0, (u32)e->arg1, (int)e->result, (int)e->code);
         i = (i + 1u) % EVT_CAP;
     }
 }
@@ -264,17 +281,23 @@ u32 s_trap_handler(u32 cause, u32 epc, u32 tval, u32 *regs)
                1) 只允许用户地址区间——否则用户程序能 write(0x80000000) 把内核 .text 打到串口
                2) 长度设上限——否则 len=0x7FFFFFFF 会长时间占死模拟器
                3) 逐字节判断，越界即截断（跨页时不会去读内核页） */
-            if (len > 4096u) len = 4096u;
+            u8  code = ECODE_OK;
+            u32 raw_len = len;
+            if (len > 4096u) { len = 4096u; code = ECODE_TOO_LONG; }
             u32 n = 0;
             for (; n < len; n++) {
                 u32 va = buf + n;
-                if (va < 0x80400000u || va >= 0x80800000u) break;
+                if (va < 0x80400000u || va >= 0x80800000u) {
+                    /* 地址越界是更严重的错，优先报告 */
+                    code = ECODE_BAD_ADDR;
+                    break;
+                }
                 uart_putc((char)((volatile u8 *)va)[0]);
             }
             /* 一个字节都没写出去说明指针整体非法，返回 -1 让用户程序能察觉 */
             regs[R_A0] = (n == 0 && len > 0) ? (u32)-1 : n;
-            evt_emit(EVT_ECALL, (u32)cur_proc, buf, len,
-                     (n == 0 && len > 0) ? -1 : (s32)n);
+            evt_emit_code(EVT_ECALL, (u32)cur_proc, buf, raw_len,
+                          (n == 0 && len > 0) ? -1 : (s32)n, code);
             return epc + 4;
         }
         if (a7 == 0) {           /* exit */
@@ -486,6 +509,63 @@ void kmain(void)
     /* 进 S 模式 */
     extern void s_main(void);
     enter_s_mode((u32)s_main, 0x803FF000u);
+}
+
+/* ── 状态快照 ──
+   注意：快照恢复的是「状态」，不是「历史」。事件流是 append-only 的，
+   回滚本身也要记一条事件——否则审计就失真了：
+   系统看起来从没离开过那个状态，而实际上它被回滚过。 */
+#define SNAP_SLOTS 4
+
+typedef struct {
+    u8     used;
+    u32    id;
+    u32    evt_seq;
+    proc_t snap[NPROC];
+} snap_t;
+
+static snap_t g_snaps[SNAP_SLOTS];
+static u32    g_snap_seq;
+
+u32 snap_take(void)
+{
+    for (u32 i = 0; i < SNAP_SLOTS; i++) {
+        if (!g_snaps[i].used) {
+            g_snaps[i].used    = 1;
+            g_snaps[i].id      = ++g_snap_seq;
+            g_snaps[i].evt_seq = g_evt_seq;
+            memcpy(g_snaps[i].snap, procs, sizeof(procs));
+            return g_snaps[i].id;
+        }
+    }
+    return 0;
+}
+
+int snap_restore(u32 id)
+{
+    for (u32 i = 0; i < SNAP_SLOTS; i++) {
+        if (g_snaps[i].used && g_snaps[i].id == id) {
+            memcpy(procs, g_snaps[i].snap, sizeof(procs));
+            cur_proc = -1;
+            front_sync();
+            evt_emit(EVT_RESTORE, (u32)-1, id, g_snaps[i].evt_seq, 1);
+            return 1;
+        }
+    }
+    return 0;
+}
+
+void snap_list(void)
+{
+    int first = 1;
+    kprintf("{\"snapshots\":[");
+    for (u32 i = 0; i < SNAP_SLOTS; i++) {
+        if (!g_snaps[i].used) continue;
+        if (!first) kprintf(",");
+        first = 0;
+        kprintf("{\"id\":%d,\"evt_seq\":%d}", (int)g_snaps[i].id, (int)g_snaps[i].evt_seq);
+    }
+    kprintf("]}\n");
 }
 
 /* ── 执行计划：先看后做 ──
