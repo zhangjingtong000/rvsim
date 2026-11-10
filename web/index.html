@@ -346,6 +346,7 @@ function boot(bytes,name){
   /* 之后每 3 秒轮询一次事件流、快照与计划。
      只在系统停在提示符时问，避免打断用户的输入。 */
   setInterval(()=>{
+    if(window.__pollOff) return;
     if(!M || !loaded) return;
     if(!tailBuf.includes("rvsh>")) return;
     /* 只在「提示符是终端最后一行」时轮询。
@@ -354,11 +355,14 @@ function boot(bytes,name){
     const lines = term.textContent.split("\n");
     const last = (lines[lines.length - 1] || "").trimEnd();
     if(!last.endsWith("rvsh>")) return;
-    if(Date.now() - lastInputAt < 1500) return;
+    /* 用户最近 10 秒内打过字就不轮询。
+       轮询会往同一根 UART 插命令，把正在输入的行冲掉——
+       这是「打不进字」的根因，宁可面板更新慢一点。 */
+    if(Date.now() - lastInputAt < 10000) return;
     sendCmd("log last 10");
     setTimeout(()=>{ sendCmd("snaps"); }, 260);
     setTimeout(()=>{ sendCmd("plans"); }, 520);
-  }, 4000);
+  }, 8000);
 }
 async function bootUrl(u,name){
   /* 加时间戳：否则浏览器会缓存旧的 kernel.elf，
