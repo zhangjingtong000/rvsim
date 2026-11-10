@@ -13,7 +13,7 @@
 
 static char g_line[SHELL_BUF];
 static u32  g_cmd_mark;   /* 命令回显之前的输出长度 */
-static char g_cmd_snap[4096];  /* 命令开始时的输出快照，供 assert uart 查找 */
+static char g_cmd_snap[4097];   /* +1：uart_tail_copy 会写终止符 */  /* 命令开始时的输出快照，供 assert uart 查找 */
 static int  g_cmd_at_prompt; /* 命令开始时系统是否停在提示符 */
 static int  g_len = 0;
 

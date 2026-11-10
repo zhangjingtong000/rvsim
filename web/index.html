@@ -78,8 +78,8 @@ button.wide{flex:1}
 #term{flex:1;overflow-y:auto;background:#050608;padding:14px 16px;
       font-family:var(--mono);font-size:12.5px;line-height:1.55;color:#c9d1d9;
       white-space:pre-wrap;word-break:break-all;cursor:text}
-#term::-webkit-scrollbar{width:9px}
-#term::-webkit-scrollbar-thumb{background:#22272f;border-radius:4px;border:2px solid #050608}
+#term{outline:none}
+#term:focus{box-shadow:inset 0 0 0 1px var(--line)}
 .cursor{display:inline-block;width:7px;height:14px;background:var(--acc);vertical-align:-2px;
         animation:bl 1.05s steps(1) infinite}
 @keyframes bl{50%{opacity:0}}
@@ -173,7 +173,7 @@ main > .col:last-child{overflow-y:auto;max-height:calc(100vh - 40px)}
       <div class="grow"></div>
       <span id="txInfo">0 B</span>
     </div>
-    <div id="term"><span class="cursor"></span></div>
+    <div id="term" tabindex="0"><span class="cursor"></span></div>
   </div>
 
   <!-- 右 -->
@@ -348,12 +348,22 @@ function boot(bytes,name){
   setInterval(()=>{
     if(!M || !loaded) return;
     if(!tailBuf.includes("rvsh>")) return;
+    /* 只在「提示符是终端最后一行」时轮询。
+       用户一旦开始输入，最后一行就变成 "rvsh> hel"，此时再插命令
+       会把正在输入的字符冲掉——这正是「打不进字」的根因。 */
+    const lines = term.textContent.split("\n");
+    const last = (lines[lines.length - 1] || "").trimEnd();
+    if(!last.endsWith("rvsh>")) return;
+    if(Date.now() - lastInputAt < 1500) return;
     sendCmd("log last 10");
     setTimeout(()=>{ sendCmd("snaps"); }, 260);
     setTimeout(()=>{ sendCmd("plans"); }, 520);
-  }, 3000);
+  }, 4000);
 }
 async function bootUrl(u,name){
+  /* 加时间戳：否则浏览器会缓存旧的 kernel.elf，
+     改了内核却看到旧行为，排查时会完全找错方向。 */
+  u = u + (u.includes("?") ? "&" : "?") + "t=" + Date.now();
   try{
     setState("加载中…","");
     const r=await fetch(u); if(!r.ok) throw 0;
@@ -439,8 +449,11 @@ function halt(){
 /* 键盘 → guest UART */
 term.addEventListener("click",()=>term.focus());
 term.tabIndex=0;
+let lastInputAt = 0;
+
 term.addEventListener("keydown",e=>{
   if(!loaded||!M)return;
+  lastInputAt = Date.now();
   if(e.key==="Enter"){M._rv_uart_write(13);e.preventDefault();}
   else if(e.key==="Backspace"){M._rv_uart_write(127);e.preventDefault();}
   else if(e.key==="Tab"){M._rv_uart_write(9);e.preventDefault();}
