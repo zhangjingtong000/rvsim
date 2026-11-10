@@ -509,6 +509,7 @@ term.addEventListener("keydown",e=>{
 /* 渲染侧栏 */
 let prev={};
 let prevCy=0, prevCyT=0;
+let regEditing=false;   /* 编辑寄存器时暂停重绘，否则输入框会被 innerHTML 冲掉 */
 function render(){
   if(!M||!loaded)return;
   const pc=M._rv_pc()>>>0;
@@ -532,7 +533,7 @@ function render(){
     r+=`<div class="rg${chg}" data-r="${i}"><span class="n">${ABI[i]}</span><span class="v">${hx(v)}</span></div>`;
     prev[i]=v;
   }
-  $("reg").innerHTML=r;
+  if(!regEditing) $("reg").innerHTML=r;
 
 }
 
@@ -557,10 +558,14 @@ $("bReset").onclick=()=>{halt();M._rv_reset();M._rv_uart_clear();prev={};total=0
 $("reg").onclick=e=>{
   const d=e.target.closest(".rg");if(!d||!M)return;
   const i=+d.dataset.r,cur=M._rv_reg(i)>>>0;
+  if(i===0) return;    /* x0 恒为 0，不给编辑 */
   const inp=document.createElement("input");
+  regEditing=true;
   inp.value=hx(cur);d.querySelector(".v").replaceWith(inp);inp.focus();inp.select();
   const done=()=>{const v=parseInt(inp.value,16);
-    if(!isNaN(v)){i===0?M._rv_set_pc(v):M._rv_set_reg(i,v>>>0);}render();};
+    regEditing=false;
+    if(!isNaN(v)){ M._rv_set_reg(i,v>>>0); }
+    render();};
   inp.onblur=done;
   inp.onkeydown=k=>{if(k.key==="Enter")inp.blur();if(k.key==="Escape"){inp.value=hx(cur);inp.blur();}};
 };
