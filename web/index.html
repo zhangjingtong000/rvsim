@@ -70,8 +70,19 @@ button.wide{flex:1}
 @keyframes bl{50%{opacity:0}}
 
 /* 进程表 */
-#procs,#caps{font-family:var(--mono);font-size:11.5px}
-#caps{max-height:38vh;overflow-y:auto;padding-right:4px}
+#procs,#caps,#events,#snaps{font-family:var(--mono);font-size:11.5px}
+#reg{max-height:16vh;overflow-y:auto}
+main > .col:last-child{overflow-y:auto;max-height:calc(100vh - 40px)}
+#caps{max-height:22vh;overflow-y:auto;padding-right:4px}
+#events{max-height:18vh;overflow-y:auto;padding-right:4px}
+#snaps{max-height:12vh;overflow-y:auto;padding-right:4px}
+.ev{display:grid;grid-template-columns:34px 28px 1fr;gap:4px;padding:1px 0;
+  border-bottom:1px solid var(--line);font-size:10.5px}
+.ev .t{color:var(--fg3)}
+.ev.spawn .a{color:var(--acc)}.ev.exit .a{color:#f87171}
+.ev.ecall .a{color:var(--fg2)}
+.snap{padding:1px 0;border-bottom:1px solid var(--line);font-size:10.5px}
+.snap b{color:var(--acc);font-weight:500}
 .prow{display:grid;grid-template-columns:32px 52px 1fr 32px;gap:4px;padding:2px 0;
   border-bottom:1px solid var(--line)}
 .prow.ph{color:var(--fg3);font-size:10px;text-transform:uppercase;letter-spacing:.06em}
@@ -158,7 +169,13 @@ button.wide{flex:1}
     <div class="lbl" style="margin-top:20px">寄存器</div>
     <div id="reg"></div>
 
-    <div class="lbl" style="margin-top:20px">能力 <em>manifest</em></div>
+    <div class="lbl" style="margin-top:16px">事件流 <em>log</em></div>
+    <div id="events"><div class="hint">启动后自动读取</div></div>
+
+    <div class="lbl" style="margin-top:16px">快照 / 计划</div>
+    <div id="snaps"><div class="hint">启动后自动读取</div></div>
+
+    <div class="lbl" style="margin-top:16px">能力 <em>manifest</em></div>
     <div id="caps"><div class="hint">启动后自动读取</div></div>
   </div>
 </main>
@@ -191,6 +208,35 @@ function termWrite(txt){
 let sniffBuf = "";
 const capsSeen = new Map();
 
+/* ── 事件流 ──
+   事件行格式：seq actor type arg0 arg1 result code=N */
+function renderEvents(rows){
+  if(!rows.length) return;
+  /* 轮询会把同一批事件反复带回来：按 seq 去重，只留最新一份 */
+  const bySeq = new Map();
+  for(const r of rows) bySeq.set(r[1], r);
+  const uniq = [...bySeq.values()].sort((a, b) => Number(b[1]) - Number(a[1]));
+  const cls = t => t === "spawn" ? "spawn" : t === "exit" ? "exit" : "ecall";
+  let h = "";
+  for(const r of uniq.slice(0, 14)){
+    h += `<div class="ev ${cls(r[3])}"><span class="t">${r[1]}</span>`
+       + `<span>${r[2]}</span><span class="a">${r[3]}</span></div>`;
+  }
+  $("events").innerHTML = h;
+}
+
+/* ── 快照与计划 ── */
+function renderSnaps(snaps, plans){
+  let h = "";
+  if(snaps && snaps.snapshots)
+    for(const x of snaps.snapshots)
+      h += `<div class="snap"><b>快照 ${x.id}</b> @${x.evt_seq}</div>`;
+  if(plans && plans.plans)
+    for(const x of plans.plans)
+      h += `<div class="snap"><b>计划 ${x.id}</b> ${x.intent} ${x.arg || ""}</div>`;
+  $("snaps").innerHTML = h || '<div class="hint">无</div>';
+}
+
 function renderProcs(o){
   let h = '<div class="prow ph"><span>PID</span><span>状态</span><span>PC</span><span>轮</span></div>';
   for(const p of o.procs){
@@ -219,6 +265,29 @@ function sniff(s){
   let m, before = capsSeen.size;
   while((m = re.exec(sniffBuf)) !== null) capsSeen.set(m[1], m[2]);
   if(capsSeen.size !== before) renderCaps();
+
+  /* 事件行：只取最近一批 */
+  const evRe = /^(-?\d+) (-?\d+) (spawn|exit|ecall|restore|reset|snapshot|plan|apply|sbrk|fork|setreg|getpid|yield) (\S+) (\S+) (-?\d+) code=(\d+)/;
+  const evRows = [];
+  for(const line of sniffBuf.split("\n")){
+    const t = line.trim();
+    const mm = t.match(evRe);
+    if(mm) evRows.push(mm);
+  }
+  if(evRows.length) renderEvents(evRows.reverse());
+
+  /* 缓冲里可能有多份（每次轮询都会追加一份），必须取最后一个，
+     否则会一直显示启动时的空数组。 */
+  const allSn = [...sniffBuf.matchAll(/\{"snapshots":\[[^\]]*\]\}/g)];
+  const allPl = [...sniffBuf.matchAll(/\{"plans":\[[^\]]*\]\}/g)];
+  const msn = allSn.length ? [allSn[allSn.length - 1][0]] : null;
+  const mpl = allPl.length ? [allPl[allPl.length - 1][0]] : null;
+  if(msn || mpl){
+    let sj = null, pj = null;
+    try{ if(msn) sj = JSON.parse(msn[0]); }catch(e){}
+    try{ if(mpl) pj = JSON.parse(mpl[0]); }catch(e){}
+    renderSnaps(sj, pj);
+  }
 }
 
 /* 只注入，不阻塞：由执行引擎在下一帧处理 */
@@ -258,6 +327,16 @@ function boot(bytes,name){
      前端不另开通道，就走同一根 UART —— 与「单一权威接口」一致。 */
   setTimeout(()=>{ sendCmd("manifest"); }, 900);
   setTimeout(()=>{ sendCmd("ps"); }, 1600);
+
+  /* 之后每 3 秒轮询一次事件流、快照与计划。
+     只在系统停在提示符时问，避免打断用户的输入。 */
+  setInterval(()=>{
+    if(!M || !loaded) return;
+    if(!tailBuf.includes("rvsh>")) return;
+    sendCmd("log last 10");
+    setTimeout(()=>{ sendCmd("snaps"); }, 260);
+    setTimeout(()=>{ sendCmd("plans"); }, 520);
+  }, 3000);
 }
 async function bootUrl(u,name){
   try{
