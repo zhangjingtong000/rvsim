@@ -32,8 +32,23 @@ header{height:50px;display:flex;align-items:center;gap:14px;padding:0 18px;
 
 main{display:grid;grid-template-columns:232px minmax(0,1fr) 274px;height:calc(100% - 50px)}
 .col{padding:16px;overflow-y:auto;min-height:0}
-.col::-webkit-scrollbar{width:8px}
-.col::-webkit-scrollbar-thumb{background:var(--line2);border-radius:4px;border:2px solid var(--bg)}
+
+/* ── 自定义滚动条 ──
+   默认的是浅色系统控件，在这套深色界面里很扎眼。
+   这里统一成：透明轨道 + 细滑块 + 主题色高亮，悬停时提亮。
+   所有可滚动容器（.col / #caps / #events / #reg / #snaps）共用一套。 */
+::-webkit-scrollbar{width:6px;height:6px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{
+  background:var(--line2);
+  border-radius:3px;
+  transition:background .15s;
+}
+::-webkit-scrollbar-thumb:hover{background:var(--acc)}
+::-webkit-scrollbar-thumb:active{background:var(--acc)}
+::-webkit-scrollbar-corner{background:transparent}
+/* Firefox 走标准属性，效果等价 */
+*{scrollbar-width:thin;scrollbar-color:var(--line2) transparent}
 
 .lbl{font-size:10px;text-transform:uppercase;letter-spacing:.1em;color:var(--fg3);
      font-weight:600;margin-bottom:9px;display:flex;align-items:center;gap:8px}
