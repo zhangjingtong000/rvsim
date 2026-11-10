@@ -160,7 +160,7 @@ main > .col:last-child{overflow-y:auto;max-height:calc(100vh - 40px)}
 
     <div class="lbl" style="margin-top:20px">运行时</div>
     <div class="kv"><span class="k">周期</span><span class="v" id="vCy">0</span></div>
-    <div class="kv"><span class="k">指令</span><span class="v" id="vIn">0</span></div>
+    <div class="kv"><span class="k">速率</span><span class="v" id="vIn">—</span></div>
     <div class="kv"><span class="k">PC</span><span class="v" id="vPc">—</span></div>
     <div class="kv"><span class="k">特权级</span><span class="v" id="vPv">—</span></div>
 
@@ -275,8 +275,12 @@ function renderCaps(){
 function sniff(s){
   sniffBuf = (sniffBuf + s).slice(-12000);
 
-  const mPs = sniffBuf.match(/\{"nproc":\d+,"procs":\[[^\]]*\]\}/);
-  if(mPs){ try{ renderProcs(JSON.parse(mPs[0])); }catch(e){} }
+  /* 取最后一次：缓冲里每次轮询都会追加一份，
+     用 match 会永远停在第一次的 ps 结果上（面板冻结）。 */
+  const allPs = [...sniffBuf.matchAll(/\{"nproc":\d+,"procs":\[[^\]]*\]\}/g)];
+  if(allPs.length){
+    try{ renderProcs(JSON.parse(allPs[allPs.length - 1][0])); }catch(e){}
+  }
 
   const re = /\{"cap":"([^"]+)","usage":"([^"]*)"/g;
   let m, before = capsSeen.size;
@@ -313,6 +317,13 @@ function sendCmd(cmd){
   for(const ch of cmd + "\r") M._rv_uart_write(ch.charCodeAt(0));
 }
 
+/* 用户当前是否贴着底部（留 40px 容差） */
+let atBottom = true;
+function updateAtBottom(){
+  const t = term;
+  atBottom = (t.scrollHeight - t.scrollTop - t.clientHeight) < 40;
+}
+
 function appendOut(s){
   const t=term;
   // 光标一直留在末尾
@@ -322,7 +333,9 @@ function appendOut(s){
   if(c) t.insertBefore(span,c); else t.appendChild(span);
   // 限制长度
   while(t.childNodes.length>1200) t.removeChild(t.firstChild);
-  t.scrollTop=t.scrollHeight;
+  /* 只有用户本来就在底部时才跟随滚动。
+     无条件 scrollTop=scrollHeight 会让上滚查看历史的人一直被拽回底部。 */
+  if(atBottom) t.scrollTop=t.scrollHeight;
 }
 
 /* 启动镜像 */
@@ -334,6 +347,12 @@ function boot(bytes,name){
   const ok=M._rv_load(p,bytes.length); M._free(p);
   if(!ok){setState("加载失败","err");return;}
   loaded=true; total=0;
+  /* 重载内核要清掉上一份镜像留下的面板数据，否则会显示旧快照/旧进程 */
+  sniffBuf = ""; capsSeen.clear(); atBottom = true;
+  $("procs").innerHTML = '<div class="hint">读取中…</div>';
+  $("events").innerHTML = '<div class="hint">读取中…</div>';
+  $("snaps").innerHTML = '<div class="hint">读取中…</div>';
+  $("caps").innerHTML = '<div class="hint">读取中…</div>';
   term.innerHTML='<span class="cursor"></span>';
   ["bRun","bStop","bStep","bReset"].forEach(i=>$(i).disabled=false);
   /* 不在 boot 里同步跑几十万步：那会把主线程钉死，浏览器连一次重绘
@@ -342,8 +361,15 @@ function boot(bytes,name){
 
   /* 进入 shell 后主动问一次能力与进程状态。
      前端不另开通道，就走同一根 UART —— 与「单一权威接口」一致。 */
+  /* 能力清单必须读一次（右栏面板要用），但 24 条 JSON 会把首屏淹掉。
+     读完之后清屏重开，终端回到干净的提示符。 */
   setTimeout(()=>{ sendCmd("manifest"); }, 900);
-  setTimeout(()=>{ sendCmd("ps"); }, 1600);
+  setTimeout(()=>{
+    term.innerHTML = '<span class="cursor"></span>';
+    curEl = term.querySelector(".cursor");
+    total = 0;
+    sendCmd("ps");
+  }, 2600);
 
   /* 之后每 3 秒轮询一次事件流、快照与计划。
      只在系统停在提示符时问，避免打断用户的输入。 */
@@ -361,9 +387,12 @@ function boot(bytes,name){
        轮询会往同一根 UART 插命令，把正在输入的行冲掉——
        这是「打不进字」的根因，宁可面板更新慢一点。 */
     if(Date.now() - lastInputAt < 10000) return;
-    sendCmd("log last 10");
-    setTimeout(()=>{ sendCmd("snaps"); }, 260);
-    setTimeout(()=>{ sendCmd("plans"); }, 520);
+    /* 三条一起发：UART 是 FIFO，会按序处理。
+       之前的写法只用 setTimeout 延后后两条，那两个回调完全不重查门控，
+       用户在这 260~520ms 里开始打字就会被冲掉。 */
+    sendCmd("log last 8");
+    sendCmd("snaps");
+    sendCmd("plans");
   }, 8000);
 }
 async function bootUrl(u,name){
@@ -454,12 +483,19 @@ function halt(){
 
 /* 键盘 → guest UART */
 term.addEventListener("click",()=>term.focus());
+term.addEventListener("scroll", updateAtBottom, {passive:true});
 term.tabIndex=0;
 let lastInputAt = 0;
 
 term.addEventListener("keydown",e=>{
   if(!loaded||!M)return;
   lastInputAt = Date.now();
+  if(e.ctrlKey && (e.key==="c" || e.key==="C")){
+    /* 提示里写了「Ctrl+C 中断」，那就真的中断 */
+    M._rv_uart_write(3);
+    e.preventDefault();
+    return;
+  }
   if(e.key==="Enter"){M._rv_uart_write(13);e.preventDefault();}
   else if(e.key==="Backspace"){M._rv_uart_write(127);e.preventDefault();}
   else if(e.key==="Tab"){M._rv_uart_write(9);e.preventDefault();}
@@ -472,11 +508,20 @@ term.addEventListener("keydown",e=>{
 
 /* 渲染侧栏 */
 let prev={};
+let prevCy=0, prevCyT=0;
 function render(){
   if(!M||!loaded)return;
   const pc=M._rv_pc()>>>0;
-  $("vCy").textContent=M._rv_cycles().toLocaleString();
-  $("vIn").textContent=M._rv_cycles().toLocaleString();
+  const cy = M._rv_cycles() >>> 0;
+  $("vCy").textContent = cy.toLocaleString();
+  /* 模拟器没有独立的指令计数器，原先这里又填了一遍周期数，
+     两个数字永远相等、毫无信息量。改成每秒周期数。 */
+  const now = performance.now();
+  if(prevCy && now > prevCyT + 400){
+    const rate = (cy - prevCy) / ((now - prevCyT) / 1000);
+    $("vIn").textContent = (rate / 1e6).toFixed(1) + " M/s";
+    prevCy = cy; prevCyT = now;
+  } else if(!prevCy){ prevCy = cy; prevCyT = now; }
   $("vPc").textContent=hx(pc);
   $("vPv").textContent=PRIV[M._rv_priv()]??"?";
 
