@@ -76,9 +76,17 @@ docs/         需求文档、设计文档、调研
 | `snapshot` / `restore` / `resume` | 存档、回滚、续跑 |
 | `status` | 一次拿到进程数、事件数、计划数、快照数、是否空闲 |
 
-**能力状态**：24 项能力全部可调用，`replay` 从事件流重建存活进程并与 `ps` 交叉验证，
+**能力状态**：32 项能力全部可调用，`replay` 从事件流重建存活进程并与 `ps` 交叉验证，
 `verify` 在 trap 侧独立计数（`unaccounted_ecall` 为 0），`regs`/`setreg`/`setpc`
 让 AI 与前端在寄存器读写上对等。
+
+**内核已具备的操作系统要素**：
+- 真 ELF 加载器（PT_LOAD 段、BSS 清零、每进程独立物理代码页）
+- 内存文件系统（文件 + 目录 + 路径，32 项能力里的 ls/cat/write/rm/mkdir）
+- 文件描述符（open/read/close 系统调用，用户程序可按 fd 顺序读文件）
+- shell 输出重定向（`cmd > file`）
+- 多用户与权限（login / whoami / chmod，uid 0 为 root）
+- 每进程独立地址空间（fork 时复制代码页，父子隔离）
 
 **事件流是 16384 条环形缓冲**（有界，会覆盖），`replay` 的 `complete` 字段标记是否被覆盖过。
 

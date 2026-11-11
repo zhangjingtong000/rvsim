@@ -268,8 +268,12 @@ function renderFiles(o){
   const list = (o && o.files) || [];
   if(!list.length){ $("files").innerHTML = '<div class="hint">空</div>'; return; }
   let h = "";
-  for(const f of list)
-    h += `<div class="frow"><b>${f.name}</b><span>${f.size} B</span></div>`;
+  for(const f of list){
+    const isDir = f.type === "dir";
+    const meta = isDir ? "dir" : (f.size + " B");
+    h += `<div class="frow"><b>${isDir ? "\u25b8 " : ""}${f.name}</b>`
+       + `<span>${meta}${f.owner ? " \u00b7 " + f.owner : ""}</span></div>`;
+  }
   $("files").innerHTML = h;
 }
 

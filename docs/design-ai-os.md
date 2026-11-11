@@ -133,7 +133,7 @@ Unix 本来就这么干：内核 syscall 全集完整，shell 只给裁剪过的
 
 ```
 rvsh> manifest
-{"manifest":1,"caps":24,"list":[ ... ]}
+{"manifest":1,"caps":32,"list":[ ... ]}
 {"cap":"run","usage":"run <prog>","values":"hello|fork|badptr","irreversible":true,"desc":"装载指定程序并启动 3 个初始进程"}
 ...
 ```
