@@ -65,6 +65,11 @@ void uart_puts(const char *s);
 void uart_hex(u32 v);
 void uart_dec(int v);
 
+/* ── 输出重定向 ── */
+void redirect_begin(const char *name);
+void redirect_end(void);
+int  redirect_active(void);
+
 /* ── ELF 加载 ── */
 u32 elf_load(const u8 *img, u32 len, u32 *entry_out, u32 *img_end_out);
 int elf_segments(const u8 *img, u32 len, u32 *vas, u32 *ends, int maxseg);

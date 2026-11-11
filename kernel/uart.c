@@ -12,12 +12,47 @@ static char g_uart_tail[UART_TAIL_CAP];
 static u32  g_uart_head;     /* 下一个写入位置 */
 static u32  g_uart_tail_n;   /* 当前有效字节数 */
 
+/* ── 输出重定向 ──
+   shell 的 "cmd > file" 靠这个把命令输出同时收进内存缓冲，
+   命令结束后一次性写入 RAMFS。没有它，重定向只能假装存在。 */
+static const char *g_redir_name = 0;
+static char        g_redir_buf[8192];
+static u32         g_redir_len;
+
+int  redirect_active(void) { return g_redir_name != 0; }
+
+void redirect_begin(const char *name)
+{
+    g_redir_name = name;
+    g_redir_len  = 0;
+}
+
+/* 结束重定向：把收到的内容写进文件，然后报告写入结果。
+   注意先清掉名字，否则下面这些 uart_puts 会把自己也写回文件。 */
+void redirect_end(void)
+{
+    if (!g_redir_name) return;
+    const char *name = g_redir_name;
+    u32 n = g_redir_len;
+    g_redir_name = 0;
+
+    int w = fs_write(name, (const u8 *)g_redir_buf, n);
+    uart_puts("{\"redirect\":\"");
+    uart_puts(name);
+    uart_puts("\",\"bytes\":");
+    uart_dec(w < 0 ? 0 : (int)n);
+    uart_puts(w < 0 ? ",\"ok\":false}\n" : "}\n");
+}
+
 void uart_putc(char c)
 {
     volatile u8 *thr = (volatile u8 *)(UART_BASE + 0);
     volatile u8 *lsr = (volatile u8 *)(UART_BASE + 5);
     while (!(*lsr & 0x20)) { }   /* 等 THRE */
     *thr = (u8)c;
+
+    if (g_redir_name && g_redir_len < sizeof(g_redir_buf) - 1)
+        g_redir_buf[g_redir_len++] = c;
 
     g_uart_tail[g_uart_head] = c;
     g_uart_head = (g_uart_head + 1u) % UART_TAIL_CAP;

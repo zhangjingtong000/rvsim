@@ -278,6 +278,22 @@ void shell_input(char ch)
     if (ch == '\r' || ch == '\n') {
         g_line[g_len] = 0;
         uart_putc('\n');
+
+        /* 解析 "cmd > file"：把 > 之后的部分当文件名，命令部分留给分派 */
+        {
+            char *gt = 0;
+            for (char *p = g_line; *p; p++) if (*p == '>') { gt = p; break; }
+            if (gt) {
+                char *e = gt;
+                while (e > g_line && e[-1] == ' ') e--;
+                *e = 0;
+                *gt = 0;
+                char *f = gt + 1;
+                while (*f == ' ') f++;
+                if (*f) redirect_begin(f);
+            }
+        }
+
         if (g_len > 0) {
             if (streq(g_line, "help"))        cmd_help();
             else if (streq(g_line, "ps"))     cmd_ps();
@@ -357,7 +373,7 @@ void shell_input(char ch)
                 int got_pid = 0, got_addr = 0;
                 while (*q >= '0' && *q <= '9') { pid = pid * 10 + (*q - '0'); q++; got_pid = 1; }
                 while (*q == ' ') q++;
-                if (!got_pid) { uart_puts("{\"ok\":false,\"why\":\"用法: setpc <pid> <addr>\"}\n"); g_len = 0; g_line[0] = 0; return; }
+                if (!got_pid) { uart_puts("{\"ok\":false,\"why\":\"用法: setpc <pid> <addr>\"}\n"); goto shell_done; }
                 if (q[0] == '0' && (q[1] == 'x' || q[1] == 'X')) {
                     q += 2;
                     while (*q) {
@@ -371,7 +387,7 @@ void shell_input(char ch)
                 } else {
                     while (*q >= '0' && *q <= '9') { addr = addr * 10u + (u32)(*q - '0'); q++; got_addr = 1; }
                 }
-                if (!got_addr || *q) { uart_puts("{\"ok\":false,\"why\":\"用法: setpc <pid> <addr>\"}\n"); g_len = 0; g_line[0] = 0; return; }
+                if (!got_addr || *q) { uart_puts("{\"ok\":false,\"why\":\"用法: setpc <pid> <addr>\"}\n"); goto shell_done; }
                 proc_set_pc(pid, addr);
             }
             else if (ADV && starts_with(g_line, "setreg ")) {
@@ -386,7 +402,7 @@ void shell_input(char ch)
                 while (*q == ' ') q++;
                 if (!got_pid || !got_reg) {
                     uart_puts("{\"ok\":false,\"why\":\"用法: setreg <pid> <reg> <val>\"}\n");
-                    g_len = 0; g_line[0] = 0; return;
+                    goto shell_done;
                 }
                 /* 支持十进制与 0x 前缀 */
                 if (q[0] == '0' && (q[1] == 'x' || q[1] == 'X')) {
@@ -404,7 +420,7 @@ void shell_input(char ch)
                 }
                 if (!got_val || *q) {
                     uart_puts("{\"ok\":false,\"why\":\"用法: setreg <pid> <reg> <val>\"}\n");
-                    g_len = 0; g_line[0] = 0; return;
+                    goto shell_done;
                 }
                 proc_set_reg(pid, reg, val);
             }
@@ -418,7 +434,7 @@ void shell_input(char ch)
                     while (*q >= '0' && *q <= '9') { pid = pid * 10 + (*q - '0'); q++; got = 1; }
                     if (!got || *q) {
                         uart_puts("{\"ok\":false,\"why\":\"用法: regs [pid]\"}\n");
-                        g_len = 0; g_line[0] = 0; return;
+                        goto shell_done;
                     }
                 }
                 proc_dump_regs(pid);
@@ -592,7 +608,15 @@ void shell_input(char ch)
         }
         g_line[g_len++] = ch;
         uart_putc(ch);
+        return;
     }
+
+    goto shell_done;              /* 普通字符：直接返回，不要清空行缓冲 */
+
+shell_done:
+    redirect_end();
+    g_len = 0;
+    g_line[0] = 0;
 }
 
 void shell_start(void)
