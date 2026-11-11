@@ -17,3 +17,9 @@ fork_prog_end:
 badptr_prog_start:
     .incbin "build/badptr_prog.elf"
 badptr_prog_end:
+.align 4
+.globl fdtest_prog_start
+.globl fdtest_prog_end
+fdtest_prog_start:
+    .incbin "build/fdtest_prog.elf"
+fdtest_prog_end:

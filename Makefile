@@ -69,7 +69,12 @@ $(OBJDIR)/badptr_prog.bin: kernel/user/badptr.S
 		-Ttext=0x80400000 -o $(OBJDIR)/badptr_prog.elf kernel/user/badptr.S
 	$(CROSS)objcopy -O binary $(OBJDIR)/badptr_prog.elf $@
 
-$(OBJDIR)/user_prog.bin: kernel/user/hello.S
+$(OBJDIR)/fdtest_prog.elf: kernel/user/fdtest.S
+	@mkdir -p $(OBJDIR)
+	$(CROSS)gcc -march=rv32ima_zicsr_zifencei -mabi=ilp32 -mcmodel=medany -nostdlib -nostartfiles \
+		-Ttext=0x80400000 -o $(OBJDIR)/fdtest_prog.elf kernel/user/fdtest.S
+
+$(OBJDIR)/user_prog.bin: $(OBJDIR)/user_prog.elf
 	@mkdir -p $(OBJDIR)
 	$(CROSS)gcc -march=rv32ima_zicsr_zifencei -mabi=ilp32 -mcmodel=medany -nostdlib -nostartfiles \
 		-Ttext=0x80400000 -o $(OBJDIR)/user_prog.elf kernel/user/hello.S

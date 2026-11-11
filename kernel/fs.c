@@ -212,6 +212,26 @@ int fs_entry_owner(u32 idx)
     return (int)g_files[idx].owner;
 }
 
+/* 按名字取槽位下标（供 fd 表保存），不存在返回 -1 */
+int fs_slot_of(const char *name)
+{
+    for (u32 i = 0; i < FS_MAX_FILES; i++)
+        if (g_files[i].used && k_streq(g_files[i].name, name)) return (int)i;
+    return -1;
+}
+
+/* 按槽位从 pos 开始读取（fd 的 read 用它实现顺序读） */
+int fs_read_slot(u32 slot, u8 *out, u32 len, u32 pos)
+{
+    if (slot >= FS_MAX_FILES || !g_files[slot].used) return -1;
+    fs_file_t *f = &g_files[slot];
+    if (pos >= f->size) return 0;
+    u32 n = f->size - pos;
+    if (n > len) n = len;
+    for (u32 i = 0; i < n; i++) out[i] = f->data[pos + i];
+    return (int)n;
+}
+
 int fs_entry_type(u32 idx)
 {
     if (idx >= FS_MAX_FILES || !g_files[idx].used) return -1;

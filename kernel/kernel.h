@@ -90,6 +90,8 @@ int  fs_can_write(const char *name, u32 uid);
 int  fs_owner(const char *name);
 int  fs_chmod(const char *name, u32 mode);
 int  fs_entry_owner(u32 idx);
+int  fs_slot_of(const char *name);
+int  fs_read_slot(u32 slot, u8 *out, u32 len, u32 pos);
 extern u32 g_cur_uid;
 u32  fs_count(void);
 

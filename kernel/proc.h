@@ -21,6 +21,10 @@ typedef struct {
     u32 code_pa;         /* 本进程独占的代码/数据物理页起始 */
     u32 code_pages;      /* 占几页 */
     u32 regs[32];        /* 完整用户上下文 */
+    /* 文件描述符表：fd 0..3 每个进程独立。
+       存文件槽下标，-1 表示空闲。 */
+    int fd_slot[4];
+    u32 fd_pos[4];
 } proc_t;
 
 extern proc_t  procs[NPROC];

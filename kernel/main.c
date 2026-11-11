@@ -33,6 +33,8 @@ extern const u8 user_prog_end[];
 extern const u8 fork_prog_start[];
 extern const u8 fork_prog_end[];
 extern const u8 badptr_prog_start[];
+extern const u8 fdtest_prog_start[];
+extern const u8 fdtest_prog_end[];
 extern const u8 badptr_prog_end[];
 
 u32 *g_kroot;   /* 供 vm.c 的按需分页使用 */
@@ -601,6 +603,67 @@ u32 s_trap_handler(u32 cause, u32 epc, u32 tval, u32 *regs)
         if (a7 == 6) g_trap_fork++;
 
 
+        /* ── 文件描述符 ──
+           a7=8 open(path) -> fd；a7=9 read(fd,buf,len)；a7=10 close(fd)。
+           这是「文件」第一次能被用户程序按 fd 访问，而不是只有 shell 命令。 */
+        if (a7 == 8) {
+            u32 up = regs[R_A0];
+            if (up < 0x80400000u || up >= 0x80800000u) {
+                regs[R_A0] = (u32)-1;
+            } else {
+                char name[24];
+                int n = 0;
+                const char *p2 = (const char *)up;
+                while (n < 23 && p2[n]) { name[n] = p2[n]; n++; }
+                name[n] = 0;
+                int sz = fs_size(name);
+                if (sz < 0) {
+                    regs[R_A0] = (u32)-1;
+                } else {
+                    int fd = -1;
+                    for (int k = 0; k < 4; k++)
+                        if (procs[cur_proc].fd_slot[k] < 0) { fd = k; break; }
+                    if (fd < 0) {
+                        regs[R_A0] = (u32)-1;
+                    } else {
+                        procs[cur_proc].fd_slot[fd] = fs_slot_of(name);
+                        procs[cur_proc].fd_pos[fd]  = 0;
+                        regs[R_A0] = (u32)fd;
+                    }
+                }
+            }
+            return epc + 4;
+        }
+        else if (a7 == 9) {
+            u32 fd  = regs[R_A0];
+            u32 ub  = regs[R_A1];
+            u32 len = regs[11];   /* a2：帧里 x12 位于下标 11 */
+            if (fd >= 4 || procs[cur_proc].fd_slot[fd] < 0 ||
+                ub < 0x80400000u || ub >= 0x80800000u) {
+                regs[R_A0] = (u32)-1;
+            } else {
+                u8 *dst = (u8 *)ub;
+                u32 pos = procs[cur_proc].fd_pos[fd];
+                int got = fs_read_slot((u32)procs[cur_proc].fd_slot[fd],
+                                       dst, len, pos);
+                if (got < 0) got = 0;
+                procs[cur_proc].fd_pos[fd] = pos + (u32)got;
+                regs[R_A0] = (u32)got;
+            }
+            return epc + 4;
+        }
+        else if (a7 == 10) {
+            u32 fd = regs[R_A0];
+            if (fd < 4 && procs[cur_proc].fd_slot[fd] >= 0) {
+                procs[cur_proc].fd_slot[fd] = -1;
+                procs[cur_proc].fd_pos[fd] = 0;
+                regs[R_A0] = 0;
+            } else {
+                regs[R_A0] = (u32)-1;
+            }
+            return epc + 4;
+        }
+
         if (a7 == 1) {           /* write(buf, len) */
             u32 buf = regs[R_A0];
             u32 len = regs[R_A1];
@@ -823,6 +886,7 @@ int krestart(void)
         procs[k].state = PROC_READY;
         procs[k].brk   = 0;
         memset(procs[k].regs, 0, sizeof(procs[k].regs));
+        for (int fd = 0; fd < 4; fd++) { procs[k].fd_slot[fd] = -1; procs[k].fd_pos[fd] = 0; }
         procs[k].regs[1]  = procs[k].sp;
         procs[k].regs[10] = k;
         proc_setup_image((int)k);
@@ -859,6 +923,7 @@ static void fs_seed(void)
 {
     fs_write("hello.elf",  user_prog_start,  (u32)(user_prog_end  - user_prog_start));
     fs_write("fork.elf",   fork_prog_start,  (u32)(fork_prog_end  - fork_prog_start));
+    fs_write("fdtest.elf", fdtest_prog_start, (u32)(fdtest_prog_end - fdtest_prog_start));
     fs_write("badptr.elf", badptr_prog_start,(u32)(badptr_prog_end - badptr_prog_start));
     {
         const char *msg = "rvsim RAMFS: try ls, cat readme.txt, run hello.elf";
