@@ -18,6 +18,8 @@ typedef struct {
     u32 nrun;
     u32 brk;             /* 用户堆顶（sbrk 用） */
     u32 *pgtbl;          /* 独立页表根 */
+    u32 code_pa;         /* 本进程独占的代码/数据物理页起始 */
+    u32 code_pages;      /* 占几页 */
     u32 regs[32];        /* 完整用户上下文 */
 } proc_t;
 

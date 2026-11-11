@@ -10,8 +10,9 @@ u32 *page_alloc(void)
     if (!g_next_page) {
         g_next_page = ((u32)_kernel_end + 4095u) & ~4095u;
     }
-    /* 上限检查：越过 RAM 末端就返回 NULL，避免把页分配到 g_ram 之外 */
-    if (g_next_page + 4096u > 0x84000000u) {
+    /* 上限：用户区从 0x80400000 开始，内核页分配器不能越界进去，
+       否则会把用户代码页当成内核自己的页分出去。 */
+    if (g_next_page + 4096u > 0x80400000u) {
         /* 物理页耗尽：直接关机。继续跑只会空指针解引用，崩得更难看。 */
         extern void uart_puts(const char *);
         uart_puts("\n[kernel] 物理页耗尽，关机\n");
@@ -21,6 +22,21 @@ u32 *page_alloc(void)
     u32 *p = (u32 *)g_next_page;
     g_next_page += 4096;
     memset(p, 0, 4096);
+    return p;
+}
+
+/* 连续 n 页（每进程的代码副本必须是连续的，才能按页平移映射） */
+u32 *page_alloc_n(u32 n)
+{
+    if (!g_next_page) g_next_page = ((u32)_kernel_end + 4095u) & ~4095u;
+    if (g_next_page + n * 4096u > 0x80400000u) {
+        extern void uart_puts(const char *);
+        uart_puts("\n[kernel] 内核页耗尽（用户区之前）\n");
+        for (;;) { }
+    }
+    u32 *p = (u32 *)g_next_page;
+    g_next_page += n * 4096u;
+    memset(p, 0, n * 4096u);
     return p;
 }
 

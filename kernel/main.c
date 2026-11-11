@@ -41,6 +41,7 @@ u32 *g_kroot;   /* 供 vm.c 的按需分页使用 */
    此前 pc 直接写死 g_user_base，而 .data/.bss 在第二页没人映射——
    进程一访问就缺页拿到零页，数据全丢。 */
 u32  g_entry = 0x80400000u;
+static u32 g_img_end = 0x80400000u;   /* ELF 装载后用户区的结束地址 */
 static u32 g_seg_va[8], g_seg_end[8];
 static int g_seg_n = 0;
 
@@ -779,12 +780,34 @@ int kload_prog(const char *name)
     u32 entry = 0, img_end = 0;
     if (!elf_load(img, (u32)len, &entry, &img_end)) return -2;
     g_entry = entry;
+    g_img_end = img_end;
     g_seg_n = elf_segments(img, (u32)len, g_seg_va, g_seg_end, 8);
 
     /* 记住装的是哪个程序：快照靠它回滚代码区 */
     { int k = 0; while (key[k] && k < 7) { g_loaded_prog[k] = key[k]; k++; } g_loaded_prog[k] = 0; }
 
     return len;
+}
+
+/* 给一个进程建立独立的代码/数据物理页并映射。
+   此前所有进程共享 0x80400000 那一块物理页，一个进程写自己的 .data，
+   别的进程就能看到——那不算「独立的地址空间」。 */
+static void proc_setup_image(int i)
+{
+    u32 npages = (g_img_end > 0x80400000u)
+               ? ((g_img_end - 0x80400000u + 4095u) / 4096u) : 1u;
+    if (npages > 4) npages = 4;
+
+    u32 *pa = page_alloc_n(npages);
+    procs[i].code_pa    = (u32)pa;
+    procs[i].code_pages = npages;
+
+    /* 把模板（装载在 0x80400000 的那份）复制成本进程私有副本 */
+    memcpy((void *)pa, (void *)0x80400000u, npages * 4096u);
+
+    if (!procs[i].pgtbl) procs[i].pgtbl = vm_proc_pgtbl();
+    for (u32 p = 0; p < npages; p++)
+        vm_map_code(procs[i].pgtbl, 0x80400000u + p * 4096u, (u32)pa + p * 4096u);
 }
 
 int krestart(void)
@@ -798,6 +821,7 @@ int krestart(void)
         memset(procs[k].regs, 0, sizeof(procs[k].regs));
         procs[k].regs[1]  = procs[k].sp;
         procs[k].regs[10] = k;
+        proc_setup_image((int)k);
     }
     for (u32 k = NPROC_INIT; k < NPROC; k++) procs[k].state = PROC_EXIT;
     cur_proc = -1;
@@ -874,17 +898,9 @@ void kmain(void)
         g_ustack[i] = g_user_base + 0x10000u + i * 0x2000u;   /* 64KB 之后，间隔 8KB */
         memset((void *)g_ustack[i], 0, 4096);
         proc_create(i, g_entry, g_ustack[i]);
-        evt_emit(EVT_SPAWN, i, g_entry, g_ustack[i], 0);
-        /* 每个进程独立页表；ELF 的每个 PT_LOAD 段都要映射，
-           只映射第一页会让 .data/.bss 落在零页上。 */
-        procs[i].pgtbl = vm_proc_pgtbl();
-        for (int sgi = 0; sgi < g_seg_n; sgi++) {
-            /* 只映射用户区：0x803ff000 那页只是 ELF header，用户态不该访问，
-               给它加 U 位会污染内核共享的那层页表。 */
-            u32 a0 = g_seg_va[sgi] < 0x80400000u ? 0x80400000u : g_seg_va[sgi];
-            for (u32 a = a0; a < g_seg_end[sgi]; a += 4096u)
-                vm_map_code(procs[i].pgtbl, a, a);
-        }
+        /* 先建立私有代码页，再记事件——否则 spawn 里记下的 code_pa 还是 0 */
+        proc_setup_image((int)i);
+        evt_emit(EVT_SPAWN, i, g_entry, procs[i].code_pa, 0);
     }
 
     /* 定时器：默认关闭（yield 已足够验证轮转；打开见 RVSIM_TIMER 环境无对应，

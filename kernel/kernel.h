@@ -99,6 +99,7 @@ void *memcpy(void *d, const void *s, size_t n);
 /* 页表 */
 u32 *page_alloc(void);
 u32 *vm_proc_pgtbl(void);
+u32 *page_alloc_n(u32 n);
 void vm_map_code(u32 *root, u32 va, u32 pa);
 int vm_page_fault_on(u32 *root, u32 va, int is_store);
 extern u32 g_pf_count;
