@@ -88,7 +88,7 @@ button.wide{flex:1}
 @keyframes bl{50%{opacity:0}}
 
 /* 进程表 */
-#procs,#caps,#events,#snaps{font-family:var(--mono);font-size:11.5px}
+#procs,#caps,#events,#snaps,#files{font-family:var(--mono);font-size:11.5px}
 #reg{max-height:20vh;overflow-y:auto}
 main > .col:last-child{overflow-y:auto;max-height:calc(100vh - 40px)}
 #caps{max-height:26vh;overflow-y:auto;padding-right:4px}
@@ -100,6 +100,10 @@ main > .col:last-child{overflow-y:auto;max-height:calc(100vh - 40px)}
 .ev.spawn .a{color:var(--acc)}.ev.exit .a{color:#f87171}
 .ev.ecall .a{color:var(--fg2)}
 .snap{padding:2px 4px;border-radius:3px;font-size:10.5px}
+.frow{display:flex;justify-content:space-between;padding:2px 4px;border-radius:3px;font-size:10.5px}
+.frow:nth-child(odd){background:rgba(255,255,255,.018)}
+.frow b{color:var(--acc);font-weight:500}
+.frow span{color:var(--fg3)}
 .snap b{color:var(--acc);font-weight:500}
 .prow{display:grid;grid-template-columns:32px 52px 1fr 32px;gap:4px;padding:3px 4px;
   border-radius:3px}
@@ -195,6 +199,9 @@ main > .col:last-child{overflow-y:auto;max-height:calc(100vh - 40px)}
     <div class="lbl" style="margin-top:16px">快照 / 计划</div>
     <div id="snaps"><div class="hint">启动后自动读取</div></div>
 
+    <div class="lbl" style="margin-top:16px">文件 <em>ls</em></div>
+    <div id="files"><div class="hint">读取中…</div></div>
+
     <div class="lbl" style="margin-top:16px">能力 <em>manifest</em></div>
     <div id="caps"><div class="hint">启动后自动读取</div></div>
   </div>
@@ -257,6 +264,15 @@ function renderSnaps(snaps, plans){
   $("snaps").innerHTML = h || '<div class="hint">无</div>';
 }
 
+function renderFiles(o){
+  const list = (o && o.files) || [];
+  if(!list.length){ $("files").innerHTML = '<div class="hint">空</div>'; return; }
+  let h = "";
+  for(const f of list)
+    h += `<div class="frow"><b>${f.name}</b><span>${f.size} B</span></div>`;
+  $("files").innerHTML = h;
+}
+
 function renderProcs(o){
   let h = '<div class="prow ph"><span>PID</span><span>状态</span><span>PC</span><span>轮</span></div>';
   for(const p of o.procs){
@@ -302,6 +318,11 @@ function sniff(s){
 
   /* 缓冲里可能有多份（每次轮询都会追加一份），必须取最后一个，
      否则会一直显示启动时的空数组。 */
+  const allFs = [...sniffBuf.matchAll(/\{"files":\[[^\]]*\]\}/g)];
+  if(allFs.length){
+    try{ renderFiles(JSON.parse(allFs[allFs.length-1][0])); }catch(e){}
+  }
+
   const allSn = [...sniffBuf.matchAll(/\{"snapshots":\[[^\]]*\]\}/g)];
   const allPl = [...sniffBuf.matchAll(/\{"plans":\[[^\]]*\]\}/g)];
   const msn = allSn.length ? [allSn[allSn.length - 1][0]] : null;
@@ -356,6 +377,7 @@ function boot(bytes,name){
   $("events").innerHTML = '<div class="hint">读取中…</div>';
   $("snaps").innerHTML = '<div class="hint">读取中…</div>';
   $("caps").innerHTML = '<div class="hint">读取中…</div>';
+  $("files").innerHTML = '<div class="hint">读取中…</div>';
   term.innerHTML='<span class="cursor"></span>';
   ["bRun","bStop","bStep","bReset"].forEach(i=>$(i).disabled=false);
   /* 不在 boot 里同步跑几十万步：那会把主线程钉死，浏览器连一次重绘
@@ -396,6 +418,7 @@ function boot(bytes,name){
     sendCmd("log last 8");
     sendCmd("snaps");
     sendCmd("plans");
+    sendCmd("ls");
   }, 8000);
 }
 async function bootUrl(u,name){
