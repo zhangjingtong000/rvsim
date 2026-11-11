@@ -17,6 +17,27 @@ static char g_cmd_snap[4097];   /* +1：uart_tail_copy 会写终止符 */  /* �
 static int  g_cmd_at_prompt; /* 命令开始时系统是否停在提示符 */
 static int  g_len = 0;
 
+/* ── 用户 ──
+   0 = root（可写一切），1 = ai，2 = guest。
+   权限检查挂在 write/rm/chmod 上，这是「多用户」真正有意义的地方。 */
+static const char *g_user_names[] = { "root", "ai", "guest" };
+#define NUSERS 3
+
+static int user_lookup(const char *name)
+{
+    for (int i = 0; i < NUSERS; i++) {
+        const char *a = name, *b = g_user_names[i];
+        while (*a && *b && *a == *b) { a++; b++; }
+        if (*a == 0 && *b == 0) return i;
+    }
+    return -1;
+}
+
+static const char *user_name(u32 uid)
+{
+    return (uid < NUSERS) ? g_user_names[uid] : "?";
+}
+
 static void prompt(void) { uart_puts("\nrvsh> "); }
 
 static int streq(const char *a, const char *b)
@@ -456,9 +477,52 @@ void shell_input(char ch)
                     uart_dec((int)sz);
                     uart_puts(",\"type\":\"");
                     uart_puts(fs_entry_type(i) == 1 ? "dir" : "file");
+                    uart_puts("\",\"owner\":\"");
+                    uart_puts(user_name((u32)fs_entry_owner(i)));
                     uart_puts("\"}");
                 }
                 uart_puts("]}\n");
+            }
+            else if (ADV && starts_with(g_line, "login ")) {
+                const char *q = g_line + 6;
+                int u = user_lookup(q);
+                if (u < 0) {
+                    uart_puts("{\"ok\":false,\"why\":\"未知用户\",\"hint\":\"root|ai|guest\"}\n");
+                } else {
+                    g_cur_uid = (u32)u;
+                    uart_puts("{\"login\":\"");
+                    uart_puts(q);
+                    uart_puts("\",\"uid\":");
+                    uart_dec(u);
+                    uart_puts("}\n");
+                }
+            }
+            else if (ADV && streq(g_line, "whoami")) {
+                uart_puts("{\"user\":\"");
+                uart_puts(user_name(g_cur_uid));
+                uart_puts("\",\"uid\":");
+                uart_dec((int)g_cur_uid);
+                uart_puts("}\n");
+            }
+            else if (ADV && starts_with(g_line, "chmod ")) {
+                /* chmod <name> <0|1>：0 只有属主可写，1 所有登录者可写 */
+                const char *q = g_line + 6;
+                char nm[24]; int nl = 0;
+                while (*q && *q != ' ' && nl < 23) nm[nl++] = *q++;
+                nm[nl] = 0;
+                while (*q == ' ') q++;
+                int m = (*q == '1') ? 1 : 0;
+                if (g_cur_uid != 0) {
+                    uart_puts("{\"ok\":false,\"why\":\"只有 root 能改权限\"}\n");
+                } else if (fs_chmod(nm, (u32)m) == 0) {
+                    uart_puts("{\"chmod\":\"");
+                    uart_puts(nm);
+                    uart_puts("\",\"mode\":");
+                    uart_dec(m);
+                    uart_puts("}\n");
+                } else {
+                    uart_puts("{\"ok\":false,\"why\":\"文件不存在\"}\n");
+                }
             }
             else if (ADV && starts_with(g_line, "mkdir ")) {
                 const char *q = g_line + 6;
@@ -498,6 +562,10 @@ void shell_input(char ch)
                 while (*q && *q != ' ' && nl < 23) nm[nl++] = *q++;
                 nm[nl] = 0;
                 if (*q == ' ') q++;
+                if (!fs_can_write(nm, g_cur_uid)) {
+                    uart_puts("{\"ok\":false,\"why\":\"权限不足（文件属主设为私有）\"}\n");
+                    goto shell_done;
+                }
                 int n = fs_write(nm, (const u8 *)q, (u32)strlen_safe(q));
                 if (n < 0) {
                     uart_puts("{\"ok\":false,\"why\":\"写入失败\"}\n");
@@ -511,6 +579,10 @@ void shell_input(char ch)
             }
             else if (ADV && starts_with(g_line, "rm ")) {
                 const char *q = g_line + 3;
+                if (!fs_can_write(q, g_cur_uid)) {
+                    uart_puts("{\"ok\":false,\"why\":\"权限不足\"}\n");
+                    goto shell_done;
+                }
                 if (fs_remove(q) == 0) {
                     uart_puts("{\"removed\":\"");
                     uart_puts(q);

@@ -16,6 +16,8 @@
 typedef struct {
     u8  used;
     u8  is_dir;          /* 1 = 目录 */
+    u8  owner;           /* 属主 uid */
+    u8  mode;            /* 0 = 只有属主可写；1 = 所有人可写 */
     char name[FS_NAME_MAX];
     u32 size;
     u8  data[FS_DATA_MAX];
@@ -76,6 +78,9 @@ u32 fs_count(void)
 }
 
 /* 写文件：不存在则创建，存在则覆盖。返回写入字节数，失败返回 -1。 */
+/* 当前写入者 uid：由 shell 在登录后设置 */
+u32 g_cur_uid = 0;
+
 int fs_write(const char *name, const u8 *data, u32 len)
 {
     if (!name || !name[0]) return -1;
@@ -90,6 +95,8 @@ int fs_write(const char *name, const u8 *data, u32 len)
         if (!f) return -1;                    /* 槽位用尽 */
         f->used = 1;
         f->is_dir = 0;
+        f->owner = (u8)g_cur_uid;
+        f->mode  = 1;              /* 默认所有登录者可写，root 可改 */
         k_strcpy_n(f->name, name, FS_NAME_MAX);
     }
     for (u32 i = 0; i < len; i++) f->data[i] = data[i];
@@ -137,12 +144,37 @@ int fs_mkdir(const char *name)
         if (!g_files[i].used) {
             g_files[i].used = 1;
             g_files[i].is_dir = 1;
+            g_files[i].owner = (u8)g_cur_uid;
+            g_files[i].mode  = 1;
             g_files[i].size = 0;
             k_strcpy_n(g_files[i].name, name, FS_NAME_MAX);
             return 0;
         }
     }
     return -1;
+}
+
+/* 能否写：root 无条件；其他用户要求 mode=1 */
+int fs_can_write(const char *name, u32 uid)
+{
+    fs_file_t *f = fs_find(name);
+    if (!f) return 1;              /* 新建：允许 */
+    if (uid == 0) return 1;
+    return f->mode != 0;
+}
+
+int fs_owner(const char *name)
+{
+    fs_file_t *f = fs_find(name);
+    return f ? (int)f->owner : -1;
+}
+
+int fs_chmod(const char *name, u32 mode)
+{
+    fs_file_t *f = fs_find(name);
+    if (!f) return -1;
+    f->mode = (u8)(mode & 1);
+    return 0;
 }
 
 int fs_is_dir(const char *name)
@@ -172,6 +204,12 @@ int fs_entry(u32 idx, char *out, int cap, u32 *size)
     k_strcpy_n(out, g_files[idx].name, cap);
     if (size) *size = g_files[idx].size;
     return 1;
+}
+
+int fs_entry_owner(u32 idx)
+{
+    if (idx >= FS_MAX_FILES || !g_files[idx].used) return -1;
+    return (int)g_files[idx].owner;
 }
 
 int fs_entry_type(u32 idx)

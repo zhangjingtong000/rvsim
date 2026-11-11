@@ -387,6 +387,9 @@ static const cap_t g_caps[] = {
     {"write",    "write <name> <text>",     "",                0, "写入文件（覆盖），返回字节数"},
     {"rm",       "rm <name>",               "",                1, "删除文件"},
     {"mkdir",    "mkdir <path>",             "",                0, "创建目录（名字里可以带 / 表示层级）"},
+    {"login",    "login <user>",             "root|ai|guest",   1, "切换当前用户（uid 0 是 root）"},
+    {"whoami",   "whoami",                   "",                0, "当前用户与 uid"},
+    {"chmod",    "chmod <name> <0|1>",       "0=仅属主可写 1=所有人可写", 1, "改文件权限（仅 root）"},
 };
 
 /* 统一状态入口：AI 一次调用就能拿到全貌，
