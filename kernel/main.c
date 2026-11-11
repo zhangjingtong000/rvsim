@@ -37,6 +37,13 @@ extern const u8 badptr_prog_end[];
 
 u32 *g_kroot;   /* 供 vm.c 的按需分页使用 */
 
+/* 当前装载的程序的入口与 PT_LOAD 段。
+   此前 pc 直接写死 g_user_base，而 .data/.bss 在第二页没人映射——
+   进程一访问就缺页拿到零页，数据全丢。 */
+u32  g_entry = 0x80400000u;
+static u32 g_seg_va[8], g_seg_end[8];
+static int g_seg_n = 0;
+
 /* ── 独立计数器 ──
    审计指出：assert 和 log 都读同一份 g_evts，事件流记错了也发现不了。
    这里在 trap 分派处单独计数，完全不经过 evt_emit。
@@ -744,26 +751,39 @@ int kload_prog(const char *name)
     while (name[n] && n < 23) { key[n] = name[n]; n++; }
     key[n] = 0;
 
-    /* 裸名补 .bin 后缀 */
+    /* 裸名补后缀：先试 .elf，再试 .bin（兼容旧镜像） */
     int has_dot = 0;
     for (int i = 0; key[i]; i++) if (key[i] == '.') { has_dot = 1; break; }
-    if (!has_dot) {
-        int k = n;
-        if (k + 4 < 23) { key[k++] = '.'; key[k++] = 'b'; key[k++] = 'i'; key[k++] = 'n'; key[k] = 0; }
-    }
 
     static u8 img[16384];
-    int len = fs_read(key, img, sizeof(img));
+    int len = -1;
+    if (has_dot) {
+        len = fs_read(key, img, sizeof(img));
+    } else {
+        char t[24];
+        for (int i = 0; i <= n; i++) t[i] = key[i];
+        if (n + 5 < 23) { t[n]='.'; t[n+1]='e'; t[n+2]='l'; t[n+3]='f'; t[n+4]=0;
+                          len = fs_read(t, img, sizeof(img));
+                          if (len > 0) { for (int i = 0; i <= n + 4; i++) key[i] = t[i]; } }
+        if (len <= 0 && n + 5 < 23) { t[n]='.'; t[n+1]='b'; t[n+2]='i'; t[n+3]='n'; t[n+4]=0;
+                          len = fs_read(t, img, sizeof(img));
+                          if (len > 0) { for (int i = 0; i <= n + 4; i++) key[i] = t[i]; } }
+    }
     if (len <= 0) return -1;
+
+    /* 写用户区前必须切回内核页表：fork 之后 satp 还停在上一个进程的
+       页表上，此时按虚拟地址写 0x80400000 会落到错误的物理页。 */
+    proc_switch_satp(g_kroot);
+
+    /* 真正的 ELF 加载：按 PT_LOAD 段落到各自的虚拟地址，BSS 清零 */
+    u32 entry = 0, img_end = 0;
+    if (!elf_load(img, (u32)len, &entry, &img_end)) return -2;
+    g_entry = entry;
+    g_seg_n = elf_segments(img, (u32)len, g_seg_va, g_seg_end, 8);
 
     /* 记住装的是哪个程序：快照靠它回滚代码区 */
     { int k = 0; while (key[k] && k < 7) { g_loaded_prog[k] = key[k]; k++; } g_loaded_prog[k] = 0; }
 
-    /* 写用户代码区前要切回内核页表并确保映射（否则在 trap 上下文里递归缺页） */
-    proc_switch_satp(g_kroot);
-    for (u32 a = g_user_base; a < g_user_base + (u32)len; a += 4096u)
-        if (!vm_page_fault_on(g_kroot, a & ~0xFFFu, 1)) break;
-    memcpy((void *)g_user_base, img, (u32)len);
     return len;
 }
 
@@ -771,7 +791,7 @@ int krestart(void)
 {
     evt_emit(EVT_RESET, (u32)-1, NPROC_INIT, 0, 1);
     for (u32 k = 0; k < NPROC_INIT; k++) {
-        procs[k].pc    = g_user_base;
+        procs[k].pc    = g_entry;
         procs[k].sp    = g_ustack[k] + 4096u - 16u;
         procs[k].state = PROC_READY;
         procs[k].brk   = 0;
@@ -809,11 +829,11 @@ void shell_ps_hook(void)
    文件系统里的程序才第一次成为真正的可执行物。 */
 static void fs_seed(void)
 {
-    fs_write("hello.bin",  user_prog_start,  (u32)(user_prog_end  - user_prog_start));
-    fs_write("fork.bin",   fork_prog_start,  (u32)(fork_prog_end  - fork_prog_start));
-    fs_write("badptr.bin", badptr_prog_start,(u32)(badptr_prog_end - badptr_prog_start));
+    fs_write("hello.elf",  user_prog_start,  (u32)(user_prog_end  - user_prog_start));
+    fs_write("fork.elf",   fork_prog_start,  (u32)(fork_prog_end  - fork_prog_start));
+    fs_write("badptr.elf", badptr_prog_start,(u32)(badptr_prog_end - badptr_prog_start));
     {
-        const char *msg = "rvsim RAMFS: try ls, cat readme.txt, run hello.bin";
+        const char *msg = "rvsim RAMFS: try ls, cat readme.txt, run hello.elf";
         u32 mlen = 0;
         while (msg[mlen]) mlen++;
         fs_write("readme.txt", (const u8 *)msg, mlen);
@@ -828,9 +848,14 @@ void kmain(void)
     u32 satp = SATP_SV32 | ((u32)g_kroot >> 12);
     __asm__ volatile("csrw satp, %0; sfence.vma" : : "r"(satp) : "memory");
 
-    /* 加载用户程序镜像到 0x80400000 */
-    u32 len = (u32)(user_prog_end - user_prog_start);
-    memcpy((void *)g_user_base, user_prog_start, len);
+    /* 文件系统先就位：程序现在是「文件系统里的一个文件」，
+       不再是直接 memcpy 的裸二进制。 */
+    fs_init();
+    fs_seed();
+    if (kload_prog("hello.elf") < 0) {
+        kprintf("[S] 初始程序装载失败\n");
+        for (;;) { }
+    }
 
     /* 用户页表：只映射代码页；数据页与栈页留给缺页异常按需分配 */
     u32 uvpn2 = VPN2(g_user_base);
@@ -844,17 +869,22 @@ void kmain(void)
 
     /* 创建 3 个进程，每个 4KB 用户栈 */
     proc_init();
-    fs_init();
-    fs_seed();
     for (u32 i = NPROC_INIT; i < NPROC; i++) procs[i].state = PROC_EXIT;
     for (u32 i = 0; i < NPROC_INIT; i++) {
         g_ustack[i] = g_user_base + 0x10000u + i * 0x2000u;   /* 64KB 之后，间隔 8KB */
         memset((void *)g_ustack[i], 0, 4096);
-        proc_create(i, g_user_base, g_ustack[i]);
-        evt_emit(EVT_SPAWN, i, g_user_base, g_ustack[i], 0);
-        /* 每个进程独立的页表，只映射代码页 */
+        proc_create(i, g_entry, g_ustack[i]);
+        evt_emit(EVT_SPAWN, i, g_entry, g_ustack[i], 0);
+        /* 每个进程独立页表；ELF 的每个 PT_LOAD 段都要映射，
+           只映射第一页会让 .data/.bss 落在零页上。 */
         procs[i].pgtbl = vm_proc_pgtbl();
-        vm_map_code(procs[i].pgtbl, g_user_base, g_user_base);
+        for (int sgi = 0; sgi < g_seg_n; sgi++) {
+            /* 只映射用户区：0x803ff000 那页只是 ELF header，用户态不该访问，
+               给它加 U 位会污染内核共享的那层页表。 */
+            u32 a0 = g_seg_va[sgi] < 0x80400000u ? 0x80400000u : g_seg_va[sgi];
+            for (u32 a = a0; a < g_seg_end[sgi]; a += 4096u)
+                vm_map_code(procs[i].pgtbl, a, a);
+        }
     }
 
     /* 定时器：默认关闭（yield 已足够验证轮转；打开见 RVSIM_TIMER 环境无对应，

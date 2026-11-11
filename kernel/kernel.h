@@ -65,6 +65,10 @@ void uart_puts(const char *s);
 void uart_hex(u32 v);
 void uart_dec(int v);
 
+/* ── ELF 加载 ── */
+u32 elf_load(const u8 *img, u32 len, u32 *entry_out, u32 *img_end_out);
+int elf_segments(const u8 *img, u32 len, u32 *vas, u32 *ends, int maxseg);
+
 /* ── 内存文件系统 ── */
 void fs_init(void);
 int  fs_write(const char *name, const u8 *data, u32 len);

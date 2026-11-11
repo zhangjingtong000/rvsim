@@ -5,15 +5,15 @@
 .globl fork_prog_end
 .align 4
 user_prog_start:
-    .incbin "build/user_prog.bin"
+    .incbin "build/user_prog.elf"
 user_prog_end:
 .align 4
 fork_prog_start:
-    .incbin "build/fork_prog.bin"
+    .incbin "build/fork_prog.elf"
 fork_prog_end:
 .align 4
 .globl badptr_prog_start
 .globl badptr_prog_end
 badptr_prog_start:
-    .incbin "build/badptr_prog.bin"
+    .incbin "build/badptr_prog.elf"
 badptr_prog_end:

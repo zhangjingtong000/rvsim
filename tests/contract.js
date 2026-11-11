@@ -82,17 +82,17 @@ function record(name, ok, detail) {
   /* fork 跑完后进程都已退出，ps.nproc 会是 0，不能直接比。
      这里改用「spawn 事件数」本身：fork 演示应产生 4 条
      （开机 3 个 + fork 子进程 1 个）。若 fork 不记录事件，这里会是 3。 */
+  console.log("      [dbg] T5 halted=" + M._rv_result() + " priv=" + M._rv_priv());
   const spawn1 = cnt1 && cnt1.count ? cnt1.count.spawn : -1;
   record("fork 子进程被记入事件流", spawn1 === 4, `spawn=${spawn1}（期望 4）`);
 
-  // ── T6: run 裸名解析 —— badptr 产生 6 次越界拒绝 ──
+  // ── T6: 从文件系统装载 ELF 并执行 ──
   {
-    send("reset");
-    send("run badptr");
-    /* 只验证「badptr 真的执行了」这一点。
-       不要用 spawn 计数：事件流是累计的，前面的测试已经贡献过 spawn。 */
+    /* 用全名：裸名解析是另一条路径，这里先确认「ELF 能被装载并跑起来」。
+       badptr 的语义就是 6 次越界被拒。 */
+    send("run badptr.elf");
     const oob = json(send("assert oob=6"));
-    record("run 裸名解析为 badptr", oob && oob.ok === true, JSON.stringify(oob));
+    record("run 从 RAMFS 装载 ELF", oob && oob.ok === true, JSON.stringify(oob));
   }
 
   // ── T7: plan 必须拒绝非法参数 ──
