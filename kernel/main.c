@@ -373,6 +373,10 @@ static const cap_t g_caps[] = {
     {"verify",   "verify",                  "",                0, "交叉验证：trap 侧独立计数 vs 事件流"},
     {"setreg",   "setreg <pid> <reg> <val>", "",               1, "改写进程寄存器（调试用，不可逆）"},
     {"setpc",    "setpc <pid> <addr>",      "",                1, "改写进程执行点（调试用，不可逆）"},
+    {"ls",       "ls",                      "",                0, "列出内存文件"},
+    {"cat",      "cat <name>",              "",                0, "读取文件内容"},
+    {"write",    "write <name> <text>",     "",                0, "写入文件（覆盖），返回字节数"},
+    {"rm",       "rm <name>",               "",                1, "删除文件"},
 };
 
 /* 统一状态入口：AI 一次调用就能拿到全貌，
@@ -838,6 +842,7 @@ void kmain(void)
 
     /* 创建 3 个进程，每个 4KB 用户栈 */
     proc_init();
+    fs_init();
     for (u32 i = NPROC_INIT; i < NPROC; i++) procs[i].state = PROC_EXIT;
     for (u32 i = 0; i < NPROC_INIT; i++) {
         g_ustack[i] = g_user_base + 0x10000u + i * 0x2000u;   /* 64KB 之后，间隔 8KB */

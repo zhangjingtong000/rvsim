@@ -44,6 +44,13 @@ static void cmd_ps(void)
 }
 
 /* 由 UART 中断或轮询喂入字符 */
+static int strlen_safe(const char *s)
+{
+    int n = 0;
+    while (s && s[n]) n++;
+    return n;
+}
+
 static int starts_with(const char *a, const char *b)
 {
     while (*b) { if (*a++ != *b++) return 0; }
@@ -410,6 +417,71 @@ void shell_input(char ch)
                     }
                 }
                 proc_dump_regs(pid);
+            }
+            else if (ADV && streq(g_line, "ls")) {
+                uart_puts("{\"files\":[");
+                int first = 1;
+                char nm[24]; u32 sz;
+                for (u32 i = 0; i < 32; i++) {
+                    if (!fs_entry(i, nm, sizeof(nm), &sz)) continue;
+                    if (!first) uart_puts(",");
+                    first = 0;
+                    uart_puts("{\"name\":\"");
+                    uart_puts(nm);
+                    uart_puts("\",\"size\":");
+                    uart_dec((int)sz);
+                    uart_puts("}");
+                }
+                uart_puts("]}\n");
+            }
+            else if (ADV && starts_with(g_line, "cat ")) {
+                const char *q = g_line + 4;
+                static u8 buf[4096];
+                int n = fs_read(q, buf, sizeof(buf));
+                if (n < 0) {
+                    uart_puts("{\"ok\":false,\"why\":\"文件不存在\"}\n");
+                } else {
+                    uart_puts("{\"name\":\"");
+                    uart_puts(q);
+                    uart_puts("\",\"size\":");
+                    uart_dec(n);
+                    uart_puts(",\"data\":\"");
+                    for (int i = 0; i < n; i++) {
+                        char c = (char)buf[i];
+                        if (c == '"') uart_puts("\\\"");
+                        else if (c == '\n') uart_puts("\\n");
+                        else if (c == '\\') uart_puts("\\\\");
+                        else uart_putc(c);
+                    }
+                    uart_puts("\"}\n");
+                }
+            }
+            else if (ADV && starts_with(g_line, "write ")) {
+                const char *q = g_line + 6;
+                char nm[24]; int nl = 0;
+                while (*q && *q != ' ' && nl < 23) nm[nl++] = *q++;
+                nm[nl] = 0;
+                if (*q == ' ') q++;
+                int n = fs_write(nm, (const u8 *)q, (u32)strlen_safe(q));
+                if (n < 0) {
+                    uart_puts("{\"ok\":false,\"why\":\"写入失败\"}\n");
+                } else {
+                    uart_puts("{\"write\":\"");
+                    uart_puts(nm);
+                    uart_puts("\",\"bytes\":");
+                    uart_dec(n);
+                    uart_puts("}\n");
+                }
+            }
+            else if (ADV && starts_with(g_line, "rm ")) {
+                const char *q = g_line + 3;
+                if (fs_remove(q) == 0) {
+                    uart_puts("{\"removed\":\"");
+                    uart_puts(q);
+                    uart_puts("\"}\n");
+                } else {
+                    uart_puts("{\"ok\":false,\"why\":\"文件不存在\"}\n");
+                }
             }
             else if (ADV && streq(g_line, "verify")) {
                 extern void verify_dump(void);

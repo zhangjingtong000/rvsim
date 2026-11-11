@@ -65,6 +65,16 @@ void uart_puts(const char *s);
 void uart_hex(u32 v);
 void uart_dec(int v);
 
+/* ── 内存文件系统 ── */
+void fs_init(void);
+int  fs_write(const char *name, const u8 *data, u32 len);
+int  fs_read(const char *name, u8 *out, u32 cap);
+int  fs_size(const char *name);
+int  fs_remove(const char *name);
+int  fs_exists(const char *name);
+int  fs_entry(u32 idx, char *out, int cap, u32 *size);
+u32  fs_count(void);
+
 /* 计划类型：apply 时按这个分派 */
 #define PLAN_RUN     1
 #define PLAN_RESET   2

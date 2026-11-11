@@ -39,7 +39,7 @@ CAPSTONE_OBJS = $(patsubst $(CAPSTONE_DIR)/%.c,$(OBJDIR)/capstone/%.o,$(CAPSTONE
 CS_CFLAGS     = -DCAPSTONE_HAS_RISCV -DCAPSTONE_USE_SYS_DYN_MEM=1 \
                 -I$(CAPSTONE_DIR)/include -I$(CAPSTONE_DIR) -I$(CAPSTONE_DIR)/arch/RISCV
 
-KSRCS = kernel/main.c kernel/vm.c kernel/uart.c kernel/proc.c kernel/shell.c
+KSRCS = kernel/main.c kernel/vm.c kernel/uart.c kernel/proc.c kernel/shell.c kernel/fs.c
 KASMS = kernel/start.S kernel/s_entry.S kernel/user_prog.S
 
 all: $(TARGET) $(OBJDIR)/kernel.elf
