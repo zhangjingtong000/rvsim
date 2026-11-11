@@ -12,7 +12,8 @@ extern int  g_run_flag;
 extern int  g_fork_flag;
 extern int  g_badptr_flag;
 int kload_prog(const char *name);
-extern int  g_exec_flag;
+int  g_exec_flag = 0;
+char g_exec_name[32] = {0};
 extern char g_exec_name[32];
 int krestart(void);
 
@@ -353,7 +354,7 @@ static const cap_t g_caps[] = {
     {"manifest", "manifest",                "",                0, "输出本能力清单（机器可解析）"},
     {"status",   "status",                  "",                0, "统一状态入口（JSON）：at_prompt 表示发命令时系统是否停在提示符"},
     {"ps",       "ps",                      "",                0, "进程表（JSON）：pc=用户态入口，nrun=被调度次数"},
-    {"run",      "run <prog>",              "hello|fork|badptr", 1, "装载指定程序并启动 3 个初始进程；fork 演示会额外创建子进程（共 4 个）"},
+    {"run",      "run <file>",              "<name>.bin（RAMFS 里的任意程序；裸名自动补 .bin）", 1, "装载指定程序并启动 3 个初始进程；fork 演示会额外创建子进程（共 4 个）"},
     {"reset",    "reset",                   "",                0, "把全部进程重置到就绪"},
     {"mem",      "mem",                     "",                0, "物理内存大小与累计缺页次数（自启动起）"},
     {"uptime",   "uptime",                  "",                0, "读取虚拟时钟 mtime"},
@@ -731,54 +732,39 @@ int kprog_valid(const char *name)
 
 static char g_loaded_prog[8] = "hello";
 
+/* 从 RAMFS 装载程序到用户代码区。
+   名字可以直接给文件名（如 hello.bin），也接受裸名（hello -> hello.bin），
+   兼容旧的 run hello / run fork / run badptr。 */
 int kload_prog(const char *name)
 {
-    const u8 *src = user_prog_start;
-    u32 len = (u32)(user_prog_end - user_prog_start);
-    if (name && name[0]) {
-        const char *want_fork = "fork";
-        int is_fork = 1;
-        for (int i = 0; want_fork[i]; i++) {
-            if (name[i] != want_fork[i]) { is_fork = 0; break; }
-        }
-        if (is_fork && name[4] == 0) {
-            src = fork_prog_start;
-            len = (u32)(fork_prog_end - fork_prog_start);
-        } else {
-            const char *want_bad = "badptr";
-            int is_bad = 1;
-            for (int i = 0; want_bad[i]; i++) {
-                if (name[i] != want_bad[i]) { is_bad = 0; break; }
-            }
-            if (is_bad && name[6] == 0) {
-                src = badptr_prog_start;
-                len = (u32)(badptr_prog_end - badptr_prog_start);
-            } else {
-                /* 未匹配到 hello：未知名字必须报错。
-                   静默回退到默认镜像会让 plan run zzz 悄悄跑别的程序。 */
-                const char *w_h = "hello";
-                int is_h = 1;
-                for (int i = 0; w_h[i]; i++)
-                    if (name[i] != w_h[i]) { is_h = 0; break; }
-                if (!(is_h && name[5] == 0)) return -1;
-            }
-        }
+    if (!name || !name[0]) return -1;
+
+    char key[24];
+    int n = 0;
+    while (name[n] && n < 23) { key[n] = name[n]; n++; }
+    key[n] = 0;
+
+    /* 裸名补 .bin 后缀 */
+    int has_dot = 0;
+    for (int i = 0; key[i]; i++) if (key[i] == '.') { has_dot = 1; break; }
+    if (!has_dot) {
+        int k = n;
+        if (k + 4 < 23) { key[k++] = '.'; key[k++] = 'b'; key[k++] = 'i'; key[k++] = 'n'; key[k] = 0; }
     }
-    if (len == 0 || len > 256u * 1024u) return -1;
-    /* 记住装的是哪个程序：快照靠它回滚代码区，比复制内存可靠 */
-    {
-        int k = 0;
-        while (name && name[k] && k < 7) { g_loaded_prog[k] = name[k]; k++; }
-        g_loaded_prog[k] = 0;
-    }
-    /* shell 上下文运行在某个进程页表里，而这里要写公共用户代码区。
-       先切回内核页表并逐页确保映射，再拷贝；之后调度会重新切到进程页表。
-       否则写入未映射页（fork_prog 4256 字节跨 2 页）会在 trap 上下文里递归缺页。 */
+
+    static u8 img[16384];
+    int len = fs_read(key, img, sizeof(img));
+    if (len <= 0) return -1;
+
+    /* 记住装的是哪个程序：快照靠它回滚代码区 */
+    { int k = 0; while (key[k] && k < 7) { g_loaded_prog[k] = key[k]; k++; } g_loaded_prog[k] = 0; }
+
+    /* 写用户代码区前要切回内核页表并确保映射（否则在 trap 上下文里递归缺页） */
     proc_switch_satp(g_kroot);
-    for (u32 a = g_user_base; a < g_user_base + len; a += 4096u)
+    for (u32 a = g_user_base; a < g_user_base + (u32)len; a += 4096u)
         if (!vm_page_fault_on(g_kroot, a & ~0xFFFu, 1)) break;
-    memcpy((void *)g_user_base, src, len);
-    return (int)len;
+    memcpy((void *)g_user_base, img, (u32)len);
+    return len;
 }
 
 int krestart(void)
@@ -818,6 +804,22 @@ void shell_ps_hook(void)
     kprintf("]}\n");
 }
 
+/* 把内嵌的三个程序镜像灌进 RAMFS。
+   这样 run 走的是「读文件 → 装载」，而不是「按名字挑 .incbin 符号」，
+   文件系统里的程序才第一次成为真正的可执行物。 */
+static void fs_seed(void)
+{
+    fs_write("hello.bin",  user_prog_start,  (u32)(user_prog_end  - user_prog_start));
+    fs_write("fork.bin",   fork_prog_start,  (u32)(fork_prog_end  - fork_prog_start));
+    fs_write("badptr.bin", badptr_prog_start,(u32)(badptr_prog_end - badptr_prog_start));
+    {
+        const char *msg = "rvsim RAMFS: try ls, cat readme.txt, run hello.bin";
+        u32 mlen = 0;
+        while (msg[mlen]) mlen++;
+        fs_write("readme.txt", (const u8 *)msg, mlen);
+    }
+}
+
 void kmain(void)
 {
     kprintf("\n=== rvsim mini-kernel (multiproc) ===\n");
@@ -843,6 +845,7 @@ void kmain(void)
     /* 创建 3 个进程，每个 4KB 用户栈 */
     proc_init();
     fs_init();
+    fs_seed();
     for (u32 i = NPROC_INIT; i < NPROC; i++) procs[i].state = PROC_EXIT;
     for (u32 i = 0; i < NPROC_INIT; i++) {
         g_ustack[i] = g_user_base + 0x10000u + i * 0x2000u;   /* 64KB 之后，间隔 8KB */
@@ -1131,7 +1134,11 @@ int kernel_apply_restore(u32 id)
 /* 真正执行：装载、重置、调度、进用户态。不返回。 */
 void kernel_apply_run(const char *prog)
 {
-    kload_prog(prog);
+    if (kload_prog(prog) < 0) {
+        /* 装载失败必须明确报错并退回 shell，不能继续调度旧代码 */
+        kprintf("[S] 装载失败: %s（文件不存在或过大）\n", prog);
+        return;
+    }
     int n2 = krestart();
     kprintf("[S] 已重置 %d 个进程，重新调度\n", n2);
     proc_t *p = proc_schedule();
@@ -1168,11 +1175,14 @@ void shell_loop(void)
         if (g_run_flag) {
             /* 必须在调用前算好并清零：kernel_apply_run 进用户态后不返回，
                写在它后面的清零是死代码，第二次 run 会沿用上一次的程序。 */
-            const char *prog = g_badptr_flag ? "badptr" :
-                               (g_fork_flag ? "fork" : "hello");
+            const char *prog = g_exec_name[0] ? g_exec_name :
+                               (g_badptr_flag ? "badptr" :
+                               (g_fork_flag ? "fork" : "hello"));
             g_run_flag   = 0;
             g_badptr_flag = 0;
             g_fork_flag  = 0;
+            /* 不清空 g_exec_name：prog 正指向它，清空会让错误信息里的文件名变成空。
+               下次 run 会覆盖。 */
             kernel_apply_run(prog);
         }
     }

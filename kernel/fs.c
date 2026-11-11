@@ -9,9 +9,9 @@
  */
 #include "kernel.h"
 
-#define FS_MAX_FILES 32
+#define FS_MAX_FILES 16
 #define FS_NAME_MAX  24
-#define FS_DATA_MAX  4096
+#define FS_DATA_MAX  16384   /* fork_prog.bin 已 4272B，4096 装不下 */
 
 typedef struct {
     u8  used;

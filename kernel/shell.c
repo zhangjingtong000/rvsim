@@ -292,15 +292,20 @@ void shell_input(char ch)
                 g_fork_flag = 0;
                 g_run_flag = 1;
             }
-            else if (streq(g_line, "run badptr")) {
-                extern int g_run_flag, g_badptr_flag;
-                g_badptr_flag = 1;
-                g_run_flag = 1;
-            }
-            else if (streq(g_line, "run hello")) {
-                extern int g_run_flag, g_fork_flag;
-                g_fork_flag = 0;
-                g_run_flag = 1;
+                        else if (starts_with(g_line, "run ")) {
+                /* run <任意文件名>：从 RAMFS 装载。
+                   旧的 run / run fork / run badptr 仍然可用（裸名会自动补 .bin）。 */
+                extern char g_exec_name[32];
+                extern int g_run_flag;
+                const char *q = g_line + 4;
+                if (*q) {
+                    int n = 0;
+                    while (*q && n < 31) g_exec_name[n++] = *q++;
+                    g_exec_name[n] = 0;
+                    g_run_flag = 1;
+                } else {
+                    uart_puts("{\"ok\":false,\"why\":\"用法: run <文件名>\"}\n");
+                }
             }
             else if (streq(g_line, "run fork")) {
                 extern int g_run_flag, g_fork_flag;
