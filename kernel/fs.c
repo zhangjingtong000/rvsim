@@ -15,6 +15,7 @@
 
 typedef struct {
     u8  used;
+    u8  is_dir;          /* 1 = 目录 */
     char name[FS_NAME_MAX];
     u32 size;
     u8  data[FS_DATA_MAX];
@@ -88,6 +89,7 @@ int fs_write(const char *name, const u8 *data, u32 len)
         }
         if (!f) return -1;                    /* 槽位用尽 */
         f->used = 1;
+        f->is_dir = 0;
         k_strcpy_n(f->name, name, FS_NAME_MAX);
     }
     for (u32 i = 0; i < len; i++) f->data[i] = data[i];
@@ -124,6 +126,44 @@ int fs_remove(const char *name)
     return 0;
 }
 
+/* 创建目录。已存在则返回 0（幂等）。 */
+int fs_mkdir(const char *name)
+{
+    if (!name || !name[0]) return -1;
+    if (k_strlen(name) >= FS_NAME_MAX) return -1;
+    if (fs_find(name)) return 0;
+
+    for (u32 i = 0; i < FS_MAX_FILES; i++) {
+        if (!g_files[i].used) {
+            g_files[i].used = 1;
+            g_files[i].is_dir = 1;
+            g_files[i].size = 0;
+            k_strcpy_n(g_files[i].name, name, FS_NAME_MAX);
+            return 0;
+        }
+    }
+    return -1;
+}
+
+int fs_is_dir(const char *name)
+{
+    fs_file_t *f = fs_find(name);
+    return f ? (int)f->is_dir : -1;
+}
+
+/* 前缀匹配：name 是否位于 dir 之下（dir 以 / 结尾或为空表示根）。
+   支持 "/a" 与 "a" 两种写法。 */
+int fs_under(const char *name, const char *dir)
+{
+    int dn = k_strlen(dir);
+    if (dn == 0) return 1;                       /* 根目录：全部 */
+    int i = 0;
+    while (i < dn && name[i] && name[i] == dir[i]) i++;
+    if (i != dn) return 0;
+    /* dir 的下一字符必须是 '/' 或结尾，避免 /ab 匹配到 /abc */
+    return name[dn] == '/' || name[dn] == 0;
+}
+
 /* 按下标枚举（供 ls 使用）。返回 1 表示该下标记存在，名字写入 out。 */
 int fs_entry(u32 idx, char *out, int cap, u32 *size)
 {
@@ -132,4 +172,10 @@ int fs_entry(u32 idx, char *out, int cap, u32 *size)
     k_strcpy_n(out, g_files[idx].name, cap);
     if (size) *size = g_files[idx].size;
     return 1;
+}
+
+int fs_entry_type(u32 idx)
+{
+    if (idx >= FS_MAX_FILES || !g_files[idx].used) return -1;
+    return g_files[idx].is_dir;
 }

@@ -82,6 +82,10 @@ int  fs_size(const char *name);
 int  fs_remove(const char *name);
 int  fs_exists(const char *name);
 int  fs_entry(u32 idx, char *out, int cap, u32 *size);
+int  fs_entry_type(u32 idx);
+int  fs_mkdir(const char *name);
+int  fs_is_dir(const char *name);
+int  fs_under(const char *name, const char *dir);
 u32  fs_count(void);
 
 /* 计划类型：apply 时按这个分派 */

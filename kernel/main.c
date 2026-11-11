@@ -382,10 +382,11 @@ static const cap_t g_caps[] = {
     {"verify",   "verify",                  "",                0, "交叉验证：trap 侧独立计数 vs 事件流"},
     {"setreg",   "setreg <pid> <reg> <val>", "",               1, "改写进程寄存器（调试用，不可逆）"},
     {"setpc",    "setpc <pid> <addr>",      "",                1, "改写进程执行点（调试用，不可逆）"},
-    {"ls",       "ls",                      "",                0, "列出内存文件"},
+    {"ls",       "ls [path]",               "",                0, "列出内存文件；给路径则只列该前缀之下"},
     {"cat",      "cat <name>",              "",                0, "读取文件内容"},
     {"write",    "write <name> <text>",     "",                0, "写入文件（覆盖），返回字节数"},
     {"rm",       "rm <name>",               "",                1, "删除文件"},
+    {"mkdir",    "mkdir <path>",             "",                0, "创建目录（名字里可以带 / 表示层级）"},
 };
 
 /* 统一状态入口：AI 一次调用就能拿到全貌，

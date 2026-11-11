@@ -439,21 +439,36 @@ void shell_input(char ch)
                 }
                 proc_dump_regs(pid);
             }
-            else if (ADV && streq(g_line, "ls")) {
+            else if (ADV && (streq(g_line, "ls") || starts_with(g_line, "ls "))) {
+                /* ls [path]：path 为空表示根，否则只列该前缀之下的条目 */
+                const char *dir = (g_line[2] == ' ') ? g_line + 3 : "";
                 uart_puts("{\"files\":[");
                 int first = 1;
                 char nm[24]; u32 sz;
-                for (u32 i = 0; i < 32; i++) {
+                for (u32 i = 0; i < 16; i++) {
                     if (!fs_entry(i, nm, sizeof(nm), &sz)) continue;
+                    if (!fs_under(nm, dir)) continue;
                     if (!first) uart_puts(",");
                     first = 0;
                     uart_puts("{\"name\":\"");
                     uart_puts(nm);
                     uart_puts("\",\"size\":");
                     uart_dec((int)sz);
-                    uart_puts("}");
+                    uart_puts(",\"type\":\"");
+                    uart_puts(fs_entry_type(i) == 1 ? "dir" : "file");
+                    uart_puts("\"}");
                 }
                 uart_puts("]}\n");
+            }
+            else if (ADV && starts_with(g_line, "mkdir ")) {
+                const char *q = g_line + 6;
+                if (*q && fs_mkdir(q) == 0) {
+                    uart_puts("{\"mkdir\":\"");
+                    uart_puts(q);
+                    uart_puts("\"}\n");
+                } else {
+                    uart_puts("{\"ok\":false,\"why\":\"创建目录失败（名字过长或槽位已满）\"}\n");
+                }
             }
             else if (ADV && starts_with(g_line, "cat ")) {
                 const char *q = g_line + 4;
