@@ -973,10 +973,13 @@ static void win_frame(u32 *buf, u32 x, u32 y, u32 w, u32 h, const char *title, i
     fb_rect(buf, 800, 600, 800, x + 1, y + 1, w - 2, 22, focused ? 0x171b21 : 0x12151a);
     fb_rect(buf, 800, 600, 800, x + 1, y + 23, w - 2, 1, C_LINE2);
     fb_text(buf, 800, 600, 800, x + 8, y + 4, title, focused ? C_FG : C_FG2, 0, 0);
-    /* 三个圆角按钮 */
-    for (int i = 0; i < 3; i++) {
-        u32 bx = x + w - 18 - i * 14;
-        fb_round_rect(buf, 800, 600, 800, bx, y + 8, 8, 8, C_FG3);
+    /* 三个窗控圆点：红=关闭 黄=最小化 绿=最大化（暂不可点，但语义可辨） */
+    {
+        static const u32 dot[3] = { 0xef5350, 0xffca28, 0x66bb6a };
+        for (int i = 0; i < 3; i++) {
+            u32 bx = x + w - 20 - i * 13;
+            fb_round_rect(buf, 800, 600, 800, bx, y + 8, 9, 9, dot[i]);
+        }
     }
 }
 
@@ -1001,23 +1004,34 @@ static void hex_u32(u32 v, char *out)
     out[10] = 0;
 }
 
-#define MON_BODY_X (WIN_MON_X + 10)
-#define MON_BODY_Y (WIN_MON_Y + 34)
+#define MON_BODY_X (g_wins[1].x + 10)
+#define MON_BODY_Y (g_wins[1].y + 34)
 
 /* 进程监视窗口：显示的是真实的进程表 */
+typedef struct {
+    u32 x, y, w, h;
+    const char *title;
+} win_t;
+
+/* 供 fb.c 查询终端窗口位置（网格原点要跟着窗口走） */
+typedef struct { u32 x, y, w, h; } win_rect_t;
+
+static win_t g_wins[3];
+win_rect_t *kernel_win0(void) { return (win_rect_t *)&g_wins[0]; }
+
 static void monitor_draw(void)
 {
     u32 *buf = (u32 *)FB_BASE;
     const u32 line = 16;
     u32 y = MON_BODY_Y;
 
-    fb_rect(buf, 800, 600, 800, WIN_MON_X + 1, WIN_MON_Y + 24,
-            WIN_MON_W - 2, WIN_MON_H - 25, C_TERM);
+    fb_rect(buf, 800, 600, 800, g_wins[1].x + 1, g_wins[1].y + 24,
+            g_wins[1].w - 2, g_wins[1].h - 25, C_TERM);
     fb_text(buf, 800, 600, 800, MON_BODY_X, y, "PID STATE  PC", C_FG3, C_TERM, 1);
     y += line;
 
     char num[12], hx[12];
-    for (int i = 0; i < NPROC && y + 16 < WIN_MON_Y + WIN_MON_H - 6; i++) {
+    for (int i = 0; i < NPROC && y + 16 < g_wins[1].y + g_wins[1].h - 6; i++) {
         if (procs[i].stack_pa == 0) continue;
         char rowbuf[32];
         int k = 0;
@@ -1037,8 +1051,8 @@ static void monitor_draw(void)
     }
 }
 
-#define FS_BODY_X (WIN_FS_X + 10)
-#define FS_BODY_Y (WIN_FS_Y + 34)
+#define FS_BODY_X (g_wins[2].x + 10)
+#define FS_BODY_Y (g_wins[2].y + 34)
 
 /* 文件窗口：显示的是真实的 RAMFS 内容 */
 static void files_draw(void)
@@ -1047,13 +1061,13 @@ static void files_draw(void)
     const u32 line = 16;
     u32 y = FS_BODY_Y;
 
-    fb_rect(buf, 800, 600, 800, WIN_FS_X + 1, WIN_FS_Y + 24,
-            WIN_FS_W - 2, WIN_FS_H - 25, C_TERM);
+    fb_rect(buf, 800, 600, 800, g_wins[2].x + 1, g_wins[2].y + 24,
+            g_wins[2].w - 2, g_wins[2].h - 25, C_TERM);
     fb_text(buf, 800, 600, 800, FS_BODY_X, y, "NAME          SIZE", C_FG3, C_TERM, 1);
     y += line;
 
     char nm[24]; u32 sz; char num[12];
-    for (u32 i = 0; i < 16 && y + 16 < WIN_FS_Y + WIN_FS_H - 6; i++) {
+    for (u32 i = 0; i < 16 && y + 16 < g_wins[2].y + g_wins[2].h - 6; i++) {
         if (!fs_entry(i, nm, sizeof(nm), &sz)) continue;
         if (nm[0] == 0) continue;
         char rowbuf[40];
@@ -1066,6 +1080,145 @@ static void files_draw(void)
         fb_text(buf, 800, 600, 800, FS_BODY_X, y, rowbuf,
                 fs_entry_type(i) == 1 ? C_ACC : C_TEXT, C_TERM, 1);
         y += line;
+    }
+}
+
+/* ── 窗口表与鼠标交互 ── */
+static int  g_focus = 0;
+static int  g_dragging = 0;
+static int  g_drag_dx = 0, g_drag_dy = 0;
+static int  g_outline_on = 0;
+static u32  g_ol_x = 0, g_ol_y = 0;
+
+static void wins_init(void)
+{
+    g_wins[0].x = WIN_TERM_X; g_wins[0].y = WIN_TERM_Y;
+    g_wins[0].w = WIN_TERM_W; g_wins[0].h = WIN_TERM_H;
+    g_wins[0].title = "rvsh - terminal";
+    g_wins[1].x = WIN_MON_X; g_wins[1].y = WIN_MON_Y;
+    g_wins[1].w = WIN_MON_W; g_wins[1].h = WIN_MON_H;
+    g_wins[1].title = "monitor";
+    g_wins[2].x = WIN_FS_X; g_wins[2].y = WIN_FS_Y;
+    g_wins[2].w = WIN_FS_W; g_wins[2].h = WIN_FS_H;
+    g_wins[2].title = "files";
+    g_focus = 0;
+}
+
+/* 只重画边框与标题栏（聚焦切换的全部开销） */
+static void win_paint_chrome(int idx)
+{
+    u32 *buf = (u32 *)FB_BASE;
+    win_t *w = &g_wins[idx];
+    int on = (idx == g_focus);
+    fb_frame(buf, 800, 600, 800, w->x, w->y, w->w, w->h, on ? C_ACC : C_LINE);
+    fb_rect(buf, 800, 600, 800, w->x + 1, w->y + 1, w->w - 2, 22,
+            on ? 0x171b21 : 0x12151a);
+    fb_text(buf, 800, 600, 800, w->x + 8, w->y + 4, w->title,
+            on ? C_FG : C_FG2, on ? 0x171b21 : 0x12151a, 1);
+}
+
+/* 只重画任务栏那三个 chip（很便宜），让高亮跟焦点联动 */
+static void taskbar_chips(void)
+{
+    u32 *buf = (u32 *)FB_BASE;
+    u32 ty = 600 - TASKBAR_H;
+    struct { const char *n; u32 x; u32 w; } chips[3] = {
+        { "terminal", 88, 76 }, { "monitor", 170, 70 }, { "files", 246, 56 }
+    };
+    for (int i = 0; i < 3; i++) {
+        fb_round_rect(buf, 800, 600, 800, chips[i].x, ty + 5, chips[i].w, 20, 0x171b21);
+        fb_text(buf, 800, 600, 800, chips[i].x + 7, ty + 9, chips[i].n,
+                i == g_focus ? C_FG : C_FG2, 0x171b21, 1);
+        if (i == g_focus)
+            fb_rect(buf, 800, 600, 800, chips[i].x, ty + 25, chips[i].w, 2, C_ACC);
+        else
+            fb_rect(buf, 800, 600, 800, chips[i].x, ty + 25, chips[i].w, 2, 0x10141a);
+    }
+}
+
+static void win_set_focus(int idx)
+{
+    if (idx == g_focus) return;
+    int old = g_focus;
+    g_focus = idx;
+    win_paint_chrome(old);
+    win_paint_chrome(idx);
+    taskbar_chips();
+    fb_commit(0);
+}
+
+static int win_hit(u32 mx, u32 my)
+{
+    for (int i = 2; i >= 0; i--) {
+        win_t *w = &g_wins[i];
+        if (mx >= w->x && mx < w->x + w->w &&
+            my >= w->y && my < w->y + w->h) return i;
+    }
+    return -1;
+}
+
+/* 拖拽轮廓：只画四条边（约 3.5k 像素，比整窗重绘便宜两个数量级） */
+static void drag_outline(u32 x, u32 y, u32 w, u32 h, u32 col)
+{
+    u32 *buf = (u32 *)FB_BASE;
+    fb_rect(buf, 800, 600, 800, x, y, w, 1, col);
+    fb_rect(buf, 800, 600, 800, x, y + h - 1, w, 1, col);
+    fb_rect(buf, 800, 600, 800, x, y, 1, h, col);
+    fb_rect(buf, 800, 600, 800, x + w - 1, y, 1, h, col);
+}
+
+/* 鼠标事件：点击聚焦 + 标题栏拖动 */
+void desktop_mouse(void)
+{
+    u32 mx, my, btn, ev;
+    if (!fb_mouse_pos(&mx, &my, &btn, &ev)) return;
+
+    win_t *w = &g_wins[g_focus];
+
+    if (btn && !g_dragging) {
+        int i = win_hit(mx, my);
+        if (i < 0) return;
+        win_set_focus(i);
+        w = &g_wins[i];
+        if (my >= w->y && my < w->y + 23) {      /* 标题栏 */
+            g_dragging = 1;
+            g_drag_dx = (int)mx - (int)w->x;
+            g_drag_dy = (int)my - (int)w->y;
+            g_ol_x = w->x; g_ol_y = w->y;
+            drag_outline(g_ol_x, g_ol_y, w->w, w->h, C_ACC);
+            g_outline_on = 1;
+            fb_commit(0);
+        }
+        return;
+    }
+
+    if (btn && g_dragging) {
+        u32 nx = (mx >= (u32)g_drag_dx) ? mx - (u32)g_drag_dx : 0;
+        u32 ny = (my >= (u32)g_drag_dy) ? my - (u32)g_drag_dy : 0;
+        /* 夹在画布内：窗口不能被拖出屏幕（否则内容会溢出到任务栏下面） */
+        if (nx + w->w > 800) nx = 800 - w->w;
+        if (ny + w->h > 600 - TASKBAR_H) ny = 600 - TASKBAR_H - w->h;
+        if (nx == g_ol_x && ny == g_ol_y) return;
+        if (g_outline_on) {
+            drag_outline(g_ol_x, g_ol_y, w->w, w->h, 0x141c28);  /* 擦旧框 */
+        }
+        g_ol_x = nx; g_ol_y = ny;
+        drag_outline(nx, ny, w->w, w->h, C_ACC);
+        g_outline_on = 1;
+        fb_commit(0);
+        return;
+    }
+
+    if (!btn && g_dragging) {
+        g_dragging = 0;
+        if (g_outline_on) {
+            drag_outline(g_ol_x, g_ol_y, w->w, w->h, 0x141c28);
+            g_outline_on = 0;
+        }
+        w->x = g_ol_x;
+        w->y = g_ol_y;
+        extern void desktop_redraw(void);
+        desktop_redraw();          /* 只在松手时整屏重画一次 */
     }
 }
 
@@ -1085,57 +1238,51 @@ static void desktop_clock(u32 secs)
     fb_text(buf, 800, 600, 800, 800 - 96, ty + 9, t, C_FG2, C_BG, 0);
 }
 
-static void desktop_draw(void)
+/* 整屏重画：壁纸 + 三个窗口 + 任务栏。只在开机和拖动结束时调用。 */
+void desktop_redraw(void)
 {
     u32 *buf = (u32 *)FB_BASE;
 
-    /* 壁纸：竖向渐变 + 32px 点阵 */
-    fb_gradient_v(buf, 800, 600, 800, 0x141c28, 0x07080a);
-    for (u32 gy = 32; gy < 600 - TASKBAR_H; gy += 32)
-        for (u32 gx = 32; gx < 800; gx += 32)
-            buf[gy * 800 + gx] = 0x1a2330;
+    fb_gradient_v(buf, 800, 600, 800, 0x1c2b3f, 0x060910);
+    for (u32 gy = 8; gy < 600 - TASKBAR_H; gy += 8)
+        for (u32 gx = 8; gx < 800; gx += 8)
+            buf[gy * 800 + gx] = 0x121a26;
 
-    /* 三个窗口 */
-    win_frame(buf, WIN_TERM_X, WIN_TERM_Y, WIN_TERM_W, WIN_TERM_H, "rvsh - terminal", 1);
-    fb_rect(buf, 800, 600, 800, WIN_TERM_X + 1, WIN_TERM_Y + 24,
-            WIN_TERM_W - 2, WIN_TERM_H - 25, C_TERM);
-
-    win_frame(buf, WIN_MON_X, WIN_MON_Y, WIN_MON_W, WIN_MON_H, "monitor", 0);
-    fb_rect(buf, 800, 600, 800, WIN_MON_X + 1, WIN_MON_Y + 24,
-            WIN_MON_W - 2, WIN_MON_H - 25, C_TERM);
-    fb_text(buf, 800, 600, 800, WIN_MON_X + 10, WIN_MON_Y + 34,
-            "PID  STATE  PC", C_FG3, 0, 0);
-
-    win_frame(buf, WIN_FS_X, WIN_FS_Y, WIN_FS_W, WIN_FS_H, "files", 0);
-    fb_rect(buf, 800, 600, 800, WIN_FS_X + 1, WIN_FS_Y + 24,
-            WIN_FS_W - 2, WIN_FS_H - 25, C_TERM);
+    for (int i = 0; i < 3; i++) {
+        win_t *w = &g_wins[i];
+        win_frame(buf, w->x, w->y, w->w, w->h, w->title, i == g_focus);
+        fb_rect(buf, 800, 600, 800, w->x + 1, w->y + 24,
+                w->w - 2, w->h - 25, C_TERM);
+    }
 
     /* 任务栏 */
     u32 ty = 600 - TASKBAR_H;
-    fb_rect(buf, 800, 600, 800, 0, ty, 800, TASKBAR_H, C_BG);
-    fb_rect(buf, 800, 600, 800, 0, ty, 800, 1, C_LINE);
-
-    /* 左侧：开始按钮 */
+    fb_rect(buf, 800, 600, 800, 0, ty, 800, TASKBAR_H, 0x10141a);
+    fb_rect(buf, 800, 600, 800, 0, ty, 800, 1, 0x2b3644);        /* 顶部高光 */
+    fb_rect(buf, 800, 600, 800, 0, ty + TASKBAR_H - 2, 800, 2, 0x07090d); /* 底部暗边 */
     fb_round_rect(buf, 800, 600, 800, 8, ty + 4, 72, 22, 0x171b21);
     fb_text(buf, 800, 600, 800, 16, ty + 7, "rvsh", C_ACC, 0, 0);
-
-    /* 中间：每个窗口一枚 chip */
-    struct { const char *n; u32 x; u32 w; } chips[3] = {
-        { "terminal", 88, 76 }, { "monitor", 170, 70 }, { "files", 246, 56 }
-    };
-    for (int i = 0; i < 3; i++) {
-        fb_round_rect(buf, 800, 600, 800, chips[i].x, ty + 5, chips[i].w, 20, 0x171b21);
-        fb_text(buf, 800, 600, 800, chips[i].x + 7, ty + 9, chips[i].n,
-                i == 0 ? C_FG : C_FG2, 0, 0);
-        if (i == 0) fb_rect(buf, 800, 600, 800, chips[i].x, ty + 25, chips[i].w, 2, C_ACC);
-    }
-
-    /* 右侧：时钟（先用固定值，随后由 tick 更新） */
+    taskbar_chips();
+    (void)ty;
     fb_text(buf, 800, 600, 800, 800 - 96, ty + 9, "00:00:00", C_FG2, 0, 0);
     fb_rect(buf, 800, 600, 800, 800 - 110, ty + 9, 1, 14, C_LINE);
 
+    /* 窗口内容 */
+    extern void term_grid_redraw_all(void);
+    extern u32 term_grid_flush(void);
+    term_grid_redraw_all();
+    term_grid_flush();       /* 标记脏了还得真的画出来 */
+    monitor_draw();
+    files_draw();
+
     fb_plane(0, FB_BASE, 0, 0, 800, 600, 800, 0);
     fb_commit(0);
+}
+
+static void desktop_draw(void)
+{
+    wins_init();
+    desktop_redraw();
 }
 
 void kmain(void)
@@ -1500,6 +1647,8 @@ void shell_loop(void)
         /* 只在真有脏行时才重画+提交：否则每轮都重贴 800x600，
            既拖慢命令执行，也让前端每帧做无谓的像素转换。 */
         if (term_grid_flush()) fb_commit(0);
+
+        desktop_mouse();
 
         /* 进程表与文件列表：每 2 秒刷新一次，内容是真实数据 */
         {

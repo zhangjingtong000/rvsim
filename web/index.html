@@ -23,6 +23,9 @@ header{height:50px;display:flex;align-items:center;gap:14px;padding:0 18px;
 .brand b{font-size:15px;font-weight:600;letter-spacing:-.01em}
 .brand i{font-style:normal;font-size:11px;color:var(--fg3);font-family:var(--mono)}
 .grow{flex:1}
+#dbgToggle{font-size:11.5px;color:var(--fg2);padding:5px 10px;border-radius:6px;
+  background:var(--s2);border:1px solid var(--line);cursor:pointer;user-select:none}
+#dbgToggle:hover{color:var(--fg);border-color:var(--line2)}
 .pill{display:flex;align-items:center;gap:7px;font-family:var(--mono);font-size:11.5px;
       color:var(--fg2);padding:5px 12px;border-radius:18px;background:var(--s2);border:1px solid var(--line)}
 .dot{width:6px;height:6px;border-radius:50%;background:var(--fg3);transition:.2s}
@@ -30,7 +33,15 @@ header{height:50px;display:flex;align-items:center;gap:14px;padding:0 18px;
 .pill.ok .dot{background:var(--ok)}
 .pill.err .dot{background:var(--err)}
 
-main{display:grid;grid-template-columns:236px minmax(0,1fr) clamp(280px,22vw,360px);height:calc(100% - 50px)}
+main{display:grid;grid-template-columns:minmax(0,1fr);height:calc(100% - 50px);position:relative}
+/* 左右调试面板改为抽屉：默认收起，按 D 或点顶栏按钮打开。
+   桌面本身要独占屏幕，否则第一眼像 IDE 调试器而不是操作系统。 */
+.col{position:fixed;top:50px;bottom:0;width:300px;background:var(--s1);
+     z-index:30;transition:transform .18s ease;overflow-y:auto;padding:16px}
+main > .col:first-of-type{left:0;border-right:1px solid var(--line);transform:translateX(-100%)}
+main > .col:last-of-type{right:0;border-left:1px solid var(--line);transform:translateX(100%)}
+body.drawer-open main > .col:first-of-type{transform:translateX(0)}
+body.drawer-open main > .col:last-of-type{transform:translateX(0)}
 .col{padding:18px;overflow-y:auto;min-height:0}
 
 /* ── 自定义滚动条 ──
@@ -78,11 +89,11 @@ button.wide{flex:1}
 .termbar{height:30px;display:flex;align-items:center;gap:10px;padding:0 16px;
          border-bottom:1px solid var(--line);background:var(--s1);font-family:var(--mono);font-size:11px;color:var(--fg3)}
 .termbar b{color:var(--fg2);font-weight:500}
-#screen-wrap{display:flex;align-items:flex-start;justify-content:center;
-  background:#040507;border-bottom:1px solid var(--line);padding:0;flex:1 1 auto;min-height:0;overflow:hidden}
+#screen-wrap{display:flex;align-items:center;justify-content:center;
+  background:#040507;padding:0;flex:1 1 auto;min-height:0;overflow:hidden}
 #screen{max-width:100%;max-height:100%;width:auto;height:auto;
-  aspect-ratio:4 / 3;image-rendering:pixelated;display:block}
-#term{flex:0 0 15vh;min-height:0;overflow-y:auto;background:#050608;padding:10px 14px;
+  aspect-ratio:4 / 3;image-rendering:pixelated;display:block;cursor:none}
+#term{flex:0 0 0;display:none;min-height:0;overflow-y:auto;background:#050608;padding:10px 14px;
       font-family:var(--mono);font-size:12.5px;line-height:1.55;color:#c9d1d9;
       white-space:pre-wrap;word-break:break-all;cursor:text}
 #term{outline:none}
@@ -145,6 +156,8 @@ main > .col:last-child{overflow-y:auto;max-height:calc(100vh - 40px)}
 <header>
   <div class="brand"><b>rvsim</b><i>RV32IMA · M/S/U · Sv32</i></div>
   <div class="grow"></div>
+<span id="dbgToggle" title="显示/隐藏调试面板 (D)">调试</span>
+<div class="grow"></div>
   <div class="pill" id="st"><span class="dot"></span><span id="stT">未启动</span></div>
 </header>
 
@@ -187,6 +200,8 @@ main > .col:last-child{overflow-y:auto;max-height:calc(100vh - 40px)}
     <div class="termbar">
       <b>UART</b><span>115200 8N1</span>
       <div class="grow"></div>
+<span id="dbgToggle" title="显示/隐藏调试面板 (D)">调试</span>
+<div class="grow"></div>
       <span id="txInfo">0 B</span>
     </div>
     <div id="term" tabindex="0"><span class="cursor"></span></div>
@@ -291,6 +306,53 @@ function screenInit(){
   }
 }
 
+/* 把浏览器坐标换算成 800x600 帧缓冲坐标，写进显示控制器的鼠标寄存器 */
+function screenPointerBind(){
+  const cv = document.getElementById("screen");
+  if(!cv) return;
+  const MOUSE_X = 0x10003044, MOUSE_Y = 0x10003048;
+  const MOUSE_BTN = 0x1000304C, MOUSE_EV = 0x10003050;
+
+  function toFb(e){
+    const r = cv.getBoundingClientRect();
+    const x = Math.round((e.clientX - r.left) * 800 / r.width);
+    const y = Math.round((e.clientY - r.top) * 600 / r.height);
+    return [Math.max(0, Math.min(799, x)), Math.max(0, Math.min(599, y))];
+  }
+
+  cv.addEventListener("pointermove", e => {
+    if(!M) return;
+    const [x, y] = toFb(e);
+    M._rv_mem_write32(MOUSE_X, x);
+    M._rv_mem_write32(MOUSE_Y, y);
+    M._rv_mem_write32(MOUSE_EV, 1);   /* 拖动要靠事件号推进 */
+    curX = x; curY = y; curInside = true;
+  }, {passive:true});
+
+  cv.addEventListener("pointerenter", () => { curInside = true; });
+  cv.addEventListener("pointerleave", () => { curInside = false; });
+
+  cv.addEventListener("pointerdown", e => {
+    if(!M) return;
+    const [x, y] = toFb(e);
+    curX = x; curY = y; curInside = true;
+    M._rv_mem_write32(MOUSE_X, x);
+    M._rv_mem_write32(MOUSE_Y, y);
+    M._rv_mem_write32(MOUSE_BTN, 1);
+    M._rv_mem_write32(MOUSE_EV, 1);
+    cv.setPointerCapture(e.pointerId);
+  });
+
+  cv.addEventListener("pointerup", e => {
+    if(!M) return;
+    const [x, y] = toFb(e);
+    M._rv_mem_write32(MOUSE_X, x);
+    M._rv_mem_write32(MOUSE_Y, y);
+    M._rv_mem_write32(MOUSE_BTN, 0);
+    M._rv_mem_write32(MOUSE_EV, 1);
+  });
+}
+
 function screenReset(){
   for(let i = 0; i < 8; i++) planeSeqs[i] = -1;
 }
@@ -330,6 +392,7 @@ function blitPlane(i, base){
   ctx.putImageData(img, 0, 0);
 }
 
+let lastFrameSeq = -1, lastCursorKey = "";
 function screenRender(){
   if(!scrCtx || !M || !loaded) return;
   if(!dispPtr){ dispPtr = M._rv_disp_ptr(); ramPtr = M._rv_ram_ptr(); }
@@ -339,6 +402,23 @@ function screenRender(){
   const base = dispPtr >>> 2;
   const sw = A[base + 0], sh = A[base + 1];
   if(!sw || !sh) return;
+
+  /* 没有任何平面更新、光标也没动，就整帧跳过。
+     否则每帧都在清屏+合成，把 CPU 吃满（也拖慢自动化工具）。 */
+  {
+    let dirty = false;
+    for(let i = 0; i < 8; i++){
+      const pb = base + (0x50 >> 2) + i * (0x40 >> 2);
+      if(!A[pb + 3] || !A[pb + 4]) continue;
+      if(planeSeqs[i] !== A[pb + 11]) { dirty = true; break; }
+    }
+    const ck = curInside ? (curX + "," + curY) : "out";
+    if(!dirty && ck === lastCursorKey && lastFrameSeq === A[base + 4]){
+      return;
+    }
+    lastCursorKey = ck;
+    lastFrameSeq = A[base + 4];
+  }
   if(sw !== scrW || sh !== scrH){
     scrW = sw; scrH = sh;
     const cv = document.getElementById("screen");
@@ -362,6 +442,34 @@ function screenRender(){
     const x = A[o.pb + 1], y = A[o.pb + 2];
     scrCtx.drawImage(planeCanvases[o.i], x, y);
   }
+
+  drawCursor();
+}
+
+/* 鼠标指针：由宿主画（一个三角形箭头），guest 零开销。
+   窗口内容仍然全部由 guest 光栅化。 */
+let curX = 400, curY = 300, curInside = false;
+function drawCursor(){
+  const cv = document.getElementById("screen");
+  if(!curInside) return;
+  const sx = scrW / cv.width, sy = scrH / cv.height;
+  const x = curX / (sx || 1), y = curY / (sy || 1);
+  scrCtx.save();
+  scrCtx.beginPath();
+  scrCtx.moveTo(x, y);
+  scrCtx.lineTo(x, y + 17);
+  scrCtx.lineTo(x + 4.5, y + 13);
+  scrCtx.lineTo(x + 7.5, y + 19);
+  scrCtx.lineTo(x + 10, y + 18);
+  scrCtx.lineTo(x + 7, y + 12);
+  scrCtx.lineTo(x + 12, y + 12);
+  scrCtx.closePath();
+  scrCtx.fillStyle = "#ffffff";
+  scrCtx.strokeStyle = "#0a0c10";
+  scrCtx.lineWidth = 1.2;
+  scrCtx.fill();
+  scrCtx.stroke();
+  scrCtx.restore();
 }
 
 function renderFiles(o){
@@ -452,7 +560,9 @@ function updateAtBottom(){
   atBottom = (t.scrollHeight - t.scrollTop - t.clientHeight) < 40;
 }
 
+let quietOut = false;
 function appendOut(s){
+  if(quietOut) return;   /* 静默：只喂嗅探，不刷终端 */
   const t=term;
   // 光标一直留在末尾
   const c=t.querySelector(".cursor");
@@ -493,13 +603,19 @@ function boot(bytes,name){
      前端不另开通道，就走同一根 UART —— 与「单一权威接口」一致。 */
   /* 能力清单必须读一次（右栏面板要用），但 24 条 JSON 会把首屏淹掉。
      读完之后清屏重开，终端回到干净的提示符。 */
-  setTimeout(()=>{ sendCmd("manifest"); }, 900);
+  setTimeout(()=>{
+    /* 能力清单只喂右栏，不往终端里贴：首屏应该是桌面而不是 60 行 JSON */
+    quietOut = true;
+    sendCmd("manifest");
+    setTimeout(()=>{ quietOut = false; }, 1800);
+  }, 900);
   setTimeout(()=>{
     sendCmd("clear");           /* 先让内核清掉窗口网格里的启动残留 */
     term.innerHTML = '<span class="cursor"></span>';
     curEl = term.querySelector(".cursor");
     total = 0;
-    setTimeout(()=>sendCmd("ps"), 400);
+    quietOut = true;
+    setTimeout(()=>{ sendCmd("ps"); quietOut = false; }, 400);
   }, 2600);
 
   /* 之后每 3 秒轮询一次事件流、快照与计划。
@@ -620,8 +736,11 @@ term.addEventListener("scroll", updateAtBottom, {passive:true});
 term.tabIndex=0;
 let lastInputAt = 0;
 
-term.addEventListener("keydown",e=>{
+/* 键盘监听挂在 document 上：用户点的是画布里的终端窗口，
+   不该被要求先去点画布下方那条隐藏的 HTML 终端。 */
+document.addEventListener("keydown",e=>{
   if(!loaded||!M)return;
+  if(e.target && (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA")) return;
   lastInputAt = Date.now();
   if(e.ctrlKey && (e.key==="c" || e.key==="C")){
     /* 提示里写了「Ctrl+C 中断」，那就真的中断 */
@@ -671,6 +790,18 @@ function render(){
 }
 
 /* 事件 */
+document.getElementById("dbgToggle").onclick = () => {
+  document.body.classList.toggle("drawer-open");
+};
+document.addEventListener("keydown", e => {
+  if(e.key === "d" || e.key === "D"){
+    if(e.target && (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA")) return;
+    if(!e.ctrlKey && !e.metaKey){
+      document.body.classList.toggle("drawer-open");
+    }
+  }
+});
+
 $("bKernel").onclick=()=>bootUrl("images/kernel.elf","mini-kernel");
 $("bTest").onclick=()=>bootUrl("images/rv32ui-p-add","rv32ui-p-add");
 $("bUpload").onclick=()=>$("file").click();
@@ -704,9 +835,16 @@ $("reg").onclick=e=>{
 };
 
 
-createRvsim().then(m=>{
+/* 给 wasm 加缓存破坏：否则浏览器会用旧的 rvsim.wasm，
+   新导出的函数（比如 rv_mem_write32）在运行时是 undefined，
+   鼠标事件第一条语句就抛异常——表现为「点了完全没反应」。 */
+createRvsim({ locateFile: f => f.endsWith(".wasm") ? f + "?v=" + Date.now() : f }).then(m=>{
   M=m;ubuf=m._malloc(4096);
   screenInit();
+  screenPointerBind();
+  if(typeof m._rv_mem_write32 !== "function"){
+    setState("wasm 版本过期，请 Ctrl+Shift+R", "err");
+  }
   setState("就绪","");
   // 自动启动内核，让用户一打开就看到东西
   bootUrl("images/kernel.elf","mini-kernel");

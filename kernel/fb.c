@@ -35,15 +35,17 @@ u32 g_fb_w, g_fb_h;
 /* ── 终端文本网格 ──
    UART 输出的字符同时写进这里，窗口里显示的就是真实的 shell 输出。
    只重画变化的那一行，避免每帧重绘整窗。 */
-#define TERM_COLS 62
-#define TERM_ROWS 22
+#define TERM_COLS 60
+#define TERM_ROWS 21
 static char g_term[TERM_ROWS][TERM_COLS];
 static u8   g_term_dirty[TERM_ROWS];
 static u32  g_term_cx, g_term_cy;
 
-/* 终端窗口在屏幕上的位置（与 desktop_draw 里的常量一致） */
-#define TERM_ORIGIN_X 20
-#define TERM_ORIGIN_Y 70
+/* 终端网格的原点跟随窗口位置（窗口可拖动） */
+typedef struct { u32 x, y, w, h; } win_rect_t;
+extern win_rect_t *kernel_win0(void);
+#define TERM_ORIGIN_X (kernel_win0()->x + 8)
+#define TERM_ORIGIN_Y (kernel_win0()->y + 26)
 
 void term_grid_reset(void)
 {
@@ -118,6 +120,12 @@ void term_grid_dump(void)
         }
         uart_putc('\n');
     }
+}
+
+/* 把所有行标记为脏，供整屏重画时调用 */
+void term_grid_redraw_all(void)
+{
+    for (u32 y = 0; y < TERM_ROWS; y++) g_term_dirty[y] = 1;
 }
 
 u32 term_grid_flush(void)
@@ -225,16 +233,23 @@ void fb_fill_fast(u32 *buf, u32 w, u32 h, u32 stride, u32 color)
 /* 竖直渐变：壁纸用，一条带一次填充 */
 void fb_gradient_v(u32 *buf, u32 w, u32 h, u32 stride, u32 top, u32 bottom)
 {
-    for (u32 y = 0; y < h; y++) {
-        u32 t = (h > 1) ? (y * 255u / (h - 1)) : 0;
-        u32 r = ((top >> 16) & 0xFF) * (255 - t) / 255 + ((bottom >> 16) & 0xFF) * t / 255;
-        u32 g = ((top >> 8) & 0xFF) * (255 - t) / 255 + ((bottom >> 8) & 0xFF) * t / 255;
-        u32 b = (top & 0xFF) * (255 - t) / 255 + (bottom & 0xFF) * t / 255;
+    /* 16 条带：颜色按带算一次，带内直接填。
+       逐行算渐变要 800 次除法（每次几十条指令），纯属浪费。 */
+    const u32 BANDS = 16;
+    for (u32 band = 0; band < BANDS; band++) {
+        u32 y0 = band * h / BANDS;
+        u32 y1 = (band + 1) * h / BANDS;
+        u32 t = band * 255u / (BANDS - 1);
+        u32 r = (((top >> 16) & 0xFF) * (255 - t) + ((bottom >> 16) & 0xFF) * t) / 255;
+        u32 g = (((top >> 8) & 0xFF) * (255 - t) + ((bottom >> 8) & 0xFF) * t) / 255;
+        u32 b = ((top & 0xFF) * (255 - t) + (bottom & 0xFF) * t) / 255;
         u32 c = (r << 16) | (g << 8) | b;
-        u32 *row = buf + y * stride;
-        u32 x = 0;
-        for (; x + 4 <= w; x += 4) { row[x]=c; row[x+1]=c; row[x+2]=c; row[x+3]=c; }
-        for (; x < w; x++) row[x] = c;
+        for (u32 y = y0; y < y1; y++) {
+            u32 *row = buf + y * stride;
+            u32 x = 0;
+            for (; x + 4 <= w; x += 4) { row[x]=c; row[x+1]=c; row[x+2]=c; row[x+3]=c; }
+            for (; x < w; x++) row[x] = c;
+        }
     }
 }
 
@@ -242,7 +257,13 @@ void fb_rect(u32 *buf, u32 bw, u32 bh, u32 stride, u32 x, u32 y, u32 w, u32 h, u
 {
     for (u32 j = 0; j < h && (y + j) < bh; j++) {
         u32 *row = buf + (y + j) * stride;
-        for (u32 i = 0; i < w && (x + i) < bw; i++) row[x + i] = color;
+        u32 i = 0;
+        /* 每轮 4 像素：逐像素循环约 3 条指令，展开后约 1.5 条 */
+        for (; i + 4 <= w && (x + i + 3) < bw; i += 4) {
+            row[x + i] = color; row[x + i + 1] = color;
+            row[x + i + 2] = color; row[x + i + 3] = color;
+        }
+        for (; i < w && (x + i) < bw; i++) row[x + i] = color;
     }
 }
 
@@ -375,6 +396,20 @@ u32 fb_text(u32 *buf, u32 bw, u32 bh, u32 stride,
         cx += 8;
     }
     return cx;
+}
+
+/* 读鼠标状态；返回 1 表示有新的按下/抬起事件 */
+int fb_mouse_pos(u32 *x, u32 *y, u32 *btn, u32 *ev)
+{
+    static u32 last_ev = 0;
+    u32 e = W32(DISP_MOUSE_EV);
+    *x = W32(DISP_MOUSE_X);
+    *y = W32(DISP_MOUSE_Y);
+    *btn = W32(DISP_MOUSE_BTN);
+    *ev = e;
+    if (e == last_ev) return 0;
+    last_ev = e;
+    return 1;
 }
 
 void fb_cursor(u32 x, u32 y, u32 on)

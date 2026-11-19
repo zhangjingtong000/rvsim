@@ -81,6 +81,12 @@ EMSCRIPTEN_KEEPALIVE void *rv_disp_ptr(void) { return (void *)&g_disp; }
 /* RAM 起始指针：framebuffer 就在 RAM 里，前端零拷贝建 ImageData */
 EMSCRIPTEN_KEEPALIVE void *rv_ram_ptr(void) { return (void *)bus_ram(); }
 
+/* 32 位 MMIO 写：鼠标坐标等寄存器需要一次写满 4 字节 */
+EMSCRIPTEN_KEEPALIVE int rv_mem_write32(int a, int v)
+{
+    return bus_write((u32)a, 4, (u32)v) ? 1 : 0;
+}
+
 EMSCRIPTEN_KEEPALIVE int rv_mem(int a)    { u32 v = 0; bus_read((u32)a, 1, &v); return (int)v; }
 /* 读 32 位：前端用它读内核导出的进程表（RAM 顶页 0x83FFF000） */
 EMSCRIPTEN_KEEPALIVE int rv_read32(int a) { u32 v = 0; bus_read((u32)a, 4, &v); return (int)v; }
