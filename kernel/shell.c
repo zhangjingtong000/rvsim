@@ -548,11 +548,7 @@ void shell_input(char ch)
                 if (g_cur_uid != 0) {
                     uart_puts("{\"ok\":false,\"why\":\"只有 root 能改权限\"}\n");
                 } else if (fs_chmod(nm, (u32)m) == 0) {
-                    uart_puts("{\"chmod\":\"");
-                    uart_puts(nm);
-                    uart_puts("\",\"mode\":");
-                    uart_dec(m);
-                    uart_puts("}\n");
+                    /* Unix 风格：改权限成功不说话 */
                 } else {
                     uart_puts("{\"ok\":false,\"why\":\"文件不存在\"}\n");
                 }
@@ -560,9 +556,7 @@ void shell_input(char ch)
             else if (ADV && starts_with(g_line, "mkdir ")) {
                 const char *q = g_line + 6;
                 if (*q && fs_mkdir(q) == 0) {
-                    uart_puts("{\"mkdir\":\"");
-                    uart_puts(q);
-                    uart_puts("\"}\n");
+                    /* Unix 风格：成功不说话 */
                 } else {
                     uart_puts("{\"ok\":false,\"why\":\"创建目录失败（名字过长或槽位已满）\"}\n");
                 }
@@ -602,13 +596,8 @@ void shell_input(char ch)
                 int n = fs_write(nm, (const u8 *)q, (u32)strlen_safe(q));
                 if (n < 0) {
                     uart_puts("{\"ok\":false,\"why\":\"写入失败\"}\n");
-                } else {
-                    uart_puts("{\"write\":\"");
-                    uart_puts(nm);
-                    uart_puts("\",\"bytes\":");
-                    uart_dec(n);
-                    uart_puts("}\n");
                 }
+                /* Unix 风格：写入成功不说话 */
             }
             else if (ADV && starts_with(g_line, "rm ")) {
                 const char *q = g_line + 3;
@@ -617,9 +606,7 @@ void shell_input(char ch)
                     goto shell_done;
                 }
                 if (fs_remove(q) == 0) {
-                    uart_puts("{\"removed\":\"");
-                    uart_puts(q);
-                    uart_puts("\"}\n");
+                    /* Unix 风格：删除成功不说话 */
                 } else {
                     uart_puts("{\"ok\":false,\"why\":\"文件不存在\"}\n");
                 }
