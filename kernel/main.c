@@ -1394,10 +1394,25 @@ void desktop_mouse(void)
     }
 }
 
+u32 g_wall_base = 0;
+u64 g_wall_mtime = 0;
+
+u64 clint_mtime_now(void)
+{
+    return *(volatile u64 *)(CLINT_BASE + 0xBFF8u);
+}
+
 static void desktop_clock(u32 secs)
 {
     u32 *buf = (u32 *)FB_BASE;
     u32 ty = 600 - TASKBAR_H;
+    /* 有宿主注入的时间就用它（墙上时间），否则退回开机秒数 */
+    if (g_wall_base) {
+        u64 now = clint_mtime_now();
+        u32 elapsed = (u32)((now - g_wall_mtime) / 1000000ull);
+        secs = g_wall_base + elapsed;
+        secs %= 86400u;
+    }
     u32 hh = (secs / 3600u) % 24u;
     u32 mm = (secs / 60u) % 60u;
     u32 ss = secs % 60u;

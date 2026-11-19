@@ -642,6 +642,8 @@ function boot(bytes,name){
     quietOut = true;
     setTimeout(()=>{
       sendCmd("echo rvsim desktop 0.9  -  F12 for debug panels");
+      /* 用本地时间：Date.now() 是 UTC，直接丢给内核会差时区 */
+      sendCmd("@settime " + Math.floor(Date.now() / 1000 - new Date().getTimezoneOffset() * 60));
       quietOut = false;
     }, 400);
   }, 2600);

@@ -532,6 +532,17 @@ extern int g_term_silent;
                 extern void term_grid_dump(void);
                 term_grid_dump();
             }
+            else if (ADV && starts_with(g_line, "settime ")) {
+                /* 宿主注入当前 Unix 时间，任务栏就能显示墙上时间而不是开机秒数 */
+                extern u32 g_wall_base;
+                extern u64 g_wall_mtime;
+                extern u64 clint_mtime_now(void);
+                u64 v = 0;
+                const char *q2 = g_line + 8;
+                while (*q2 >= '0' && *q2 <= '9') v = v * 10 + (u64)(*q2++ - '0');
+                g_wall_base = (u32)v;
+                g_wall_mtime = clint_mtime_now();
+            }
             else if (ADV && streq(g_line, "clear")) {
                 /* 清空窗口里的终端网格（不是清 UART 历史） */
                 extern void term_grid_reset(void);
