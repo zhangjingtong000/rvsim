@@ -1085,6 +1085,7 @@ static void files_draw(void)
 
 /* ── 窗口表与鼠标交互 ── */
 static int  g_focus = 0;
+static int  g_menu_open = 0;
 static int  g_dragging = 0;
 static int  g_drag_dx = 0, g_drag_dy = 0;
 static int  g_outline_on = 0;
@@ -1118,6 +1119,55 @@ static void win_paint_chrome(int idx)
 }
 
 /* 只重画任务栏那三个 chip（很便宜），让高亮跟焦点联动 */
+/* 开始菜单：从任务栏 rvsh 按钮弹出，条目点击后聚焦对应窗口 */
+static void menu_draw(void)
+{
+    u32 *buf = (u32 *)FB_BASE;
+    u32 mx = 8, my = 600 - TASKBAR_H - 168, mw = 208, mh = 166;
+
+    fb_round_rect(buf, 800, 600, 800, mx, my, mw, mh, 0x141920);
+    fb_frame(buf, 800, 600, 800, mx, my, mw, mh, 0x2b3644);
+    /* 顶部标题 */
+    fb_rect(buf, 800, 600, 800, mx + 1, my + 1, mw - 2, 22, 0x1a222c);
+    fb_text(buf, 800, 600, 800, mx + 10, my + 4, "rvsim 0.9", C_ACC, 0x1a222c, 1);
+
+    static const char *items[4] = { "Terminal", "Monitor", "Files", "About" };
+    for (int i = 0; i < 4; i++) {
+        u32 iy = my + 28 + i * 30;
+        fb_text(buf, 800, 600, 800, mx + 12, iy + 6, items[i], C_FG, 0x141920, 1);
+        if (i < 3) {
+            /* 右侧显示对应窗口序号，提示点它会聚焦哪个窗口 */
+            char idx[2] = { (char)('1' + i), 0 };
+            fb_text(buf, 800, 600, 800, mx + mw - 22, iy + 6, idx, C_FG3, 0x141920, 1);
+        }
+    }
+}
+
+/* 菜单点击：返回 1 表示点击被菜单消费 */
+static int menu_click(u32 mx_, u32 my_)
+{
+    u32 x = 8, y = 600 - TASKBAR_H - 168, w = 208, h = 166;
+    if (mx_ < x || mx_ >= x + w || my_ < y || my_ >= y + h) {
+        return 0;      /* 点在菜单外：让调用方关掉菜单 */
+    }
+    int item = -1;
+    for (int i = 0; i < 4; i++) {
+        u32 iy = y + 28 + i * 30;
+        if (my_ >= iy && my_ < iy + 28) { item = i; break; }
+    }
+    if (item >= 0 && item < 3) {
+        extern void desktop_redraw(void);
+        g_menu_open = 0;
+        g_focus = item;
+        desktop_redraw();
+    } else if (item == 3) {
+        extern void desktop_redraw(void);
+        g_menu_open = 0;
+        desktop_redraw();
+    }
+    return 1;
+}
+
 static void taskbar_chips(void)
 {
     u32 *buf = (u32 *)FB_BASE;
@@ -1176,6 +1226,19 @@ void desktop_mouse(void)
     win_t *w = &g_wins[g_focus];
 
     if (btn && !g_dragging) {
+        /* 菜单开着时优先给菜单 */
+        if (g_menu_open) {
+            if (menu_click(mx, my)) return;
+            g_menu_open = 0;
+            { extern void desktop_redraw(void); desktop_redraw(); }
+            return;
+        }
+        /* 任务栏左侧 rvsh 按钮：开关开始菜单 */
+        if (my >= 600 - TASKBAR_H && mx >= 8 && mx < 80) {
+            g_menu_open = 1;
+            { extern void desktop_redraw(void); desktop_redraw(); }
+            return;
+        }
         int i = win_hit(mx, my);
         if (i < 0) return;
         win_set_focus(i);
@@ -1274,6 +1337,8 @@ void desktop_redraw(void)
     term_grid_flush();       /* 标记脏了还得真的画出来 */
     monitor_draw();
     files_draw();
+
+    if (g_menu_open) menu_draw();
 
     fb_plane(0, FB_BASE, 0, 0, 800, 600, 800, 0);
     fb_commit(0);
