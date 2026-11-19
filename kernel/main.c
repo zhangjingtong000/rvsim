@@ -1025,6 +1025,7 @@ win_rect_t *kernel_win0(void) { return (win_rect_t *)&g_wins[0]; }
 
 static void monitor_draw(void)
 {
+    if (!g_wins[1].visible) return;
     u32 *buf = (u32 *)FB_BASE;
     const u32 line = 16;
     u32 y = MON_BODY_Y;
@@ -1082,6 +1083,7 @@ static void monitor_draw(void)
 /* 文件窗口：显示的是真实的 RAMFS 内容 */
 static void files_draw(void)
 {
+    if (!g_wins[2].visible) return;
     u32 *buf = (u32 *)FB_BASE;
     const u32 line = 16;
     u32 y = FS_BODY_Y;
@@ -1428,8 +1430,10 @@ void desktop_redraw(void)
     /* 窗口内容 */
     extern void term_grid_redraw_all(void);
     extern u32 term_grid_flush(void);
-    term_grid_redraw_all();
-    term_grid_flush();       /* 标记脏了还得真的画出来 */
+    if (g_wins[0].visible) {
+        term_grid_redraw_all();
+        term_grid_flush();   /* 标记脏了还得真的画出来 */
+    }
     monitor_draw();
     files_draw();
 

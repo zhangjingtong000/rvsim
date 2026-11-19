@@ -519,13 +519,32 @@ void shell_input(char ch)
                 uart_puts("}\n");
             }
             else if (ADV && starts_with(g_line, "chmod ")) {
-                /* chmod <name> <0|1>：0 只有属主可写，1 所有登录者可写 */
+                /* 同时支持两种写法：
+                   chmod <file> <0|1>   （旧的，权限位是 0/1）
+                   chmod <mode> <file>  （Unix 风格，mode 当八进制看，非 0 即 public）
+                   之前只认第一种，用户敲 Unix 语法就会把 mode 当文件名，报「文件不存在」。 */
                 const char *q = g_line + 6;
-                char nm[24]; int nl = 0;
-                while (*q && *q != ' ' && nl < 23) nm[nl++] = *q++;
-                nm[nl] = 0;
+                char a[24]; int al = 0;
+                while (*q && *q != ' ' && al < 23) a[al++] = *q++;
+                a[al] = 0;
                 while (*q == ' ') q++;
-                int m = (*q == '1') ? 1 : 0;
+                char b[24]; int bl = 0;
+                while (*q && *q != ' ' && bl < 23) b[bl++] = *q++;
+                b[bl] = 0;
+
+                /* 第一段全是数字且第二段不是纯数字 → 判定为 Unix 风格 chmod */
+                int a_is_num = (al > 0), b_is_num = (bl > 0);
+                for (int k = 0; k < al; k++) if (a[k] < '0' || a[k] > '9') a_is_num = 0;
+                for (int k = 0; k < bl; k++) if (b[k] < '0' || b[k] > '9') b_is_num = 0;
+
+                char nm[24]; int m;
+                if (a_is_num && !b_is_num) {
+                    int k = 0; while (b[k]) { nm[k] = b[k]; k++; } nm[k] = 0;
+                    m = (a[0] == '0' || a[0] == '4' || a[0] == '6') ? 0 : 1;
+                } else {
+                    int k = 0; while (a[k]) { nm[k] = a[k]; k++; } nm[k] = 0;
+                    m = (b[0] == '0') ? 0 : 1;
+                }
                 if (g_cur_uid != 0) {
                     uart_puts("{\"ok\":false,\"why\":\"只有 root 能改权限\"}\n");
                 } else if (fs_chmod(nm, (u32)m) == 0) {

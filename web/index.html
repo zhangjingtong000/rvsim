@@ -365,8 +365,14 @@ function screenPointerBind(){
     const [x, y] = toFb(e);
     M._rv_mem_write32(MOUSE_X, x);
     M._rv_mem_write32(MOUSE_Y, y);
-    M._rv_mem_write32(MOUSE_BTN, 0);
-    M._rv_mem_write32(MOUSE_EV, 1);
+    /* 延迟 120ms 再清按钮：内核是按轮询读的，
+       按得太快会让它只看到 btn=0，整个点击被跳过。
+       真实用户点击约 80-150ms，这个延迟对双方都够。 */
+    setTimeout(() => {
+      if(!M) return;
+      M._rv_mem_write32(MOUSE_BTN, 0);
+      M._rv_mem_write32(MOUSE_EV, 1);
+    }, 120);
   });
 }
 
@@ -642,7 +648,9 @@ function boot(bytes,name){
 
   /* 之后每 3 秒轮询一次事件流、快照与计划。
      只在系统停在提示符时问，避免打断用户的输入。 */
-  /* 调试面板数据刷新：只在用户打开抽屉时跑一次。
+  
+}
+/* 调试面板数据刷新：只在用户打开抽屉时跑一次。
    之前每 8 秒往 UART 插 ps/log/snaps/plans/ls，首屏永远是 JSON，
    而且轮询会和用户输入抢同一根串口。 */
 function refreshPanels(){
@@ -655,7 +663,7 @@ function refreshPanels(){
   setTimeout(()=>sendCmd("ls"), 1040);
   setTimeout(()=>{ quietOut = false; }, 1600);
 }
-}
+
 async function bootUrl(u,name){
   /* 加时间戳：否则浏览器会缓存旧的 kernel.elf，
      改了内核却看到旧行为，排查时会完全找错方向。 */
