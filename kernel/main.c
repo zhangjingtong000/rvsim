@@ -1423,6 +1423,20 @@ void desktop_redraw(void)
         for (u32 gx = 8; gx < 800; gx += 8)
             buf[gy * 800 + gx] = 0x121a26;
 
+    /* 桌面图标：文件快捷方式，扁平方块 + 标签（在窗口之下） */
+    {
+        static const char *icons[4] = { "terminal", "monitor", "files", "readme" };
+        for (int k = 0; k < 4; k++) {
+            u32 ix = 646, iy = 404 + (u32)k * 42;
+            fb_round_rect(buf, 800, 600, 800, ix, iy, 28, 24, 0x1b2432);
+            fb_frame(buf, 800, 600, 800, ix, iy, 28, 24, 0x2b3644);
+            fb_rect(buf, 800, 600, 800, ix + 6, iy + 6, 16, 2, 0x5eead4);
+            fb_rect(buf, 800, 600, 800, ix + 6, iy + 11, 12, 2, 0x3a4756);
+            fb_rect(buf, 800, 600, 800, ix + 6, iy + 16, 14, 2, 0x3a4756);
+            fb_text(buf, 800, 600, 800, ix - 4, iy + 26, icons[k], C_FG2, 0x0a0e14, 1);
+        }
+    }
+
     for (int zi = 0; zi < 3; zi++) {
         int i = g_z[zi];
         win_t *w = &g_wins[i];
