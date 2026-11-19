@@ -571,9 +571,12 @@ function sniff(s){
 }
 
 /* 只注入，不阻塞：由执行引擎在下一帧处理 */
+const _enc = new TextEncoder();
 function sendCmd(cmd){
   if(!M || !loaded) return;
-  for(const ch of cmd + "\r") M._rv_uart_write(ch.charCodeAt(0));
+  /* 必须按 UTF-8 编码发送：charCodeAt 对中文返回 >255 的码点，
+     写进 8 位串口会被截断，中文就变成 "Lb1" 这种乱码。 */
+  for(const b of _enc.encode(cmd + "\r")) M._rv_uart_write(b);
 }
 
 /* 用户当前是否贴着底部（留 40px 容差） */
@@ -641,7 +644,7 @@ function boot(bytes,name){
     total = 0;
     quietOut = true;
     setTimeout(()=>{
-      sendCmd("echo rvsim desktop 0.9  -  F12 for debug panels");
+      sendCmd("echo rvsim 桌面就绪  -  按 F12 打开调试面板");
       /* 用本地时间：Date.now() 是 UTC，直接丢给内核会差时区 */
       sendCmd("@settime " + Math.floor(Date.now() / 1000 - new Date().getTimezoneOffset() * 60));
       quietOut = false;
@@ -763,6 +766,18 @@ let lastInputAt = 0;
 
 /* 键盘监听挂在 document 上：用户点的是画布里的终端窗口，
    不该被要求先去点画布下方那条隐藏的 HTML 终端。 */
+/* 粘贴：中文输入最可靠的方式（不依赖 IME 的 key 事件） */
+document.addEventListener("paste", e => {
+  if (!loaded || !M) return;
+  const t = (e.clipboardData || window.clipboardData);
+  if (!t) return;
+  const txt = t.getData("text");
+  if (!txt) return;
+  e.preventDefault();
+  lastInputAt = Date.now();
+  for (const b of _enc.encode(txt)) M._rv_uart_write(b);
+});
+
 document.addEventListener("keydown",e=>{
   if(!loaded||!M)return;
   if(e.target && (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA")) return;
@@ -784,7 +799,11 @@ document.addEventListener("keydown",e=>{
   if(e.key==="Enter"){M._rv_uart_write(13);e.preventDefault();}
   else if(e.key==="Backspace"){M._rv_uart_write(127);e.preventDefault();}
   else if(e.key==="Tab"){M._rv_uart_write(9);e.preventDefault();}
-  else if(e.key.length===1){M._rv_uart_write(e.key.charCodeAt(0));e.preventDefault();}
+  else if(e.key.length>=1 && [...e.key].length===1){
+    /* 同样要走 UTF-8：中文的 charCodeAt 是 >255 的码点，截断就成乱码 */
+    for(const b of _enc.encode(e.key)) M._rv_uart_write(b);
+    e.preventDefault();
+  }
   else return;
   /* 不在这里同步推进：注入后由执行引擎在下一帧处理，
      暂停状态下则自动恢复常驻运行，否则 guest 永远看不到输入。 */

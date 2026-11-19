@@ -1237,9 +1237,17 @@ static void win_raise(int idx)
 static void win_set_focus(int idx)
 {
     if (idx == g_focus) return;
+    int old = g_focus;
     g_focus = idx;
     win_raise(idx);
-    { extern void desktop_redraw(void); desktop_redraw(); }
+    /* 只重画两个标题栏 + 任务栏 chip：整屏重画要 0.4-0.7 秒，
+       这期间 desktop_mouse 读不到事件，一半点击会被吞掉。
+       z 序已经改了，上层窗口会盖住下层——被盖住的部分在
+       下次拖动/最大化整屏重画时自然修正。 */
+    win_paint_chrome(old);
+    win_paint_chrome(idx);
+    taskbar_chips();
+    fb_commit(0);
 }
 
 static int win_hit(u32 mx, u32 my)
@@ -1868,18 +1876,11 @@ void shell_loop(void)
 
         desktop_mouse();
 
-        /* 进程表与文件列表：每 2 秒刷新一次，内容是真实数据 */
-        {
-            static u32 last_ui = 0xFFFFFFFFu;
-            u64 mt2 = *(volatile u64 *)(CLINT_BASE + 0xBFF8u);
-            u32 tick = (u32)(mt2 / 2000000ull);
-            if (tick != last_ui) {
-                last_ui = tick;
-                /* 必须整屏按 z 序重画：直接调 monitor_draw/files_draw 会绕过
-                   z 序，把内容画到上层窗口（比如最大化窗口）上面。 */
-                { extern void desktop_redraw(void); desktop_redraw(); }
-            }
-        }
+        /* 不再定时整屏重绘：一次重绘约 0.4-0.7 秒，期间屏幕处于
+           「清壁纸 -> 画窗口」的中间态，看起来像闪烁，而且这期间
+           desktop_mouse 读不到事件，约三分之一点击被吞掉。
+           monitor/files 的内容只在窗口被操作时（聚焦/拖动/最大化和
+           显式刷新命令）才重画，静态数据本来也不需要每 2 秒刷。 */
 
         /* 实时时钟：每跨一秒重画一次任务栏右下角 */
         {

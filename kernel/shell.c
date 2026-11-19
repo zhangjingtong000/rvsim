@@ -12,6 +12,7 @@
 #endif
 
 static char g_line[SHELL_BUF];
+static int  g_input_at = 0;   /* 当前输入行以 @ 开头，不回显 */
 static u32  g_cmd_mark;   /* 命令回显之前的输出长度 */
 static char g_cmd_snap[4097];   /* +1：uart_tail_copy 会写终止符 */  /* 命令开始时的输出快照，供 assert uart 查找 */
 static int  g_cmd_at_prompt; /* 命令开始时系统是否停在提示符 */
@@ -739,7 +740,16 @@ extern int g_term_silent;
         prompt();
     } else if (ch == 0x7F || ch == 0x08) {   /* 退格 */
         if (g_len > 0) { g_len--; uart_puts("\b \b"); }
-    } else if (g_len < SHELL_BUF - 1 && ch >= 0x20 && ch < 0x7F) {
+    } else if (g_len < SHELL_BUF - 1 && (u8)ch >= 0x20 && g_input_at) {
+        /* @ 开头的整行都不回显：这是调试面板的内部命令，
+           不该出现在用户终端里（否则按一次 F12 就留 5 行 @ps/@ls） */
+        g_line[g_len++] = ch;
+        return;
+    } else if (g_len < SHELL_BUF - 1 && (u8)ch >= 0x20) {
+        /* 行首是 @ 就进入静默输入模式（含 @ 本身） */
+        if (g_len == 0 && ch == '@') { g_input_at = 1; g_line[g_len++] = ch; return; }
+        /* 这里是 (u8)ch 不是 ch：中文的 UTF-8 字节 >= 0xE4，
+           原来的 ch < 0x7F 把它们全挡在行缓冲之外，中文命令根本进不来。 */
         /* 命令的第一个字符：此刻缓冲区里还只有提示符，
            回显还没进来。assert 查产物时以这里为界。 */
         if (g_len == 0) {
@@ -759,6 +769,7 @@ extern int g_term_silent;
     goto shell_done;              /* 普通字符：直接返回，不要清空行缓冲 */
 
 shell_done:
+    g_input_at = 0;
     /* 必须放在标签之后：所有 goto shell_done 的分支都会跳过前面的语句，
        之前把清零写在标签前，结果 @ 的静默一旦生效就再也不会恢复。 */
     { extern int g_term_silent; g_term_silent = 0; }

@@ -7,6 +7,7 @@
  * 窗口移动/滚动交给硬件的平面坐标与源偏移（改一个寄存器，约 20 条指令）。
  */
 #include "kernel.h"
+#include "cjk16.h"
 #include "font8x16.h"
 
 /* 平面描述（与模拟器 bus.h 的 disp_plane_t 一一对应） */
@@ -37,7 +38,9 @@ u32 g_fb_w, g_fb_h;
    只重画变化的那一行，避免每帧重绘整窗。 */
 #define TERM_COLS 60
 #define TERM_ROWS 21
-static char g_term[TERM_ROWS][TERM_COLS];
+/* 网格存 Unicode 码点：ASCII 是单宽，汉字是双宽。
+   0 = 空，0xFFFFFFFF = 被左边宽字符占用的右半格。 */
+static u32 g_term[TERM_ROWS][TERM_COLS];
 static u8   g_term_dirty[TERM_ROWS];
 static u32  g_term_cx, g_term_cy;
 
@@ -62,6 +65,38 @@ void term_grid_reset(void)
             TERM_COLS * 8, TERM_ROWS * 16, 0x050608);
 }
 
+/* 在字模表里查码点；返回索引，找不到返回 -1 */
+static int cjk_lookup(u32 cp)
+{
+    int lo = 0, hi = CJK_COUNT - 1;
+    while (lo <= hi) {
+        int mid = (lo + hi) / 2;
+        if (g_cjk_uni[mid] == cp) return mid;
+        if (g_cjk_uni[mid] < cp) lo = mid + 1; else hi = mid - 1;
+    }
+    return -1;
+}
+
+/* 画一个 16x16 汉字（占两格宽） */
+static void cjk_draw(u32 *buf, u32 stride, u32 x, u32 y, u32 cp, u32 fg, u32 bg, int draw_bg)
+{
+    int idx = cjk_lookup(cp);
+    if (idx < 0) return;
+    for (u32 j = 0; j < 16; j++) {
+        u32 *row = buf + (y + j) * stride + x;
+        u32 hi = g_cjk_bits[idx][j * 2];
+        u32 lo = g_cjk_bits[idx][j * 2 + 1];
+        for (u32 i = 0; i < 8; i++) {
+            int on = (hi & (0x80u >> i)) != 0;
+            row[i] = on ? fg : (draw_bg ? bg : row[i]);
+        }
+        for (u32 i = 0; i < 8; i++) {
+            int on = (lo & (0x80u >> i)) != 0;
+            row[8 + i] = on ? fg : (draw_bg ? bg : row[8 + i]);
+        }
+    }
+}
+
 /* 换行 + 滚屏。长行自动折行也必须走这里——
    否则 cy 会一直涨到 TERM_ROWS 然后卡死，所有字符挤在最后一行反复覆盖。 */
 static void term_newline(void)
@@ -82,20 +117,43 @@ static void term_newline(void)
 /* 把一个字符放进网格；返回 1 表示网格有变化 */
 int term_grid_putc(char c)
 {
+    static u32 utf8_cp = 0;
+    static int utf8_need = 0;
+
     if (c == '\r') { g_term_cx = 0; return 1; }
     if (c == '\n') { term_newline(); return 1; }
     if (c == '\b') {
         if (g_term_cx > 0) g_term_cx--;
         return 1;
     }
-    if ((u8)c < 32) return 0;
 
-    /* 非 ASCII 直接丢弃：内核输出里的中文是 UTF-8 多字节，
-       逐字节写进 8x16 网格只会变成乱码。要做中文得先有 CJK 字模。 */
-    if ((u8)c > 126) return 0;
+    u8 b = (u8)c;
+
+    /* UTF-8 解码 */
+    if (utf8_need) {
+        if ((b & 0xC0) != 0x80) { utf8_need = 0; utf8_cp = 0; return 0; }
+        utf8_cp = (utf8_cp << 6) | (b & 0x3F);
+        if (--utf8_need) return 0;
+        /* 拿到完整码点：能画就画，画不了就丢 */
+        if (cjk_lookup(utf8_cp) >= 0) {
+            if (g_term_cx + 1 >= TERM_COLS) term_newline();
+            g_term[g_term_cy][g_term_cx] = utf8_cp;
+            g_term[g_term_cy][g_term_cx + 1] = 0xFFFFFFFFu;   /* 右半格被占 */
+            g_term_cx += 2;
+            g_term_dirty[g_term_cy] = 1;
+        }
+        utf8_cp = 0;
+        return 1;
+    }
+    if (b >= 0xF0) { utf8_cp = b & 0x07; utf8_need = 3; return 0; }
+    if (b >= 0xE0) { utf8_cp = b & 0x0F; utf8_need = 2; return 0; }
+    if (b >= 0xC0) { utf8_cp = b & 0x1F; utf8_need = 1; return 0; }
+
+    if (b < 32) return 0;
+    if (b > 126) return 0;
 
     if (g_term_cx >= TERM_COLS) term_newline();
-    g_term[g_term_cy][g_term_cx++] = c;
+    g_term[g_term_cy][g_term_cx++] = (u32)b;
     g_term_dirty[g_term_cy] = 1;
     return 1;
 }
@@ -141,8 +199,15 @@ u32 term_grid_flush(void)
                 TERM_ORIGIN_X, TERM_ORIGIN_Y + y * 16,
                 TERM_COLS * 8, 16, 0x050608);
         for (u32 x = 0; x < TERM_COLS; x++) {
-            char ch = g_term[y][x];
-            if (ch == ' ') continue;      /* 背景刚清过，空格不用再画 */
+            u32 cp = g_term[y][x];
+            if (cp == 0 || cp == ' ') continue;
+            if (cp == 0xFFFFFFFFu) continue;          /* 宽字符右半格，左边已画 */
+            if (cp > 127) {
+                cjk_draw(buf, 800, TERM_ORIGIN_X + x * 8,
+                         TERM_ORIGIN_Y + y * 16, cp, 0xc9d1d9, 0x050608, 1);
+                continue;
+            }
+            char ch = (char)cp;
             u32 fg = (ch == '>') ? 0x5eead4 : ((ch == '?') ? 0xf87171 : 0xc9d1d9);
             fb_char(buf, 800, 600, 800,
                     TERM_ORIGIN_X + x * 8, TERM_ORIGIN_Y + y * 16,
