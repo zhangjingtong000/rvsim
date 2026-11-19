@@ -29,4 +29,12 @@ emcc -O2 -s WASM=1 -s MODULARIZE=1 -s EXPORT_NAME=createRvsim \
   web/wasm_entry.c src/exec.c src/csr.c src/bus.c src/mmu.c src/loader_mem.c src/fdt.c src/disasm.c \
   $CAPSTONE
 
-echo "生成完成: $(ls -l web/rvsim.wasm | awk '{print $5}') 字节"
+# 给 wasm 文件名带上内容哈希：浏览器缓存太顽固，
+# 改了内核/模拟器却跑旧版本，排查时会完全找错方向。
+HASH=$(md5sum web/rvsim.wasm | cut -c1-10)
+mv -f web/rvsim.wasm "web/rvsim.$HASH.wasm"
+sed -i "s/rvsim\.[0-9a-f]\{10\}\.wasm/rvsim.$HASH.wasm/g; s/\"rvsim\.wasm\"/\"rvsim.$HASH.wasm\"/g" web/rvsim.js
+    # rvsim.js 本身也会被缓存（它内部写着 wasm 文件名），js 也带哈希改名
+    mv -f web/rvsim.js "web/rvsim.$HASH.js"
+    sed -i "s|src=\"rvsim[^\"]*\.js[^\"]*\"|src=\"rvsim.$HASH.js\"|" web/index.html
+echo "生成完成: rvsim.$HASH.wasm $(ls -l web/rvsim.$HASH.wasm | awk '{print $5}') 字节"

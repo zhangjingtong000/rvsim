@@ -19,8 +19,17 @@ function record(name, ok, detail) {
 }
 
 (async () => {
-  const M = await require(path.join(WASM_DIR, "rvsim.js"))({
-    wasmBinary: fs.readFileSync(path.join(WASM_DIR, "rvsim.wasm")),
+  /* 构建脚本给 js 也加了哈希文件名，这里动态挑一个 */
+  const jsFile = (() => {
+    const f = fs.readdirSync(WASM_DIR).filter(x => /^rvsim(\.[0-9a-f]+)?\.js$/.test(x));
+    return f.length ? f.sort().pop() : "rvsim.js";
+  })();
+  const M = await require(path.join(WASM_DIR, jsFile))({
+    wasmBinary: fs.readFileSync((() => {
+      /* 构建脚本给 wasm 文件名加了内容哈希，这里动态找最新的那份 */
+      const f = fs.readdirSync(WASM_DIR).filter(x => /^rvsim(\.[0-9a-f]+)?\.wasm$/.test(x));
+      return f.length ? path.join(WASM_DIR, f.sort().pop()) : path.join(WASM_DIR, "rvsim.wasm");
+    })()),
   });
   M.out = () => {}; M.print = () => {}; M.printErr = () => {};
 

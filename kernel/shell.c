@@ -497,6 +497,10 @@ void shell_input(char ch)
                     uart_puts("}\n");
                 }
             }
+            else if (ADV && starts_with(g_line, "echo ")) {
+                uart_puts(g_line + 5);
+                uart_putc('\n');
+            }
             else if (ADV && streq(g_line, "dumpterm")) {
                 extern void term_grid_dump(void);
                 term_grid_dump();
@@ -506,7 +510,6 @@ void shell_input(char ch)
                 extern void term_grid_reset(void);
                 term_grid_reset();
                 { extern void fb_commit(u32); fb_commit(0); }   /* 改了像素必须提交，否则前端还显示旧帧 */
-                uart_puts("{\"clear\":true}\n");
             }
             else if (ADV && streq(g_line, "whoami")) {
                 uart_puts("{\"user\":\"");

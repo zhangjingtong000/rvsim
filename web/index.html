@@ -156,7 +156,7 @@ main > .col:last-child{overflow-y:auto;max-height:calc(100vh - 40px)}
 <header>
   <div class="brand"><b>rvsim</b><i>RV32IMA · M/S/U · Sv32</i></div>
   <div class="grow"></div>
-<span id="dbgToggle" title="显示/隐藏调试面板 (D)">调试</span>
+<span id="id="dbgToggle"dbgToggle" title="显示/隐藏调试面板 (F12)">调试</span>
 <div class="grow"></div>
   <div class="pill" id="st"><span class="dot"></span><span id="stT">未启动</span></div>
 </header>
@@ -200,7 +200,7 @@ main > .col:last-child{overflow-y:auto;max-height:calc(100vh - 40px)}
     <div class="termbar">
       <b>UART</b><span>115200 8N1</span>
       <div class="grow"></div>
-<span id="dbgToggle" title="显示/隐藏调试面板 (D)">调试</span>
+<span class="dbgToggle2" title="显示/隐藏调试面板 (F12)">调试</span>
 <div class="grow"></div>
       <span id="txInfo">0 B</span>
     </div>
@@ -231,7 +231,7 @@ main > .col:last-child{overflow-y:auto;max-height:calc(100vh - 40px)}
 
 <div id="tip"></div>
 
-<script src="rvsim.js"></script>
+<script src="rvsim.4c1bd75e79.js"></script>
 <script>
 const ABI=["zero","ra","sp","gp","tp","t0","t1","t2","s0","s1","a0","a1","a2","a3","a4","a5","a6","a7",
            "s2","s3","s4","s5","s6","s7","s8","s9","s10","s11","t3","t4","t5","t6"];
@@ -610,38 +610,34 @@ function boot(bytes,name){
     setTimeout(()=>{ quietOut = false; }, 1800);
   }, 900);
   setTimeout(()=>{
-    sendCmd("clear");           /* 先让内核清掉窗口网格里的启动残留 */
+    /* 首屏：清掉启动残留，只留一行欢迎语和提示符。
+       不再自动发 ps/log/ls —— 那些属于调试面板，按 F12 才拉。 */
+    sendCmd("clear");
     term.innerHTML = '<span class="cursor"></span>';
     curEl = term.querySelector(".cursor");
     total = 0;
     quietOut = true;
-    setTimeout(()=>{ sendCmd("ps"); quietOut = false; }, 400);
+    setTimeout(()=>{
+      sendCmd("echo rvsim desktop 0.9  -  F12 for debug panels");
+      quietOut = false;
+    }, 400);
   }, 2600);
 
   /* 之后每 3 秒轮询一次事件流、快照与计划。
      只在系统停在提示符时问，避免打断用户的输入。 */
-  setInterval(()=>{
-    if(window.__pollOff) return;
-    if(!M || !loaded) return;
-    if(!tailBuf.includes("rvsh>")) return;
-    /* 只在「提示符是终端最后一行」时轮询。
-       用户一旦开始输入，最后一行就变成 "rvsh> hel"，此时再插命令
-       会把正在输入的字符冲掉——这正是「打不进字」的根因。 */
-    const lines = term.textContent.split("\n");
-    const last = (lines[lines.length - 1] || "").trimEnd();
-    if(!last.endsWith("rvsh>")) return;
-    /* 用户最近 10 秒内打过字就不轮询。
-       轮询会往同一根 UART 插命令，把正在输入的行冲掉——
-       这是「打不进字」的根因，宁可面板更新慢一点。 */
-    if(Date.now() - lastInputAt < 10000) return;
-    /* 三条一起发：UART 是 FIFO，会按序处理。
-       之前的写法只用 setTimeout 延后后两条，那两个回调完全不重查门控，
-       用户在这 260~520ms 里开始打字就会被冲掉。 */
-    sendCmd("log last 8");
-    sendCmd("snaps");
-    sendCmd("plans");
-    sendCmd("ls");
-  }, 8000);
+  /* 调试面板数据刷新：只在用户打开抽屉时跑一次。
+   之前每 8 秒往 UART 插 ps/log/snaps/plans/ls，首屏永远是 JSON，
+   而且轮询会和用户输入抢同一根串口。 */
+function refreshPanels(){
+  if(!M || !loaded) return;
+  quietOut = true;
+  sendCmd("ps");
+  setTimeout(()=>sendCmd("log last 8"), 260);
+  setTimeout(()=>sendCmd("snaps"), 520);
+  setTimeout(()=>sendCmd("plans"), 780);
+  setTimeout(()=>sendCmd("ls"), 1040);
+  setTimeout(()=>{ quietOut = false; }, 1600);
+}
 }
 async function bootUrl(u,name){
   /* 加时间戳：否则浏览器会缓存旧的 kernel.elf，
@@ -693,13 +689,13 @@ function stepBudget(ms){
 
 function tick(){
   if(!M||!loaded||!ticking){ticking=false;return;}
-  const res=stepBudget(speed>=2?10:2);
+  const res=stepBudget(speed>=2?45:1);
   pumpUart();
   screenRender();
   frameNo++;
   /* 全速阶段最多持续约 600 帧（10 秒）：再久说明镜像不需要那么快，
      强制降到常驻档，避免一个异常镜像把页面 CPU 吃满。 */
-  if(speed>1&&frameNo>600) speed=1;
+  if(speed>1&&frameNo>45) speed=1;
   if(frameNo%10===0) render();
   if(res.halted!==0){
     halt();
@@ -741,9 +737,11 @@ let lastInputAt = 0;
 document.addEventListener("keydown",e=>{
   if(!loaded||!M)return;
   if(e.target && (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA")) return;
-  /* D 是调试抽屉开关，不能同时当字符发给 guest */
-  if(!e.ctrlKey && !e.metaKey && !e.altKey && (e.key === "d" || e.key === "D")){
+  /* 抽屉开关用 F12：D 是普通字符，mkdir/chmod/guide 都要用。
+     之前把 D 拦成热键，等于废掉了终端里所有含 d 的命令。 */
+  if(e.key === "F12"){
     document.body.classList.toggle("drawer-open");
+    if(document.body.classList.contains("drawer-open")) refreshPanels();
     e.preventDefault();
     return;
   }
@@ -798,6 +796,7 @@ function render(){
 /* 事件 */
 document.getElementById("dbgToggle").onclick = () => {
   document.body.classList.toggle("drawer-open");
+  if(document.body.classList.contains("drawer-open")) refreshPanels();
 };
 $("bKernel").onclick=()=>bootUrl("images/kernel.elf","mini-kernel");
 $("bTest").onclick=()=>bootUrl("images/rv32ui-p-add","rv32ui-p-add");
@@ -832,10 +831,11 @@ $("reg").onclick=e=>{
 };
 
 
-/* 给 wasm 加缓存破坏：否则浏览器会用旧的 rvsim.wasm，
-   新导出的函数（比如 rv_mem_write32）在运行时是 undefined，
-   鼠标事件第一条语句就抛异常——表现为「点了完全没反应」。 */
-createRvsim({ locateFile: f => f.endsWith(".wasm") ? f + "?v=" + Date.now() : f }).then(m=>{
+/* wasm 的缓存破坏由构建脚本处理（文件名带内容哈希），
+   这里保持最简单的调用方式——emscripten 的模块化入口不吃外部配置。 */
+/* 等 DOM 就绪再初始化。注意不能只挂 load 监听：
+   脚本在 body 末尾时 load 可能已经触发过，监听器就永远等不到。 */
+function startRvsim(){ createRvsim().then(m=>{
   M=m;ubuf=m._malloc(4096);
   screenInit();
   screenPointerBind();
@@ -845,7 +845,11 @@ createRvsim({ locateFile: f => f.endsWith(".wasm") ? f + "?v=" + Date.now() : f 
   setState("就绪","");
   // 自动启动内核，让用户一打开就看到东西
   bootUrl("images/kernel.elf","mini-kernel");
-});
+}).catch(e => setState("wasm 加载失败: " + e, "err")); }
+
+/* 延一帧再启动：页面还在解析时立刻实例化 wasm，
+   在某些浏览器里会让 Promise 长时间 pending（页面卡在「未启动」）。 */
+setTimeout(startRvsim, 300);
 </script>
 </body>
 </html>

@@ -315,17 +315,26 @@ u32 fb_input(fb_input_t *out)
    逐像素判断约 320 条指令/字符，全屏一刷就是几十万指令。
    这里把「一个位图字节 → 8 个像素颜色」预先算成表，
    每行只要 8 次 store（约 20 条指令），字符成本降到 1/3 以下。 */
-static u32 g_lut[256][8];
-static u32 g_lut_fg = 0xFFFFFFFFu, g_lut_bg = 0xFFFFFFFFu;
+/* 4 组颜色对缓存：终端一行里会在主色/强调色/错误色之间切换，
+   只有一组缓存的话几乎每个字符都要重建 2048 项，整屏刷一次就要几十万指令。 */
+#define LUT_SETS 4
+static u32 g_lut[LUT_SETS][256][8];
+static u32 g_lut_fg[LUT_SETS], g_lut_bg[LUT_SETS];
+static int g_lut_next;
 
-static void lut_build(u32 fg, u32 bg)
+static u32 (*lut_build(u32 fg, u32 bg))[8]
 {
-    if (fg == g_lut_fg && bg == g_lut_bg) return;
+    for (int k = 0; k < LUT_SETS; k++)
+        if (g_lut_fg[k] == fg && g_lut_bg[k] == bg) return g_lut[k];
+
+    int slot = g_lut_next;
+    g_lut_next = (g_lut_next + 1) % LUT_SETS;
     for (u32 b = 0; b < 256; b++)
         for (u32 i = 0; i < 8; i++)
-            g_lut[b][i] = (b & (0x80u >> i)) ? fg : bg;
-    g_lut_fg = fg;
-    g_lut_bg = bg;
+            g_lut[slot][b][i] = (b & (0x80u >> i)) ? fg : bg;
+    g_lut_fg[slot] = fg;
+    g_lut_bg[slot] = bg;
+    return g_lut[slot];
 }
 
 /* 画一个字符：8x16 点阵 */
@@ -360,13 +369,12 @@ void fb_char(u32 *buf, u32 bw, u32 bh, u32 stride,
         return;
     }
 
-    if (draw_bg) lut_build(fg, bg);
-    else        lut_build(fg, fg);
+    u32 (*lut)[8] = draw_bg ? lut_build(fg, bg) : lut_build(fg, fg);
 
     const u8 *g = g_font8x16[(int)(ch - 32)];
     for (u32 j = 0; j < 16; j++) {
         u32 *row = buf + (y + j) * stride + x;
-        const u32 *src = g_lut[g[j]];
+        const u32 *src = lut[g[j]];
         if (draw_bg) {
             row[0]=src[0]; row[1]=src[1]; row[2]=src[2]; row[3]=src[3];
             row[4]=src[4]; row[5]=src[5]; row[6]=src[6]; row[7]=src[7];

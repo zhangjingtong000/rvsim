@@ -392,6 +392,7 @@ static const cap_t g_caps[] = {
     {"login",    "login <user>",             "root|ai|guest",   1, "切换当前用户（uid 0 是 root）"},
     {"whoami",   "whoami",                   "",                0, "当前用户与 uid"},
     {"clear",    "clear",                    "",                0, "清空窗口里的终端内容（不动 UART 历史）"},
+    {"echo",     "echo <text>",              "",                0, "原样输出一段文本（不包 JSON，给欢迎语用）"},
     {"chmod",    "chmod <name> <0|1>",       "0=仅属主可写 1=所有人可写", 1, "改文件权限（仅 root）"},
 };
 
@@ -1011,6 +1012,9 @@ static void hex_u32(u32 v, char *out)
 typedef struct {
     u32 x, y, w, h;
     const char *title;
+    int visible;
+    u32 rx, ry, rw, rh;     /* 还原用（最大化前的位置） */
+    int maximized;
 } win_t;
 
 /* 供 fb.c 查询终端窗口位置（网格原点要跟着窗口走） */
@@ -1123,6 +1127,12 @@ static void wins_init(void)
     g_wins[2].x = WIN_FS_X; g_wins[2].y = WIN_FS_Y;
     g_wins[2].w = WIN_FS_W; g_wins[2].h = WIN_FS_H;
     g_wins[2].title = "files";
+    for (int i = 0; i < 3; i++) {
+        g_wins[i].visible = 1;
+        g_wins[i].maximized = 0;
+        g_wins[i].rx = g_wins[i].x; g_wins[i].ry = g_wins[i].y;
+        g_wins[i].rw = g_wins[i].w; g_wins[i].rh = g_wins[i].h;
+    }
     g_focus = 0;
 }
 
@@ -1222,6 +1232,7 @@ static int win_hit(u32 mx, u32 my)
 {
     for (int i = 2; i >= 0; i--) {
         win_t *w = &g_wins[i];
+        if (!w->visible) continue;
         if (mx >= w->x && mx < w->x + w->w &&
             my >= w->y && my < w->y + w->h) return i;
     }
@@ -1236,6 +1247,47 @@ static void drag_outline(u32 x, u32 y, u32 w, u32 h, u32 col)
     fb_rect(buf, 800, 600, 800, x, y + h - 1, w, 1, col);
     fb_rect(buf, 800, 600, 800, x, y, 1, h, col);
     fb_rect(buf, 800, 600, 800, x + w - 1, y, 1, h, col);
+}
+
+/* 命中标题栏右侧的三个窗控点；返回 0=关闭 1=最小化 2=最大化 -1=没点中 */
+static int win_chrome_hit(win_t *w, u32 mx, u32 my)
+{
+    if (my < w->y + 6 || my >= w->y + 20) return -1;
+    for (int i = 0; i < 3; i++) {
+        u32 bx = w->x + w->w - 20 - i * 13;
+        if (mx >= bx && mx < bx + 9) {
+            /* i=0 红(关闭) i=1 黄(最小化) i=2 绿(最大化) */
+            return (i == 0) ? 0 : (i == 1 ? 1 : 2);
+        }
+    }
+    return -1;
+}
+
+/* 只重画受影响的那块：窗口区域 + 整屏兜底（窗口移动/隐藏需要重铺背景） */
+static void win_apply_action(int idx, int act)
+{
+    extern void desktop_redraw(void);
+    win_t *w = &g_wins[idx];
+    if (act == 0) {                      /* 关闭 */
+        w->visible = 0;
+        for (int i = 0; i < 3; i++)
+            if (g_wins[i].visible) { g_focus = i; break; }
+    } else if (act == 1) {               /* 最小化 = 隐藏 */
+        w->visible = 0;
+        for (int i = 0; i < 3; i++)
+            if (g_wins[i].visible) { g_focus = i; break; }
+    } else {                             /* 最大化 / 还原 */
+        if (!w->maximized) {
+            w->rx = w->x; w->ry = w->y; w->rw = w->w; w->rh = w->h;
+            w->x = 0; w->y = 0;
+            w->w = 800; w->h = 600 - TASKBAR_H;
+            w->maximized = 1;
+        } else {
+            w->x = w->rx; w->y = w->ry; w->w = w->rw; w->h = w->rh;
+            w->maximized = 0;
+        }
+    }
+    desktop_redraw();
 }
 
 /* 鼠标事件：点击聚焦 + 标题栏拖动 */
@@ -1260,8 +1312,29 @@ void desktop_mouse(void)
             { extern void desktop_redraw(void); desktop_redraw(); }
             return;
         }
+        /* 任务栏中间三个 chip：点哪个就聚焦哪个窗口（被关掉的先恢复） */
+        if (my >= 600 - TASKBAR_H) {
+            struct { u32 x, w; int idx; } ch[3] = {
+                { 88, 76, 0 }, { 170, 70, 1 }, { 246, 56, 2 }
+            };
+            for (int k = 0; k < 3; k++) {
+                if (mx >= ch[k].x && mx < ch[k].x + ch[k].w) {
+                    extern void desktop_redraw(void);
+                    g_wins[ch[k].idx].visible = 1;
+                    g_focus = ch[k].idx;
+                    desktop_redraw();
+                    return;
+                }
+            }
+            return;
+        }
         int i = win_hit(mx, my);
         if (i < 0) return;
+        /* 先看是不是点在窗控点上 */
+        {
+            int act = win_chrome_hit(&g_wins[i], mx, my);
+            if (act >= 0) { win_apply_action(i, act); return; }
+        }
         win_set_focus(i);
         w = &g_wins[i];
         if (my >= w->y && my < w->y + 23) {      /* 标题栏 */
@@ -1334,6 +1407,7 @@ void desktop_redraw(void)
 
     for (int i = 0; i < 3; i++) {
         win_t *w = &g_wins[i];
+        if (!w->visible) continue;
         win_frame(buf, w->x, w->y, w->w, w->h, w->title, i == g_focus);
         fb_rect(buf, 800, 600, 800, w->x + 1, w->y + 24,
                 w->w - 2, w->h - 25, C_TERM);
