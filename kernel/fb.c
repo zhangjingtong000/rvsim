@@ -317,7 +317,7 @@ u32 fb_input(fb_input_t *out)
    每行只要 8 次 store（约 20 条指令），字符成本降到 1/3 以下。 */
 /* 4 组颜色对缓存：终端一行里会在主色/强调色/错误色之间切换，
    只有一组缓存的话几乎每个字符都要重建 2048 项，整屏刷一次就要几十万指令。 */
-#define LUT_SETS 4
+#define LUT_SETS 16
 static u32 g_lut[LUT_SETS][256][8];
 static u32 g_lut_fg[LUT_SETS], g_lut_bg[LUT_SETS];
 static int g_lut_next;

@@ -747,9 +747,10 @@ extern int g_term_silent;
 
     goto shell_done;              /* 普通字符：直接返回，不要清空行缓冲 */
 
-    { extern int g_term_silent; g_term_silent = 0; }
-
 shell_done:
+    /* 必须放在标签之后：所有 goto shell_done 的分支都会跳过前面的语句，
+       之前把清零写在标签前，结果 @ 的静默一旦生效就再也不会恢复。 */
+    { extern int g_term_silent; g_term_silent = 0; }
     redirect_end();
     g_len = 0;
     g_line[0] = 0;

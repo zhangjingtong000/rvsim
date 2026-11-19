@@ -1860,9 +1860,9 @@ void shell_loop(void)
             u32 tick = (u32)(mt2 / 2000000ull);
             if (tick != last_ui) {
                 last_ui = tick;
-                monitor_draw();
-                files_draw();
-                fb_commit(0);
+                /* 必须整屏按 z 序重画：直接调 monitor_draw/files_draw 会绕过
+                   z 序，把内容画到上层窗口（比如最大化窗口）上面。 */
+                { extern void desktop_redraw(void); desktop_redraw(); }
             }
         }
 
