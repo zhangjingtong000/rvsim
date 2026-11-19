@@ -1410,6 +1410,11 @@ void desktop_redraw(void)
     for (int i = 0; i < 3; i++) {
         win_t *w = &g_wins[i];
         if (!w->visible) continue;
+        /* 阴影：右下各两道暗边，让重叠窗口有层次（约 3k 像素，很便宜） */
+        fb_rect(buf, 800, 600, 800, w->x + 6, w->y + w->h, w->w, 2, 0x040508);
+        fb_rect(buf, 800, 600, 800, w->x + w->w, w->y + 6, 2, w->h, 0x040508);
+        fb_rect(buf, 800, 600, 800, w->x + 3, w->y + w->h + 2, w->w, 1, 0x090c11);
+        fb_rect(buf, 800, 600, 800, w->x + w->w + 2, w->y + 3, 1, w->h, 0x090c11);
         win_frame(buf, w->x, w->y, w->w, w->h, w->title, i == g_focus);
         fb_rect(buf, 800, 600, 800, w->x + 1, w->y + 24,
                 w->w - 2, w->h - 25, C_TERM);
