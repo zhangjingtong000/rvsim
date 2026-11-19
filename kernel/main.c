@@ -1337,14 +1337,12 @@ void desktop_mouse(void)
     if (!btn) {
         if (!g_btn_down) return;      /* 孤儿抬起，忽略 */
         g_btn_down = 0;
-    } else {
-        if (g_btn_down && !g_dragging) {
-            /* 上一次按下没有抬起就被新按下覆盖：把旧的当作已结束 */
-            g_btn_down = 0;
-        }
     }
 
-    if (btn && !g_dragging) {
+    /* 关键：加 !g_btn_down。原来按住期间鼠标每移动一次都会重新进来，
+       把 g_arm_x/g_arm_y 重置成当前坐标，dx/dy 恒为 0，
+       4 像素阈值永远达不到 —— 拖动完全失效。 */
+    if (btn && !g_dragging && !g_btn_down) {
         g_btn_down = 1;
         /* 菜单开着时优先给菜单 */
         if (g_menu_open) {
@@ -1536,7 +1534,11 @@ void desktop_redraw(void)
         /* 内容紧跟着框架画，保证被上层窗口覆盖 */
         if (i == 0) {
             extern u32 term_grid_flush(void);
-            term_grid_flush();       /* 只画脏行：全画 21 行要多花 28 万条指令 */
+            extern void term_grid_redraw_all(void);
+            /* 上面刚把内容区填成底色，这里必须整块重画：
+               只刷脏行的话，脏标记早被上一次 flush 清掉了，终端会变空白。 */
+            term_grid_redraw_all();
+            term_grid_flush();
         } else if (i == 1) {
             monitor_draw();
         } else {
@@ -1552,7 +1554,17 @@ void desktop_redraw(void)
     fb_round_rect(buf, 800, 600, 800, 8, ty + 4, 72, 22, 0x171b21);
     fb_text(buf, 800, 600, 800, 16, ty + 7, "rvsh", C_ACC, 0, 0);
     taskbar_chips();
-    fb_text(buf, 800, 600, 800, 800 - 96, ty + 9, "00:00:00", C_FG2, 0, 0);
+    {
+        /* 用真实时间重画，别硬编码 00:00:00（每次整屏重绘都会闪一下零点） */
+        u32 secs;
+        if (g_wall_base) {
+            u64 now = clint_mtime_now();
+            secs = (g_wall_base + (u32)((now - g_wall_mtime) / 1000000ull)) % 86400u;
+        } else {
+            secs = (u32)(clint_mtime_now() / 1000000ull);
+        }
+        desktop_clock(secs);
+    }
     fb_rect(buf, 800, 600, 800, 800 - 110, ty + 9, 1, 14, C_LINE);
 
     if (g_menu_open) menu_draw();

@@ -357,7 +357,7 @@ function screenPointerBind(){
   cv.addEventListener("pointerdown", e => {
     if(!M) return;
     const ime = document.getElementById("ime");
-    if (ime) ime.focus();
+    if (ime) { e.preventDefault(); ime.focus(); }   /* preventDefault：否则默认焦点行为会把焦点抢回 body */
     const [x, y] = toFb(e);
     curX = x; curY = y; curInside = true;
     M._rv_mem_write32(MOUSE_X, x);
@@ -779,6 +779,8 @@ let lastInputAt = 0;
 document.addEventListener("input", e => {
   if (!loaded || !M) return;
   if (e.target && e.target.id !== "ime") return;
+  /* 组合中（拼音还没选字）绝对不能发：否则 "nihao" 会先被写进终端 */
+  if (e.isComposing || e.target.isComposing) return;
   const ime = e.target;
   const txt = ime.value;
   if (!txt) return;
@@ -801,7 +803,9 @@ document.addEventListener("paste", e => {
 
 document.addEventListener("keydown",e=>{
   if(!loaded||!M)return;
-  if(e.target && (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA")) return;
+  const isIme = e.target && e.target.id === "ime";
+  /* #ime 是输进入口：它的特殊键要正常发，普通字符交给 input 事件 */
+  if(!isIme && e.target && (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA")) return;
   /* 抽屉开关用 F12：D 是普通字符，mkdir/chmod/guide 都要用。
      之前把 D 拦成热键，等于废掉了终端里所有含 d 的命令。 */
   if(e.key === "F12"){
@@ -820,6 +824,7 @@ document.addEventListener("keydown",e=>{
   if(e.key==="Enter"){M._rv_uart_write(13);e.preventDefault();}
   else if(e.key==="Backspace"){M._rv_uart_write(127);e.preventDefault();}
   else if(e.key==="Tab"){M._rv_uart_write(9);e.preventDefault();}
+  else if(isIme){ return; }   /* 普通字符由 input 事件负责，避免重复 */
   else if(e.key.length>=1 && [...e.key].length===1){
     /* 同样要走 UTF-8：中文的 charCodeAt 是 >255 的码点，截断就成乱码 */
     for(const b of _enc.encode(e.key)) M._rv_uart_write(b);
