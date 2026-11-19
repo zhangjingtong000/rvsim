@@ -1021,6 +1021,7 @@ typedef struct {
 typedef struct { u32 x, y, w, h; } win_rect_t;
 
 static win_t g_wins[3];
+static int  g_z[3] = { 0, 1, 2 };   /* 从下到上的绘制顺序 */
 win_rect_t *kernel_win0(void) { return (win_rect_t *)&g_wins[0]; }
 
 static void monitor_draw(void)
@@ -1138,7 +1139,8 @@ static void wins_init(void)
     g_focus = 0;
 }
 
-/* 只重画边框与标题栏（聚焦切换的全部开销） */
+/* 只重画边框与标题栏。注意：这个函数直接写屏、不做裁剪，
+   现在聚焦切换走整屏按 z 序重画，这里只保留给局部刷新用。 */
 static void win_paint_chrome(int idx)
 {
     u32 *buf = (u32 *)FB_BASE;
@@ -1219,15 +1221,22 @@ static void taskbar_chips(void)
     }
 }
 
+/* 把窗口提到最上层：z 序里移到最后（最后画的在最上面） */
+static void win_raise(int idx)
+{
+    int pos = -1;
+    for (int i = 0; i < 3; i++) if (g_z[i] == idx) { pos = i; break; }
+    if (pos < 0 || pos == 2) return;
+    for (int i = pos; i < 2; i++) g_z[i] = g_z[i + 1];
+    g_z[2] = idx;
+}
+
 static void win_set_focus(int idx)
 {
     if (idx == g_focus) return;
-    int old = g_focus;
     g_focus = idx;
-    win_paint_chrome(old);
-    win_paint_chrome(idx);
-    taskbar_chips();
-    fb_commit(0);
+    win_raise(idx);
+    { extern void desktop_redraw(void); desktop_redraw(); }
 }
 
 static int win_hit(u32 mx, u32 my)
@@ -1279,6 +1288,7 @@ static void win_apply_action(int idx, int act)
         for (int i = 0; i < 3; i++)
             if (g_wins[i].visible) { g_focus = i; break; }
     } else {                             /* 最大化 / 还原 */
+        win_raise(idx);
         if (!w->maximized) {
             w->rx = w->x; w->ry = w->y; w->rw = w->w; w->rh = w->h;
             w->x = 0; w->y = 0;
@@ -1397,7 +1407,10 @@ static void desktop_clock(u32 secs)
     fb_text(buf, 800, 600, 800, 800 - 96, ty + 9, t, C_FG2, C_BG, 0);
 }
 
-/* 整屏重画：壁纸 + 三个窗口 + 任务栏。只在开机和拖动结束时调用。 */
+/* 整屏重画：壁纸 + 按 z 序逐个窗口（框架 + 内容）+ 任务栏。
+   关键：必须「一个窗口画完整再画下一个」，
+   之前写成「先画所有框架、再画所有内容」，
+   结果内容会穿透上层窗口（files 的列表画到 maximized 的 monitor 上）。 */
 void desktop_redraw(void)
 {
     u32 *buf = (u32 *)FB_BASE;
@@ -1407,40 +1420,44 @@ void desktop_redraw(void)
         for (u32 gx = 8; gx < 800; gx += 8)
             buf[gy * 800 + gx] = 0x121a26;
 
-    for (int i = 0; i < 3; i++) {
+    for (int zi = 0; zi < 3; zi++) {
+        int i = g_z[zi];
         win_t *w = &g_wins[i];
         if (!w->visible) continue;
-        /* 阴影：右下各两道暗边，让重叠窗口有层次（约 3k 像素，很便宜） */
+
+        /* 阴影先画（在窗口下面） */
         fb_rect(buf, 800, 600, 800, w->x + 6, w->y + w->h, w->w, 2, 0x040508);
         fb_rect(buf, 800, 600, 800, w->x + w->w, w->y + 6, 2, w->h, 0x040508);
         fb_rect(buf, 800, 600, 800, w->x + 3, w->y + w->h + 2, w->w, 1, 0x090c11);
         fb_rect(buf, 800, 600, 800, w->x + w->w + 2, w->y + 3, 1, w->h, 0x090c11);
+
         win_frame(buf, w->x, w->y, w->w, w->h, w->title, i == g_focus);
         fb_rect(buf, 800, 600, 800, w->x + 1, w->y + 24,
                 w->w - 2, w->h - 25, C_TERM);
+
+        /* 内容紧跟着框架画，保证被上层窗口覆盖 */
+        if (i == 0) {
+            extern void term_grid_redraw_all(void);
+            extern u32 term_grid_flush(void);
+            term_grid_redraw_all();
+            term_grid_flush();
+        } else if (i == 1) {
+            monitor_draw();
+        } else {
+            files_draw();
+        }
     }
 
-    /* 任务栏 */
+    /* 任务栏永远在最上层 */
     u32 ty = 600 - TASKBAR_H;
     fb_rect(buf, 800, 600, 800, 0, ty, 800, TASKBAR_H, 0x10141a);
-    fb_rect(buf, 800, 600, 800, 0, ty, 800, 1, 0x2b3644);        /* 顶部高光 */
-    fb_rect(buf, 800, 600, 800, 0, ty + TASKBAR_H - 2, 800, 2, 0x07090d); /* 底部暗边 */
+    fb_rect(buf, 800, 600, 800, 0, ty, 800, 1, 0x2b3644);
+    fb_rect(buf, 800, 600, 800, 0, ty + TASKBAR_H - 2, 800, 2, 0x07090d);
     fb_round_rect(buf, 800, 600, 800, 8, ty + 4, 72, 22, 0x171b21);
     fb_text(buf, 800, 600, 800, 16, ty + 7, "rvsh", C_ACC, 0, 0);
     taskbar_chips();
-    (void)ty;
     fb_text(buf, 800, 600, 800, 800 - 96, ty + 9, "00:00:00", C_FG2, 0, 0);
     fb_rect(buf, 800, 600, 800, 800 - 110, ty + 9, 1, 14, C_LINE);
-
-    /* 窗口内容 */
-    extern void term_grid_redraw_all(void);
-    extern u32 term_grid_flush(void);
-    if (g_wins[0].visible) {
-        term_grid_redraw_all();
-        term_grid_flush();   /* 标记脏了还得真的画出来 */
-    }
-    monitor_draw();
-    files_draw();
 
     if (g_menu_open) menu_draw();
 
