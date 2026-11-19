@@ -65,6 +65,28 @@ void uart_puts(const char *s);
 void uart_hex(u32 v);
 void uart_dec(int v);
 
+/* ── 帧缓冲 ── */
+void fb_init(u32 w, u32 h);
+void fb_plane(u32 n, u32 addr, u32 x, u32 y, u32 w, u32 h, u32 stride, u32 z);
+void fb_commit(u32 n);
+void fb_plane_move(u32 n, u32 x, u32 y);
+void fb_plane_scroll(u32 n, u32 src_y);
+void fb_fill(u32 *buf, u32 w, u32 h, u32 stride, u32 color);
+void fb_fill_fast(u32 *buf, u32 w, u32 h, u32 stride, u32 color);
+void fb_gradient_v(u32 *buf, u32 w, u32 h, u32 stride, u32 top, u32 bottom);
+void fb_rect(u32 *buf, u32 bw, u32 bh, u32 stride, u32 x, u32 y, u32 w, u32 h, u32 color);
+void fb_frame(u32 *buf, u32 bw, u32 bh, u32 stride, u32 x, u32 y, u32 w, u32 h, u32 color);
+void fb_round_rect(u32 *buf, u32 bw, u32 bh, u32 stride, u32 x, u32 y, u32 w, u32 h, u32 color);
+void fb_char(u32 *buf, u32 bw, u32 bh, u32 stride,
+             u32 x, u32 y, char ch, u32 fg, u32 bg, int draw_bg);
+u32  fb_text(u32 *buf, u32 bw, u32 bh, u32 stride,
+             u32 x, u32 y, const char *s, u32 fg, u32 bg, int draw_bg);
+void fb_cursor(u32 x, u32 y, u32 on);
+void term_grid_reset(void);
+int  term_grid_putc(char c);
+u32  term_grid_flush(void);
+extern u32 g_fb_w, g_fb_h;
+
 /* ── 输出重定向 ── */
 void redirect_begin(const char *name);
 void redirect_end(void);

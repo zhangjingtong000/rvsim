@@ -30,6 +30,28 @@ typedef struct {
     u32 claimed;
 } plic_t;
 
+/* 显示控制器：8 个平面，前端按 z 序合成。
+   内核画像素，宿主只做矩形搬运——等价于真实的 KMS 平面合成。 */
+#define DISP_PLANES 8
+
+typedef struct {
+    u32 fb_addr, x, y, w, h, stride;
+    u32 src_x, src_y;
+    u32 format, zorder, flags;
+    u32 d_seq;
+    u32 d_x0, d_y0, d_x1, d_y1;
+} disp_plane_t;
+
+typedef struct {
+    u32 w, h, format, enable;
+    u32 frame_seq;
+    u32 dmg_x0, dmg_y0, dmg_x1, dmg_y1;
+    u32 cursor_x, cursor_y, cursor_en;
+    u32 mouse_x, mouse_y, mouse_btn, mouse_ev;
+    u32 key_code, key_scan, key_mods, key_ev;
+    disp_plane_t plane[DISP_PLANES];
+} disp_t;
+
 typedef struct {
     bool poweroff;
     bool reboot;
@@ -38,6 +60,7 @@ typedef struct {
 
 extern clint_t  g_clint;
 extern uart_t   g_uart;
+extern disp_t   g_disp;
 extern plic_t   g_plic;
 extern syscon_t g_syscon;
 
@@ -48,6 +71,7 @@ extern bool g_password_seen;
 
 void  bus_init(void);
 u8   *bus_ram(void);
+void  disp_init(void);
 /* 返回 false 表示访问未映射（调用方决定是否 access fault） */
 bool  bus_read(u32 addr, int len, u32 *val);
 bool  bus_write(u32 addr, int len, u32 val);

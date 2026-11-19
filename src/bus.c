@@ -42,6 +42,7 @@ static u8 g_ram[RAM_SIZE] __attribute__((aligned(4096)));
 
 void bus_init(void)
 {
+    disp_init();
     memset(g_ram, 0, sizeof(g_ram));
     memset(&g_clint, 0, sizeof(g_clint));
     g_clint.mtimecmp = ~0ull;          /* 关键：复位全 1，避免中断风暴 */
@@ -275,6 +276,151 @@ void bus_hot_clear(void)
     for (u32 i = 0; i < HOT_PAGES; i++) { g_hot_read[i] = 0; g_hot_write[i] = 0; }
 }
 
+/* ── 显示控制器 ──
+   控制块走 MMIO，像素留在 RAM。宿主按平面 z 序做矩形合成，
+   等价于真实显示控制器的 plane 合成；像素内容全部由 guest 光栅化。 */
+disp_t g_disp;
+
+#define DISP_ID      0x52565331u     /* "RVS1" */
+#define DISP_VERSION 0x00010000u
+
+static void disp_plane_reset(u32 n)
+{
+    disp_plane_t *p = &g_disp.plane[n];
+    p->fb_addr = 0; p->x = 0; p->y = 0; p->w = 0; p->h = 0;
+    p->stride = 0; p->src_x = 0; p->src_y = 0;
+    p->format = 0; p->zorder = n; p->flags = 0;
+    p->d_seq = 0;
+    p->d_x0 = p->d_y0 = p->d_x1 = p->d_y1 = 0;
+}
+
+void disp_init(void)
+{
+    g_disp.w = 0; g_disp.h = 0; g_disp.format = 0; g_disp.enable = 0;
+    g_disp.frame_seq = 0;
+    g_disp.dmg_x0 = g_disp.dmg_y0 = 0;
+    g_disp.dmg_x1 = g_disp.dmg_y1 = 0;
+    g_disp.cursor_x = g_disp.cursor_y = g_disp.cursor_en = 0;
+    g_disp.mouse_x = g_disp.mouse_y = g_disp.mouse_btn = g_disp.mouse_ev = 0;
+    g_disp.key_code = g_disp.key_scan = g_disp.key_mods = g_disp.key_ev = 0;
+    for (u32 i = 0; i < DISP_PLANES; i++) disp_plane_reset(i);
+}
+
+static bool disp_read(u32 off, int len, u32 *val)
+{
+    (void)len;
+    disp_plane_t *pl = 0;
+    u32 pidx = 0, preg = 0;
+    if (off >= 0x100u) {
+        pidx = (off - 0x100u) / 0x40u;
+        preg = (off - 0x100u) % 0x40u;
+        if (pidx >= DISP_PLANES) return false;
+        pl = &g_disp.plane[pidx];
+    }
+
+    if (pl) {
+        switch (preg) {
+        case 0x00: *val = pl->fb_addr; break;
+        case 0x04: *val = pl->x; break;
+        case 0x08: *val = pl->y; break;
+        case 0x0C: *val = pl->w; break;
+        case 0x10: *val = pl->h; break;
+        case 0x14: *val = pl->stride; break;
+        case 0x18: *val = pl->src_x; break;
+        case 0x1C: *val = pl->src_y; break;
+        case 0x20: *val = pl->format; break;
+        case 0x24: *val = pl->zorder; break;
+        case 0x28: *val = pl->flags; break;
+        case 0x2C: *val = pl->d_seq; break;
+        default:   *val = 0; break;
+        }
+        return true;
+    }
+
+    switch (off) {
+    case 0x00: *val = DISP_ID; break;
+    case 0x04: *val = DISP_VERSION; break;
+    case 0x08: *val = g_disp.w; break;
+    case 0x0C: *val = g_disp.h; break;
+    case 0x10: *val = g_disp.format; break;
+    case 0x14: *val = g_disp.enable; break;
+    case 0x18: *val = g_disp.frame_seq; break;
+    case 0x38: *val = g_disp.cursor_x; break;
+    case 0x3C: *val = g_disp.cursor_y; break;
+    case 0x40: *val = g_disp.cursor_en; break;
+    case 0x44: *val = g_disp.mouse_x; break;
+    case 0x48: *val = g_disp.mouse_y; break;
+    case 0x4C: *val = g_disp.mouse_btn; break;
+    case 0x50: *val = g_disp.mouse_ev; break;
+    case 0x54: *val = g_disp.key_code; break;
+    case 0x58: *val = g_disp.key_scan; break;
+    case 0x5C: *val = g_disp.key_mods; break;
+    case 0x60: *val = g_disp.key_ev; break;
+    default:   *val = 0; break;
+    }
+    return true;
+}
+
+static bool disp_write(u32 off, int len, u32 val)
+{
+    (void)len;
+    disp_plane_t *pl = 0;
+    u32 preg = 0;
+    if (off >= 0x100u) {
+        u32 pidx = (off - 0x100u) / 0x40u;
+        preg = (off - 0x100u) % 0x40u;
+        if (pidx >= DISP_PLANES) return false;
+        pl = &g_disp.plane[pidx];
+    }
+
+    if (pl) {
+        switch (preg) {
+        case 0x00: pl->fb_addr = val; break;
+        case 0x04: pl->x = val; break;
+        case 0x08: pl->y = val; break;
+        case 0x0C: pl->w = val; break;
+        case 0x10: pl->h = val; break;
+        case 0x14: pl->stride = val; break;
+        case 0x18: pl->src_x = val; break;
+        case 0x1C: pl->src_y = val; break;
+        case 0x20: pl->format = val; break;
+        case 0x24: pl->zorder = val; break;
+        case 0x28: pl->flags = val; break;
+        case 0x30: pl->d_x0 = val; break;
+        case 0x34: pl->d_y0 = val; break;
+        case 0x38: pl->d_x1 = val; break;
+        case 0x3C: pl->d_x1 = val; pl->d_seq++; break;   /* 写 d_x1 即提交该平面 */
+        default: break;
+        }
+        return true;
+    }
+
+    switch (off) {
+    case 0x08: g_disp.w = val; break;
+    case 0x0C: g_disp.h = val; break;
+    case 0x10: g_disp.format = val; break;
+    case 0x14: g_disp.enable = val; break;
+    case 0x20: g_disp.dmg_x0 = val; break;
+    case 0x24: g_disp.dmg_y0 = val; break;
+    case 0x28: g_disp.dmg_x1 = val; break;
+    case 0x2C: g_disp.dmg_x1 = val; break;
+    case 0x30:
+        if (val) g_disp.frame_seq++;
+        break;
+    /* 以下由前端写：鼠标/键盘事件 */
+    case 0x44: g_disp.mouse_x = val; break;
+    case 0x48: g_disp.mouse_y = val; break;
+    case 0x4C: g_disp.mouse_btn = val; break;
+    case 0x50: g_disp.mouse_ev++; g_disp.mouse_ev = g_disp.mouse_ev; break;
+    case 0x54: g_disp.key_code = val; break;
+    case 0x58: g_disp.key_scan = val; break;
+    case 0x5C: g_disp.key_mods = val; break;
+    case 0x60: g_disp.key_ev++; break;
+    default: break;
+    }
+    return true;
+}
+
 bool bus_read(u32 addr, int len, u32 *val)
 {
     bus_record_access(addr, 0);
@@ -294,6 +440,8 @@ bool bus_read(u32 addr, int len, u32 *val)
         return uart_read(addr - g_devmap.uart_base, len, val);
     if (addr >= g_devmap.plic_base && addr < g_devmap.plic_base + PLIC_SIZE)
         return plic_read(addr - g_devmap.plic_base, len, val);
+    if (addr >= DISP_BASE && addr < DISP_BASE + DISP_SIZE)
+        return disp_read(addr - DISP_BASE, len, val);
     if (addr >= g_devmap.syscon_base && addr < g_devmap.syscon_base + SYSCON_SIZE) { *val = 0; return true; }
     return false;
 }
@@ -315,6 +463,8 @@ bool bus_write(u32 addr, int len, u32 val)
         return uart_write(addr - g_devmap.uart_base, len, val);
     if (addr >= g_devmap.plic_base && addr < g_devmap.plic_base + PLIC_SIZE)
         return plic_write(addr - g_devmap.plic_base, len, val);
+    if (addr >= DISP_BASE && addr < DISP_BASE + DISP_SIZE)
+        return disp_write(addr - DISP_BASE, len, val);
     if (addr >= g_devmap.syscon_base && addr < g_devmap.syscon_base + SYSCON_SIZE)
         return syscon_write(addr - g_devmap.syscon_base, val);
     return false;

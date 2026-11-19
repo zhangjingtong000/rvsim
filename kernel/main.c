@@ -391,6 +391,7 @@ static const cap_t g_caps[] = {
     {"mkdir",    "mkdir <path>",             "",                0, "创建目录（名字里可以带 / 表示层级）"},
     {"login",    "login <user>",             "root|ai|guest",   1, "切换当前用户（uid 0 是 root）"},
     {"whoami",   "whoami",                   "",                0, "当前用户与 uid"},
+    {"clear",    "clear",                    "",                0, "清空窗口里的终端内容（不动 UART 历史）"},
     {"chmod",    "chmod <name> <0|1>",       "0=仅属主可写 1=所有人可写", 1, "改文件权限（仅 root）"},
 };
 
@@ -933,6 +934,210 @@ static void fs_seed(void)
     }
 }
 
+/* ── 静态桌面 ──
+   全部像素由 guest 画：壁纸、窗口框、标题栏、任务栏、时钟。
+   窗口内容（终端文本、进程表、文件列表）在后续阶段接入。 */
+#define C_BG      0x0c0e12
+#define C_PANEL   0x111419
+#define C_LINE    0x2b323c
+#define C_LINE2   0x1d222a
+#define C_FG      0xe9ecf0
+#define C_FG2     0xa3abb6
+#define C_FG3     0x7b8595
+#define C_ACC     0x5eead4
+#define C_TERM    0x050608
+#define C_TEXT    0xc9d1d9
+
+#define WIN_TERM_X 18
+#define WIN_TERM_Y 46
+#define WIN_TERM_W 500
+#define WIN_TERM_H 384
+
+#define WIN_MON_X  530
+#define WIN_MON_Y  46
+#define WIN_MON_W  252
+#define WIN_MON_H  190
+
+#define WIN_FS_X   530
+#define WIN_FS_Y   248
+#define WIN_FS_W   252
+#define WIN_FS_H   182
+
+#define TASKBAR_H  30
+
+static void win_frame(u32 *buf, u32 x, u32 y, u32 w, u32 h, const char *title, int focused)
+{
+    /* 外框 + 标题栏 */
+    fb_rect(buf, 800, 600, 800, x, y, w, h, C_PANEL);
+    fb_frame(buf, 800, 600, 800, x, y, w, h, focused ? C_ACC : C_LINE);
+    fb_rect(buf, 800, 600, 800, x + 1, y + 1, w - 2, 22, focused ? 0x171b21 : 0x12151a);
+    fb_rect(buf, 800, 600, 800, x + 1, y + 23, w - 2, 1, C_LINE2);
+    fb_text(buf, 800, 600, 800, x + 8, y + 4, title, focused ? C_FG : C_FG2, 0, 0);
+    /* 三个圆角按钮 */
+    for (int i = 0; i < 3; i++) {
+        u32 bx = x + w - 18 - i * 14;
+        fb_round_rect(buf, 800, 600, 800, bx, y + 8, 8, 8, C_FG3);
+    }
+}
+
+/* 把秒数画成 HH:MM:SS，只重画这一小块（8 字符 ~1.6k 指令） */
+/* 极简 itoa：内核没有 libc */
+static int itoa_u32(u32 v, char *out)
+{
+    char tmp[12];
+    int n = 0;
+    if (v == 0) { out[0] = '0'; out[1] = 0; return 1; }
+    while (v) { tmp[n++] = (char)('0' + v % 10u); v /= 10u; }
+    for (int i = 0; i < n; i++) out[i] = tmp[n - 1 - i];
+    out[n] = 0;
+    return n;
+}
+
+static void hex_u32(u32 v, char *out)
+{
+    const char *d = "0123456789abcdef";
+    out[0] = '0'; out[1] = 'x';
+    for (int i = 0; i < 8; i++) out[2 + i] = d[(v >> (28 - i * 4)) & 0xF];
+    out[10] = 0;
+}
+
+#define MON_BODY_X (WIN_MON_X + 10)
+#define MON_BODY_Y (WIN_MON_Y + 34)
+
+/* 进程监视窗口：显示的是真实的进程表 */
+static void monitor_draw(void)
+{
+    u32 *buf = (u32 *)FB_BASE;
+    const u32 line = 16;
+    u32 y = MON_BODY_Y;
+
+    fb_rect(buf, 800, 600, 800, WIN_MON_X + 1, WIN_MON_Y + 24,
+            WIN_MON_W - 2, WIN_MON_H - 25, C_TERM);
+    fb_text(buf, 800, 600, 800, MON_BODY_X, y, "PID STATE  PC", C_FG3, C_TERM, 1);
+    y += line;
+
+    char num[12], hx[12];
+    for (int i = 0; i < NPROC && y + 16 < WIN_MON_Y + WIN_MON_H - 6; i++) {
+        if (procs[i].stack_pa == 0) continue;
+        char rowbuf[32];
+        int k = 0;
+        itoa_u32((u32)i, num);
+        for (int j = 0; num[j]; j++) rowbuf[k++] = num[j];
+        while (k < 4) rowbuf[k++] = ' ';
+        const char *st = (procs[i].state == PROC_RUN) ? "RUN  " :
+                         (procs[i].state == PROC_READY) ? "READY" : "EXIT ";
+        for (int j = 0; j < 5; j++) rowbuf[k++] = st[j];
+        rowbuf[k++] = ' ';
+        hex_u32(procs[i].pc, hx);
+        for (int j = 0; j < 10; j++) rowbuf[k++] = hx[j];
+        rowbuf[k] = 0;
+        u32 col = (procs[i].state == PROC_RUN) ? C_ACC : C_TEXT;
+        fb_text(buf, 800, 600, 800, MON_BODY_X, y, rowbuf, col, C_TERM, 1);
+        y += line;
+    }
+}
+
+#define FS_BODY_X (WIN_FS_X + 10)
+#define FS_BODY_Y (WIN_FS_Y + 34)
+
+/* 文件窗口：显示的是真实的 RAMFS 内容 */
+static void files_draw(void)
+{
+    u32 *buf = (u32 *)FB_BASE;
+    const u32 line = 16;
+    u32 y = FS_BODY_Y;
+
+    fb_rect(buf, 800, 600, 800, WIN_FS_X + 1, WIN_FS_Y + 24,
+            WIN_FS_W - 2, WIN_FS_H - 25, C_TERM);
+    fb_text(buf, 800, 600, 800, FS_BODY_X, y, "NAME          SIZE", C_FG3, C_TERM, 1);
+    y += line;
+
+    char nm[24]; u32 sz; char num[12];
+    for (u32 i = 0; i < 16 && y + 16 < WIN_FS_Y + WIN_FS_H - 6; i++) {
+        if (!fs_entry(i, nm, sizeof(nm), &sz)) continue;
+        if (nm[0] == 0) continue;
+        char rowbuf[40];
+        int k = 0;
+        for (int j = 0; nm[j] && k < 20; j++) rowbuf[k++] = nm[j];
+        while (k < 20) rowbuf[k++] = ' ';
+        itoa_u32(sz, num);
+        for (int j = 0; num[j]; j++) rowbuf[k++] = num[j];
+        rowbuf[k] = 0;
+        fb_text(buf, 800, 600, 800, FS_BODY_X, y, rowbuf,
+                fs_entry_type(i) == 1 ? C_ACC : C_TEXT, C_TERM, 1);
+        y += line;
+    }
+}
+
+static void desktop_clock(u32 secs)
+{
+    u32 *buf = (u32 *)FB_BASE;
+    u32 ty = 600 - TASKBAR_H;
+    u32 hh = (secs / 3600u) % 24u;
+    u32 mm = (secs / 60u) % 60u;
+    u32 ss = secs % 60u;
+    char t[9];
+    t[0] = (char)('0' + hh / 10); t[1] = (char)('0' + hh % 10); t[2] = ':';
+    t[3] = (char)('0' + mm / 10); t[4] = (char)('0' + mm % 10); t[5] = ':';
+    t[6] = (char)('0' + ss / 10); t[7] = (char)('0' + ss % 10); t[8] = 0;
+    /* 先清掉旧的 8 个字符位，再写新的 */
+    fb_rect(buf, 800, 600, 800, 800 - 96, ty + 9, 64, 16, C_BG);
+    fb_text(buf, 800, 600, 800, 800 - 96, ty + 9, t, C_FG2, C_BG, 0);
+}
+
+static void desktop_draw(void)
+{
+    u32 *buf = (u32 *)FB_BASE;
+
+    /* 壁纸：竖向渐变 + 32px 点阵 */
+    fb_gradient_v(buf, 800, 600, 800, 0x141c28, 0x07080a);
+    for (u32 gy = 32; gy < 600 - TASKBAR_H; gy += 32)
+        for (u32 gx = 32; gx < 800; gx += 32)
+            buf[gy * 800 + gx] = 0x1a2330;
+
+    /* 三个窗口 */
+    win_frame(buf, WIN_TERM_X, WIN_TERM_Y, WIN_TERM_W, WIN_TERM_H, "rvsh - terminal", 1);
+    fb_rect(buf, 800, 600, 800, WIN_TERM_X + 1, WIN_TERM_Y + 24,
+            WIN_TERM_W - 2, WIN_TERM_H - 25, C_TERM);
+
+    win_frame(buf, WIN_MON_X, WIN_MON_Y, WIN_MON_W, WIN_MON_H, "monitor", 0);
+    fb_rect(buf, 800, 600, 800, WIN_MON_X + 1, WIN_MON_Y + 24,
+            WIN_MON_W - 2, WIN_MON_H - 25, C_TERM);
+    fb_text(buf, 800, 600, 800, WIN_MON_X + 10, WIN_MON_Y + 34,
+            "PID  STATE  PC", C_FG3, 0, 0);
+
+    win_frame(buf, WIN_FS_X, WIN_FS_Y, WIN_FS_W, WIN_FS_H, "files", 0);
+    fb_rect(buf, 800, 600, 800, WIN_FS_X + 1, WIN_FS_Y + 24,
+            WIN_FS_W - 2, WIN_FS_H - 25, C_TERM);
+
+    /* 任务栏 */
+    u32 ty = 600 - TASKBAR_H;
+    fb_rect(buf, 800, 600, 800, 0, ty, 800, TASKBAR_H, C_BG);
+    fb_rect(buf, 800, 600, 800, 0, ty, 800, 1, C_LINE);
+
+    /* 左侧：开始按钮 */
+    fb_round_rect(buf, 800, 600, 800, 8, ty + 4, 72, 22, 0x171b21);
+    fb_text(buf, 800, 600, 800, 16, ty + 7, "rvsh", C_ACC, 0, 0);
+
+    /* 中间：每个窗口一枚 chip */
+    struct { const char *n; u32 x; u32 w; } chips[3] = {
+        { "terminal", 88, 76 }, { "monitor", 170, 70 }, { "files", 246, 56 }
+    };
+    for (int i = 0; i < 3; i++) {
+        fb_round_rect(buf, 800, 600, 800, chips[i].x, ty + 5, chips[i].w, 20, 0x171b21);
+        fb_text(buf, 800, 600, 800, chips[i].x + 7, ty + 9, chips[i].n,
+                i == 0 ? C_FG : C_FG2, 0, 0);
+        if (i == 0) fb_rect(buf, 800, 600, 800, chips[i].x, ty + 25, chips[i].w, 2, C_ACC);
+    }
+
+    /* 右侧：时钟（先用固定值，随后由 tick 更新） */
+    fb_text(buf, 800, 600, 800, 800 - 96, ty + 9, "00:00:00", C_FG2, 0, 0);
+    fb_rect(buf, 800, 600, 800, 800 - 110, ty + 9, 1, 14, C_LINE);
+
+    fb_plane(0, FB_BASE, 0, 0, 800, 600, 800, 0);
+    fb_commit(0);
+}
+
 void kmain(void)
 {
     kprintf("\n=== rvsim mini-kernel (multiproc) ===\n");
@@ -949,6 +1154,12 @@ void kmain(void)
         kprintf("[S] 初始程序装载失败\n");
         for (;;) { }
     }
+
+    /* ── 图形：整个桌面由 guest 自己光栅化 ──
+       宿主只把这块 RAM 贴到画布上，不做任何 UI 绘制。 */
+    fb_init(800, 600);
+    term_grid_reset();
+    desktop_draw();
 
     /* 用户页表：只映射代码页；数据页与栈页留给缺页异常按需分配 */
     u32 uvpn2 = VPN2(g_user_base);
@@ -1286,6 +1497,34 @@ void shell_loop(void)
     volatile u8 *lsr = (volatile u8 *)(UART_BASE + 5);
     volatile u8 *rbr = (volatile u8 *)(UART_BASE + 0);
     for (;;) {
+        /* 只在真有脏行时才重画+提交：否则每轮都重贴 800x600，
+           既拖慢命令执行，也让前端每帧做无谓的像素转换。 */
+        if (term_grid_flush()) fb_commit(0);
+
+        /* 进程表与文件列表：每 2 秒刷新一次，内容是真实数据 */
+        {
+            static u32 last_ui = 0xFFFFFFFFu;
+            u64 mt2 = *(volatile u64 *)(CLINT_BASE + 0xBFF8u);
+            u32 tick = (u32)(mt2 / 2000000ull);
+            if (tick != last_ui) {
+                last_ui = tick;
+                monitor_draw();
+                files_draw();
+                fb_commit(0);
+            }
+        }
+
+        /* 实时时钟：每跨一秒重画一次任务栏右下角 */
+        {
+            static u32 last_sec = 0xFFFFFFFFu;
+            u64 mt = *(volatile u64 *)(CLINT_BASE + 0xBFF8u);
+            u32 sec = (u32)(mt / 1000000ull);
+            if (sec != last_sec) {
+                last_sec = sec;
+                desktop_clock(sec);
+                fb_commit(0);
+            }
+        }
         if (*lsr & 0x01) shell_input((char)*rbr);
         if (g_run_flag) {
             /* 必须在调用前算好并清零：kernel_apply_run 进用户态后不返回，

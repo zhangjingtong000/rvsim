@@ -43,10 +43,10 @@ function record(name, ok, detail) {
      只靠「出现提示符」判断会在输出中途误判（回显里就带着提示符）。 */
   function send(cmd, maxB = 320, minLen = 0) {
     out = "";
-    for (const ch of cmd + "\r") { M._rv_uart_write(ch.charCodeAt(0)); step(40000); drain(); }
+    for (const ch of cmd + "\r") { M._rv_uart_write(ch.charCodeAt(0)); step(600000); drain(); }
     const mark = out.length;
     for (let b = 0; b < maxB; b++) {
-      step(40000); drain();
+      step(600000); drain();
       if (out.length > mark && out.length >= minLen &&
           out.lastIndexOf("rvsh> ") > out.length - 20 && b > 1) break;
     }
@@ -54,7 +54,8 @@ function record(name, ok, detail) {
   }
   const json = (s) => { for (const l of s.split("\n")) { const t = l.trim(); if (t.startsWith("{")) { try { return JSON.parse(t); } catch (e) {} } } return null; };
 
-  step(800000); drain(); out = "";
+  /* 启动现在包含整屏桌面绘制（壁纸+窗口），实测约 540 万步 */
+  step(6000000); drain(); out = "";
 
   // ── T1: manifest 可解析且非空 ──
   const mOut = send("manifest", 320, 2000);

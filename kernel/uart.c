@@ -54,6 +54,9 @@ void uart_putc(char c)
     if (g_redir_name && g_redir_len < sizeof(g_redir_buf) - 1)
         g_redir_buf[g_redir_len++] = c;
 
+    /* 同时写进窗口的文本网格：屏幕上的终端就是真实输出 */
+    term_grid_putc(c);
+
     g_uart_tail[g_uart_head] = c;
     g_uart_head = (g_uart_head + 1u) % UART_TAIL_CAP;
     if (g_uart_tail_n < UART_TAIL_CAP) g_uart_tail_n++;

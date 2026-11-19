@@ -28,6 +28,14 @@ typedef int64_t  s64;
 #define PLIC_SIZE    0x00400000u
 
 #define UART_BASE    0x10000000u
+/* 显示控制器：控制块放 MMIO，帧缓冲放 RAM（guest 写像素是普通 store，
+   宿主能零拷贝拿到指针建 ImageData）。 */
+#define DISP_BASE    0x10003000u
+#define DISP_SIZE    0x1000u
+#define FB_BASE      0x83000000u
+#define FB_MAX_W     1024u
+#define FB_MAX_H     768u
+#define FB_MAX_BPP   4u
 #define UART_SIZE    0x00000100u
 
 /* CLINT 寄存器偏移 */

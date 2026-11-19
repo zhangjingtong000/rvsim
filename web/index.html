@@ -75,10 +75,14 @@ button.wide{flex:1}
 .termwrap{display:flex;flex-direction:column;height:100%;padding:0;
   min-height:0;overflow:hidden}   /* flex item 默认 min-height:auto，
                                      不设 0 的话容器会被内容撑开，#term 就永远滚不动 */
-.termbar{height:38px;display:flex;align-items:center;gap:10px;padding:0 16px;
+.termbar{height:30px;display:flex;align-items:center;gap:10px;padding:0 16px;
          border-bottom:1px solid var(--line);background:var(--s1);font-family:var(--mono);font-size:11px;color:var(--fg3)}
 .termbar b{color:var(--fg2);font-weight:500}
-#term{flex:1;min-height:0;overflow-y:auto;background:#050608;padding:14px 16px;
+#screen-wrap{display:flex;align-items:flex-start;justify-content:center;
+  background:#040507;border-bottom:1px solid var(--line);padding:0;flex:1 1 auto;min-height:0;overflow:hidden}
+#screen{max-width:100%;max-height:100%;width:auto;height:auto;
+  aspect-ratio:4 / 3;image-rendering:pixelated;display:block}
+#term{flex:0 0 15vh;min-height:0;overflow-y:auto;background:#050608;padding:10px 14px;
       font-family:var(--mono);font-size:12.5px;line-height:1.55;color:#c9d1d9;
       white-space:pre-wrap;word-break:break-all;cursor:text}
 #term{outline:none}
@@ -177,6 +181,9 @@ main > .col:last-child{overflow-y:auto;max-height:calc(100vh - 40px)}
 
   <!-- 中：终端 -->
   <div class="termwrap" style="background:var(--s1);border-left:1px solid var(--line);border-right:1px solid var(--line)">
+    <div id="screen-wrap">
+      <canvas id="screen" width="800" height="600"></canvas>
+    </div>
     <div class="termbar">
       <b>UART</b><span>115200 8N1</span>
       <div class="grow"></div>
@@ -262,6 +269,99 @@ function renderSnaps(snaps, plans){
     for(const x of plans.plans)
       h += `<div class="snap"><b>计划 ${x.id}</b> ${x.intent} ${x.arg || ""}</div>`;
   $("snaps").innerHTML = h || '<div class="hint">无</div>';
+}
+
+
+/* 屏幕合成：像素全部由 guest 画在 RAM 里，
+   这里只按 z 序把平面矩形搬到画布，等价于真实显示控制器的平面合成。 */
+let scrCtx = null, scrW = 1024, scrH = 768;
+let dispPtr = 0, ramPtr = 0;
+let planeCanvases = [], planeSeqs = [];
+
+function screenInit(){
+  const cv = document.getElementById("screen");
+  if(!cv) return;
+  scrCtx = cv.getContext("2d");
+  scrCtx.imageSmoothingEnabled = false;
+  for(let i = 0; i < 8; i++){
+    const c = document.createElement("canvas");
+    c.width = 800; c.height = 600;
+    planeCanvases.push(c);
+    planeSeqs.push(-1);
+  }
+}
+
+function screenReset(){
+  for(let i = 0; i < 8; i++) planeSeqs[i] = -1;
+}
+
+function blitPlane(i, base){
+  const A = M.HEAPU32;
+  const addr = A[base + 0];
+  const w    = A[base + 3];
+  const h    = A[base + 4];
+  const stride = A[base + 5];
+  const srcY = A[base + 7];
+  const seq  = A[base + 11];
+  if(!addr || !w || !h) return;
+  if(planeSeqs[i] === seq) return;
+  planeSeqs[i] = seq;
+
+  /* subarray 用的是 wasm 线性内存的绝对偏移，必须加上 g_ram 的基址 */
+  const off = (ramPtr + (addr - 0x80000000)) >>> 2;
+  const src = M.HEAPU32.subarray(off, off + stride * (srcY + h));
+  const c = planeCanvases[i];
+  if(c.width !== w || c.height !== h){ c.width = w; c.height = h; }
+  const ctx = c.getContext("2d");
+  const img = ctx.createImageData(w, h);
+  const d = img.data;
+  for(let y = 0; y < h; y++){
+    const row = (srcY + y) * stride;
+    let di = y * w * 4;
+    for(let x = 0; x < w; x++){
+      const v = src[row + x];
+      d[di]   = (v >> 16) & 0xFF;
+      d[di+1] = (v >> 8) & 0xFF;
+      d[di+2] = v & 0xFF;
+      d[di+3] = 255;
+      di += 4;
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+}
+
+function screenRender(){
+  if(!scrCtx || !M || !loaded) return;
+  if(!dispPtr){ dispPtr = M._rv_disp_ptr(); ramPtr = M._rv_ram_ptr(); }
+  if(!dispPtr) return;
+
+  const A = M.HEAPU32;
+  const base = dispPtr >>> 2;
+  const sw = A[base + 0], sh = A[base + 1];
+  if(!sw || !sh) return;
+  if(sw !== scrW || sh !== scrH){
+    scrW = sw; scrH = sh;
+    const cv = document.getElementById("screen");
+    cv.width = sw; cv.height = sh;
+  }
+
+  scrCtx.fillStyle = "#000";
+  scrCtx.fillRect(0, 0, scrW, scrH);
+
+  const order = [];
+  for(let i = 0; i < 8; i++){
+    const pb = base + (0x50 >> 2) + i * (0x40 >> 2);
+    const w = A[pb + 3], h = A[pb + 4];
+    if(!w || !h) continue;
+    order.push({ i: i, pb: pb, z: A[pb + 9] });
+  }
+  order.sort(function(a, b){ return a.z - b.z; });
+
+  for(const o of order){
+    blitPlane(o.i, o.pb);
+    const x = A[o.pb + 1], y = A[o.pb + 2];
+    scrCtx.drawImage(planeCanvases[o.i], x, y);
+  }
 }
 
 function renderFiles(o){
@@ -377,6 +477,7 @@ function boot(bytes,name){
   loaded=true; total=0;
   /* 重载内核要清掉上一份镜像留下的面板数据，否则会显示旧快照/旧进程 */
   sniffBuf = ""; capsSeen.clear(); atBottom = true;
+  screenReset();
   $("procs").innerHTML = '<div class="hint">读取中…</div>';
   $("events").innerHTML = '<div class="hint">读取中…</div>';
   $("snaps").innerHTML = '<div class="hint">读取中…</div>';
@@ -394,10 +495,11 @@ function boot(bytes,name){
      读完之后清屏重开，终端回到干净的提示符。 */
   setTimeout(()=>{ sendCmd("manifest"); }, 900);
   setTimeout(()=>{
+    sendCmd("clear");           /* 先让内核清掉窗口网格里的启动残留 */
     term.innerHTML = '<span class="cursor"></span>';
     curEl = term.querySelector(".cursor");
     total = 0;
-    sendCmd("ps");
+    setTimeout(()=>sendCmd("ps"), 400);
   }, 2600);
 
   /* 之后每 3 秒轮询一次事件流、快照与计划。
@@ -477,6 +579,7 @@ function tick(){
   if(!M||!loaded||!ticking){ticking=false;return;}
   const res=stepBudget(speed>=2?10:2);
   pumpUart();
+  screenRender();
   frameNo++;
   /* 全速阶段最多持续约 600 帧（10 秒）：再久说明镜像不需要那么快，
      强制降到常驻档，避免一个异常镜像把页面 CPU 吃满。 */
@@ -603,6 +706,7 @@ $("reg").onclick=e=>{
 
 createRvsim().then(m=>{
   M=m;ubuf=m._malloc(4096);
+  screenInit();
   setState("就绪","");
   // 自动启动内核，让用户一打开就看到东西
   bootUrl("images/kernel.elf","mini-kernel");

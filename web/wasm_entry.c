@@ -75,6 +75,12 @@ EMSCRIPTEN_KEEPALIVE int rv_cycles(void)  { return (int)g_cpu.cycles; }
 EMSCRIPTEN_KEEPALIVE int rv_result(void)  { return g_last_result; }
 EMSCRIPTEN_KEEPALIVE int rv_insn(void)    { return (int)g_cpu.cur_instr; }
 EMSCRIPTEN_KEEPALIVE int rv_csr(int a)    { u32 v = 0; csr_read_priv(&g_cpu.csr, (u32)a, &v); return (int)v; }
+/* 显示控制器结构指针：前端按偏移读平面参数，据此做矩形合成 */
+EMSCRIPTEN_KEEPALIVE void *rv_disp_ptr(void) { return (void *)&g_disp; }
+
+/* RAM 起始指针：framebuffer 就在 RAM 里，前端零拷贝建 ImageData */
+EMSCRIPTEN_KEEPALIVE void *rv_ram_ptr(void) { return (void *)bus_ram(); }
+
 EMSCRIPTEN_KEEPALIVE int rv_mem(int a)    { u32 v = 0; bus_read((u32)a, 1, &v); return (int)v; }
 /* 读 32 位：前端用它读内核导出的进程表（RAM 顶页 0x83FFF000） */
 EMSCRIPTEN_KEEPALIVE int rv_read32(int a) { u32 v = 0; bus_read((u32)a, 4, &v); return (int)v; }
