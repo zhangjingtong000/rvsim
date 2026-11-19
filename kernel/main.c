@@ -1046,6 +1046,7 @@ typedef struct {
     u32 visible;    /* 1 = 可见 */
     u32 x, y;       /* 窗口位置（画布坐标，宿主按比例换算） */
     u32 z;          /* z 序，越大越靠前 */
+    u32 win_w, win_h;   /* 窗口实际尺寸（最大化后会变，和内容画布尺寸不同） */
 } win_info_t;
 
 /* 固定地址：宿主直接按这个地址读，不必每次编译后重新查符号 */
@@ -1172,6 +1173,11 @@ static void win_info_sync(void)
         g_win_info[i].visible = g_wins[i].visible ? 1u : 0u;
         g_win_info[i].x = g_wins[i].x;
         g_win_info[i].y = g_wins[i].y;
+        /* 关键：窗口尺寸会被最大化改变，必须单独暴露。
+           之前前端读的 w/h 是内容画布尺寸（固定 300），
+           所以内核明明最大化了，前端画出来还是原尺寸。 */
+        g_win_info[i].win_w = g_wins[i].w;
+        g_win_info[i].win_h = g_wins[i].h;
         int zz = 0;
         for (int k = 0; k < 3; k++) if (g_z[k] == i) zz = k;
         g_win_info[i].z = (u32)zz;
@@ -1389,6 +1395,32 @@ static void win_apply_action(int idx, int act)
         }
     }
     desktop_redraw();
+}
+
+/* ── 宿主 → 内核 的窗口命令字 ──
+   前端不擅长算窗控点的命中坐标（视觉顺序和内核坐标顺序对不上，
+   试过几轮都有偏差）。改成直接下发命令：高 4 位是窗口号，
+   低 4 位是动作（0 关闭 / 1 最小化 / 2 最大化）。
+   内核执行完把命令字清零。 */
+#define WIN_CMD_PA 0x83FFE200u
+
+static void win_cmd_poll(void)
+{
+    volatile u32 *cmd = (volatile u32 *)WIN_CMD_PA;
+    u32 v = *cmd;
+    if (!v || v == 0xFFFFFFFFu) return;
+    *cmd = 0;
+    u32 idx = v / 10u, act = v % 10u;
+    if (idx >= 3) return;
+    if (act == 5) {                  /* 5 = 只恢复可见 + 聚焦（任务栏/菜单用） */
+        g_wins[idx].visible = 1;
+        g_focus = (int)idx;
+        win_raise((int)idx);
+        { extern void desktop_redraw(void); desktop_redraw(); }
+        return;
+    }
+    if (act > 2) act = 0;
+    win_apply_action((int)idx, (int)act);
 }
 
 /* 鼠标事件：点击聚焦 + 标题栏拖动 */
@@ -1974,6 +2006,7 @@ void shell_loop(void)
         if (term_grid_flush()) fb_commit(0);
 
         desktop_mouse();
+        win_cmd_poll();
 
         /* 不再定时整屏重绘：一次重绘约 0.4-0.7 秒，期间屏幕处于
            「清壁纸 -> 画窗口」的中间态，看起来像闪烁，而且这期间

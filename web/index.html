@@ -146,6 +146,22 @@ button.wide{flex:1}
 .win-dots i:hover{filter:brightness(1.35)}
 .win-body{display:block;image-rendering:pixelated;background:#12161d}
 
+#startMenu{position:absolute;left:14px;bottom:62px;width:196px;padding:6px;z-index:70;
+  border-radius:12px;background:rgba(22,26,33,.94);
+  -webkit-backdrop-filter:blur(24px) saturate(160%);backdrop-filter:blur(24px) saturate(160%);
+  border:1px solid rgba(255,255,255,.09);
+  box-shadow:0 20px 50px -12px rgba(0,0,0,.75);
+  font:500 13px/1 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC",system-ui,sans-serif;
+  color:rgba(236,241,246,.85);animation:smIn .14s ease}
+@keyframes smIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+.sm-title{padding:8px 10px 9px;font-size:11.5px;letter-spacing:.05em;
+  color:rgba(236,241,246,.45);border-bottom:1px solid rgba(255,255,255,.07);margin-bottom:4px}
+.sm-item{display:flex;align-items:center;gap:9px;padding:8px 10px;border-radius:8px;
+  cursor:pointer;transition:background .12s,color .12s}
+.sm-item:hover{background:rgba(94,234,212,.16);color:#c8fff4}
+.sm-ico{width:16px;text-align:center;opacity:.75}
+.sm-sep{height:1px;background:rgba(255,255,255,.07);margin:4px 6px}
+
 #dock{position:absolute;left:0;right:0;bottom:0;height:54px;display:flex;align-items:center;gap:10px;
   padding:0 14px;
   background:rgba(14,18,24,.72);
@@ -523,27 +539,53 @@ function winInit() {
     winLayer.appendChild(el);
     winEls.push({ el, ctx: el.querySelector(".win-body").getContext("2d"), body: el.querySelector(".win-body"), w: 0, h: 0, seq: 0 });
   }
-  // 窗控点：红=关闭 黄=最小化 绿=最大化，换算成 guest 逻辑坐标发过去。
-  // 用 forEach 的索引而不是 dataset，避免属性读取出错导致点到隔壁按钮。
+  // 窗控点：直接下发命令字（0x83FFE200 = 窗口号*10 + 动作）
+  // 不再让前端重算命中坐标——视觉顺序和内核坐标顺序对不上，试了几轮都有偏差。
+  const sendWinCmd = (idx, act) => {
+    if (!M) return;
+    const off = (M._rv_ram_ptr() + (0x83FFE200 - 0x80000000)) >>> 2;
+    M.HEAPU32[off] = idx * 10 + act;
+  };
   for (let i = 0; i < WIN_SLOTS; i++) {
     winEls[i].el.querySelectorAll(".win-dots i").forEach((dot, act) => {
       dot.onclick = (ev) => {
         ev.stopPropagation();
-        const A = M.HEAPU32;
-        const base = (M._rv_ram_ptr() + (WIN_INFO_PA - 0x80000000)) >>> 2;
-        const b = base + i * 9;
-        const x = A[b + 6], y = A[b + 7], w = A[b + 1];
-        // 与内核 win_chrome_hit 一致：红=x+w-20, 黄=x+w-33, 绿=x+w-46，y+8..y+20
-        // 视觉从左到右是 红/黄/绿；内核的 x 是从右往左排的，
-        // 所以第 act 个点对应内核的 (2-act) 号位置
-        sendGuestClick([x + w - 20 - (2 - act) * 13 + 4, y + 13]);
+        sendWinCmd(i, act);     // act: 0=关闭 1=最小化 2=最大化，顺序与视觉一致
       };
     });
   }
 
   // 汉堡：开始菜单（guest 的任务栏按钮在 8..80, 570..600）
+  // 汉堡：DOM 版本的开始菜单（外壳已经是 DOM，菜单没必要再塞回 guest 画布）
   const launch = document.getElementById("dockLaunch");
-  if (launch) launch.onclick = () => sendGuestClick([40, 585]);
+  if (launch) launch.onclick = (ev) => {
+    ev.stopPropagation();
+    let m = document.getElementById("startMenu");
+    if (m) { m.remove(); return; }
+    m = document.createElement("div");
+    m.id = "startMenu";
+    m.innerHTML = '<div class="sm-title">rvsim 0.9</div>'
+      + '<div class="sm-item" data-w="0"><span class="sm-ico">▣</span>Terminal</div>'
+      + '<div class="sm-item" data-w="1"><span class="sm-ico">◫</span>Monitor</div>'
+      + '<div class="sm-item" data-w="2"><span class="sm-ico">▤</span>Files</div>'
+      + '<div class="sm-sep"></div>'
+      + '<div class="sm-item" data-about="1"><span class="sm-ico">i</span>About</div>';
+    document.getElementById("desk").appendChild(m);
+    m.querySelectorAll(".sm-item").forEach(it => {
+      it.onclick = () => {
+        if (it.dataset.about) {
+          sendCmd("echo rvsim 0.9  -  RV32IMA  -  all pixels rasterised by the guest");
+          m.remove();
+          return;
+        }
+        const w = Number(it.dataset.w);
+        // 恢复窗口 + 聚焦：走后端命令字（动作 2 = 最大化不行，这里用 3 = 只聚焦）
+        const off = (M._rv_ram_ptr() + (0x83FFE200 - 0x80000000)) >>> 2;
+        M.HEAPU32[off] = w * 10 + 5;    // 5 = 只恢复并聚焦
+        m.remove();
+      };
+    });
+  };
 
   // Dock 上的应用条目
   if (dockApps) {
@@ -551,7 +593,9 @@ function winInit() {
       const d = document.createElement("div");
       d.className = "dock-app";
       d.innerHTML = '<span class="led"></span><span class="txt"></span>';
-      d.onclick = () => sendGuestClick(dockClickPoint(i));
+      // chip：恢复 + 聚焦，直接用命令字里的「最大化」不行，
+      // 这里走内核的任务栏点击路径（坐标固定，不依赖窗口位置）
+      d.onclick = () => sendGuestClick([88 + i * 82 + 10, 585]);
       dockApps.appendChild(d);
     }
   }
@@ -561,7 +605,7 @@ function winInit() {
 function dockClickPoint(i) {
   const A = M.HEAPU32;
   const base = (M._rv_ram_ptr() + (WIN_INFO_PA - 0x80000000)) >>> 2;
-  const b = base + i * 9;
+  const b = base + i * 11;
   return [A[b + 6] + 20, A[b + 7] + 10];
 }
 
@@ -590,10 +634,11 @@ function winSync() {
   const scale = L.scale, ox = L.ox, oy = L.oy;
 
   for (let i = 0; i < WIN_SLOTS; i++) {
-    const b = base + i * 9;
-    const buf = A[b] >>> 0, w = A[b + 1], h = A[b + 2];
+    const b = base + i * 11;
+    const buf = A[b] >>> 0, w = A[b + 1], h = A[b + 2];       // 内容画布尺寸
     const titleAddr = A[b + 3] >>> 0, focused = A[b + 4], visible = A[b + 5];
     const x = A[b + 6], y = A[b + 7], z = A[b + 8];
+    const ww = A[b + 9] || w, wh = A[b + 10] || h;            // 窗口实际尺寸（会被最大化改变）
     const we = winEls[i];
 
     if (!visible || !w || !h) { we.el.style.display = "none"; continue; }
@@ -602,7 +647,7 @@ function winSync() {
     // 位置/大小（按画布比例缩放）
     we.el.style.left = (ox + x * scale) + "px";
     we.el.style.top = (oy + y * scale) + "px";
-    we.el.style.width = (w * scale) + "px";
+    we.el.style.width = (ww * scale) + "px";
     we.el.style.zIndex = 10 + z;
     we.el.classList.toggle("focused", !!focused);
 
@@ -615,8 +660,8 @@ function winSync() {
     if (we.w !== w || we.h !== h) {
       we.w = w; we.h = h;
       we.body.width = w; we.body.height = h;
-      we.body.style.width = (w * scale) + "px";
-      we.body.style.height = (h * scale) + "px";
+      we.body.style.width = (ww * scale) + "px";
+      we.body.style.height = ((ww * h / w) * scale) + "px";
       we.seq = 0;
     }
 
@@ -638,7 +683,7 @@ function winSync() {
   if (dockApps) {
     const kids = dockApps.children;
     for (let i = 0; i < WIN_SLOTS; i++) {
-      const b = base + i * 9;
+      const b = base + i * 11;
       const d = kids[i];
       if (!d) continue;
       const vis = A[b + 5], foc = A[b + 4];
