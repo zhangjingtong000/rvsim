@@ -741,6 +741,12 @@ let lastInputAt = 0;
 document.addEventListener("keydown",e=>{
   if(!loaded||!M)return;
   if(e.target && (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA")) return;
+  /* D 是调试抽屉开关，不能同时当字符发给 guest */
+  if(!e.ctrlKey && !e.metaKey && !e.altKey && (e.key === "d" || e.key === "D")){
+    document.body.classList.toggle("drawer-open");
+    e.preventDefault();
+    return;
+  }
   lastInputAt = Date.now();
   if(e.ctrlKey && (e.key==="c" || e.key==="C")){
     /* 提示里写了「Ctrl+C 中断」，那就真的中断 */
@@ -793,15 +799,6 @@ function render(){
 document.getElementById("dbgToggle").onclick = () => {
   document.body.classList.toggle("drawer-open");
 };
-document.addEventListener("keydown", e => {
-  if(e.key === "d" || e.key === "D"){
-    if(e.target && (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA")) return;
-    if(!e.ctrlKey && !e.metaKey){
-      document.body.classList.toggle("drawer-open");
-    }
-  }
-});
-
 $("bKernel").onclick=()=>bootUrl("images/kernel.elf","mini-kernel");
 $("bTest").onclick=()=>bootUrl("images/rv32ui-p-add","rv32ui-p-add");
 $("bUpload").onclick=()=>$("file").click();

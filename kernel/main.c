@@ -1049,6 +1049,27 @@ static void monitor_draw(void)
         fb_text(buf, 800, 600, 800, MON_BODY_X, y, rowbuf, col, C_TERM, 1);
         y += line;
     }
+
+    /* 下半部分补统计信息：不然窗口空一大片，看着像没画完 */
+    y += 10;
+    if (y + 16 < g_wins[1].y + g_wins[1].h - 6) {
+        char b[24]; int k = 0;
+        const char *t1 = "events ";
+        for (int j = 0; t1[j]; j++) b[k++] = t1[j];
+        itoa_u32((u32)evt_count_all(), b + k); k = 0;
+        while (b[k]) k++;
+        fb_text(buf, 800, 600, 800, MON_BODY_X, y, b, C_FG3, C_TERM, 1);
+        y += line;
+    }
+    if (y + 16 < g_wins[1].y + g_wins[1].h - 6) {
+        char b[24]; int k = 0;
+        const char *t2 = "files  ";
+        for (int j = 0; t2[j]; j++) b[k++] = t2[j];
+        itoa_u32(fs_count(), b + k); k = 0;
+        while (b[k]) k++;
+        fb_text(buf, 800, 600, 800, MON_BODY_X, y, b, C_FG3, C_TERM, 1);
+        y += line;
+    }
 }
 
 #define FS_BODY_X (g_wins[2].x + 10)
