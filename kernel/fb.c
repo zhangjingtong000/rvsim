@@ -36,19 +36,20 @@ u32 g_fb_w, g_fb_h;
 /* ── 终端文本网格 ──
    UART 输出的字符同时写进这里，窗口里显示的就是真实的 shell 输出。
    只重画变化的那一行，避免每帧重绘整窗。 */
-#define TERM_COLS 60
-#define TERM_ROWS 21
+#define TERM_COLS 61
+#define TERM_ROWS 22
 /* 网格存 Unicode 码点：ASCII 是单宽，汉字是双宽。
    0 = 空，0xFFFFFFFF = 被左边宽字符占用的右半格。 */
 static u32 g_term[TERM_ROWS][TERM_COLS];
 static u8   g_term_dirty[TERM_ROWS];
 static u32  g_term_cx, g_term_cy;
 
-/* 终端网格的原点跟随窗口位置（窗口可拖动） */
-typedef struct { u32 x, y, w, h; } win_rect_t;
-extern win_rect_t *kernel_win0(void);
-#define TERM_ORIGIN_X (kernel_win0()->x + 8)
-#define TERM_ORIGIN_Y (kernel_win0()->y + 26)
+/* 终端网格画在窗口自己的内容画布上，原点就是画布内的留白 */
+#define TERM_BUF_W 512
+#define TERM_BUF_H 384
+extern u32 *kernel_term_buf(void);
+#define TERM_ORIGIN_X 10
+#define TERM_ORIGIN_Y 10
 
 void term_grid_reset(void)
 {
@@ -59,8 +60,8 @@ void term_grid_reset(void)
     g_term_cx = 0;
     g_term_cy = 0;
 
-    u32 *buf = (u32 *)FB_BASE;
-    fb_rect(buf, 800, 600, 800,
+    u32 *buf = kernel_term_buf();
+    fb_rect(buf, TERM_BUF_W, TERM_BUF_H, TERM_BUF_W,
             TERM_ORIGIN_X, TERM_ORIGIN_Y,
             TERM_COLS * 8, TERM_ROWS * 16, 0x050608);
 }
@@ -189,13 +190,13 @@ void term_grid_redraw_all(void)
 u32 term_grid_flush(void)
 {
     u32 dirty = 0;
-    u32 *buf = (u32 *)FB_BASE;
+    u32 *buf = kernel_term_buf();
     for (u32 y = 0; y < TERM_ROWS; y++) {
         if (!g_term_dirty[y]) continue;
         g_term_dirty[y] = 0;
         dirty++;
         /* 先清整行背景：否则旧字符不会被擦掉，新内容叠在旧内容上变成乱码 */
-        fb_rect(buf, 800, 600, 800,
+        fb_rect(buf, TERM_BUF_W, TERM_BUF_H, TERM_BUF_W,
                 TERM_ORIGIN_X, TERM_ORIGIN_Y + y * 16,
                 TERM_COLS * 8, 16, 0x050608);
         for (u32 x = 0; x < TERM_COLS; x++) {
@@ -203,13 +204,13 @@ u32 term_grid_flush(void)
             if (cp == 0 || cp == ' ') continue;
             if (cp == 0xFFFFFFFFu) continue;          /* 宽字符右半格，左边已画 */
             if (cp > 127) {
-                cjk_draw(buf, 800, TERM_ORIGIN_X + x * 8,
+                cjk_draw(buf, TERM_BUF_W, TERM_ORIGIN_X + x * 8,
                          TERM_ORIGIN_Y + y * 16, cp, 0xc9d1d9, 0x050608, 1);
                 continue;
             }
             char ch = (char)cp;
             u32 fg = (ch == '>') ? 0x5eead4 : ((ch == '?') ? 0xf87171 : 0xc9d1d9);
-            fb_char(buf, 800, 600, 800,
+            fb_char(buf, TERM_BUF_W, TERM_BUF_H, TERM_BUF_W,
                     TERM_ORIGIN_X + x * 8, TERM_ORIGIN_Y + y * 16,
                     ch, fg, 0x050608, 0);
         }
@@ -382,7 +383,7 @@ u32 fb_input(fb_input_t *out)
    每行只要 8 次 store（约 20 条指令），字符成本降到 1/3 以下。 */
 /* 4 组颜色对缓存：终端一行里会在主色/强调色/错误色之间切换，
    只有一组缓存的话几乎每个字符都要重建 2048 项，整屏刷一次就要几十万指令。 */
-#define LUT_SETS 16
+#define LUT_SETS 8
 static u32 g_lut[LUT_SETS][256][8];
 static u32 g_lut_fg[LUT_SETS], g_lut_bg[LUT_SETS];
 static int g_lut_next;

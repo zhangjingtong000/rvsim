@@ -1005,8 +1005,8 @@ static void hex_u32(u32 v, char *out)
     out[10] = 0;
 }
 
-#define MON_BODY_X (g_wins[1].x + 10)
-#define MON_BODY_Y (g_wins[1].y + 34)
+#define MON_BODY_X 10
+#define MON_BODY_Y 10
 
 /* 进程监视窗口：显示的是真实的进程表 */
 typedef struct {
@@ -1024,20 +1024,61 @@ static win_t g_wins[3];
 static int  g_z[3] = { 0, 1, 2 };   /* 从下到上的绘制顺序 */
 win_rect_t *kernel_win0(void) { return (win_rect_t *)&g_wins[0]; }
 
+
+/* ── 内容画布：每个窗口画到自己的缓冲区 ──
+   窗口外壳（圆角、阴影、毛玻璃标题栏）交给宿主用 CSS 渲染，
+   内核算不出来；但终端文字、进程表这些内容仍然是内核逐像素画的。 */
+#define WINBUF_TERM_W  512
+#define WINBUF_TERM_H  384
+#define WINBUF_SIDE_W  300
+#define WINBUF_SIDE_H  210
+
+static u32 g_buf_term[WINBUF_TERM_W * WINBUF_TERM_H];
+static u32 g_buf_mon[WINBUF_SIDE_W * WINBUF_SIDE_H];
+static u32 g_buf_fs[WINBUF_SIDE_W * WINBUF_SIDE_H];
+
+/* 宿主读这张表来摆窗口 */
+typedef struct {
+    u32 buf;        /* 内容画布物理地址 */
+    u32 w, h;       /* 画布尺寸 */
+    u32 title;      /* 标题字符串地址 */
+    u32 focused;    /* 1 = 聚焦 */
+    u32 visible;    /* 1 = 可见 */
+    u32 x, y;       /* 窗口位置（画布坐标，宿主按比例换算） */
+    u32 z;          /* z 序，越大越靠前 */
+} win_info_t;
+
+/* 固定地址：宿主直接按这个地址读，不必每次编译后重新查符号 */
+#define WIN_INFO_PA 0x83FFE000u
+#define g_win_info ((win_info_t *)WIN_INFO_PA)
+
+static void win_info_init(void)
+{
+    g_win_info[0].buf = (u32)g_buf_term; g_win_info[0].w = WINBUF_TERM_W; g_win_info[0].h = WINBUF_TERM_H;
+    g_win_info[0].title = (u32)"Terminal";
+    g_win_info[1].buf = (u32)g_buf_mon; g_win_info[1].w = WINBUF_SIDE_W; g_win_info[1].h = WINBUF_SIDE_H;
+    g_win_info[1].title = (u32)"Monitor";
+    g_win_info[2].buf = (u32)g_buf_fs; g_win_info[2].w = WINBUF_SIDE_W; g_win_info[2].h = WINBUF_SIDE_H;
+    g_win_info[2].title = (u32)"Files";
+}
+
+u32 kernel_win_info(void) { return (u32)g_win_info; }
+u32 *kernel_term_buf(void) { return g_buf_term; }
+
 static void monitor_draw(void)
 {
     if (!g_wins[1].visible) return;
-    u32 *buf = (u32 *)FB_BASE;
+    u32 *buf = g_buf_mon;
+    const u32 BW = WINBUF_SIDE_W, BH = WINBUF_SIDE_H;
     const u32 line = 16;
     u32 y = MON_BODY_Y;
 
-    fb_rect(buf, 800, 600, 800, g_wins[1].x + 1, g_wins[1].y + 24,
-            g_wins[1].w - 2, g_wins[1].h - 25, C_TERM);
-    fb_text(buf, 800, 600, 800, MON_BODY_X, y, "PID STATE  PC", C_FG3, C_TERM, 1);
+    fb_rect(buf, BW, BH, BW, 0, 0, BW, BH, 0x050608);
+    fb_text(buf, BW, BH, BW, MON_BODY_X, y, "PID STATE  PC", C_FG3, C_TERM, 1);
     y += line;
 
     char num[12], hx[12];
-    for (int i = 0; i < NPROC && y + 16 < g_wins[1].y + g_wins[1].h - 6; i++) {
+    for (int i = 0; i < NPROC && y + 16 < BH - 6; i++) {
         if (procs[i].stack_pa == 0) continue;
         char rowbuf[32];
         int k = 0;
@@ -1052,50 +1093,50 @@ static void monitor_draw(void)
         for (int j = 0; j < 10; j++) rowbuf[k++] = hx[j];
         rowbuf[k] = 0;
         u32 col = (procs[i].state == PROC_RUN) ? C_ACC : C_TEXT;
-        fb_text(buf, 800, 600, 800, MON_BODY_X, y, rowbuf, col, C_TERM, 1);
+        fb_text(buf, BW, BH, BW, MON_BODY_X, y, rowbuf, col, C_TERM, 1);
         y += line;
     }
 
     /* 下半部分补统计信息：不然窗口空一大片，看着像没画完 */
     y += 10;
-    if (y + 16 < g_wins[1].y + g_wins[1].h - 6) {
+    if (y + 16 < BH - 6) {
         char b[24]; int k = 0;
         const char *t1 = "events ";
         for (int j = 0; t1[j]; j++) b[k++] = t1[j];
         itoa_u32((u32)evt_count_all(), b + k); k = 0;
         while (b[k]) k++;
-        fb_text(buf, 800, 600, 800, MON_BODY_X, y, b, C_FG3, C_TERM, 1);
+        fb_text(buf, BW, BH, BW, MON_BODY_X, y, b, C_FG3, C_TERM, 1);
         y += line;
     }
-    if (y + 16 < g_wins[1].y + g_wins[1].h - 6) {
+    if (y + 16 < BH - 6) {
         char b[24]; int k = 0;
         const char *t2 = "files  ";
         for (int j = 0; t2[j]; j++) b[k++] = t2[j];
         itoa_u32(fs_count(), b + k); k = 0;
         while (b[k]) k++;
-        fb_text(buf, 800, 600, 800, MON_BODY_X, y, b, C_FG3, C_TERM, 1);
+        fb_text(buf, BW, BH, BW, MON_BODY_X, y, b, C_FG3, C_TERM, 1);
         y += line;
     }
 }
 
-#define FS_BODY_X (g_wins[2].x + 10)
-#define FS_BODY_Y (g_wins[2].y + 34)
+#define FS_BODY_X 10
+#define FS_BODY_Y 10
 
 /* 文件窗口：显示的是真实的 RAMFS 内容 */
 static void files_draw(void)
 {
     if (!g_wins[2].visible) return;
-    u32 *buf = (u32 *)FB_BASE;
+    u32 *buf = g_buf_fs;
+    const u32 BW = WINBUF_SIDE_W, BH = WINBUF_SIDE_H;
     const u32 line = 16;
     u32 y = FS_BODY_Y;
 
-    fb_rect(buf, 800, 600, 800, g_wins[2].x + 1, g_wins[2].y + 24,
-            g_wins[2].w - 2, g_wins[2].h - 25, C_TERM);
-    fb_text(buf, 800, 600, 800, FS_BODY_X, y, "NAME          SIZE", C_FG3, C_TERM, 1);
+    fb_rect(buf, BW, BH, BW, 0, 0, BW, BH, 0x050608);
+    fb_text(buf, BW, BH, BW, FS_BODY_X, y, "NAME          SIZE", C_FG3, C_TERM, 1);
     y += line;
 
     char nm[24]; u32 sz; char num[12];
-    for (u32 i = 0; i < 16 && y + 16 < g_wins[2].y + g_wins[2].h - 6; i++) {
+    for (u32 i = 0; i < 16 && y + 16 < BH - 6; i++) {
         if (!fs_entry(i, nm, sizeof(nm), &sz)) continue;
         if (nm[0] == 0) continue;
         char rowbuf[40];
@@ -1105,7 +1146,7 @@ static void files_draw(void)
         itoa_u32(sz, num);
         for (int j = 0; num[j]; j++) rowbuf[k++] = num[j];
         rowbuf[k] = 0;
-        fb_text(buf, 800, 600, 800, FS_BODY_X, y, rowbuf,
+        fb_text(buf, BW, BH, BW, FS_BODY_X, y, rowbuf,
                 fs_entry_type(i) == 1 ? C_ACC : C_TEXT, C_TERM, 1);
         y += line;
     }
@@ -1113,6 +1154,21 @@ static void files_draw(void)
 
 /* ── 窗口表与鼠标交互 ── */
 static int  g_focus = 0;
+/* 把窗口状态同步给宿主（焦点/可见性） */
+static void win_info_sync(void)
+{
+    for (int i = 0; i < 3; i++) {
+        g_win_info[i].focused = (i == g_focus) ? 1u : 0u;
+        g_win_info[i].visible = g_wins[i].visible ? 1u : 0u;
+        g_win_info[i].x = g_wins[i].x;
+        g_win_info[i].y = g_wins[i].y;
+        int zz = 0;
+        for (int k = 0; k < 3; k++) if (g_z[k] == i) zz = k;
+        g_win_info[i].z = (u32)zz;
+    }
+}
+
+
 static int  g_menu_open = 0;
 static int  g_dragging = 0;
 /* 按下/抬起配对状态：整屏重绘（0.4-0.7 秒）期间鼠标抬起事件会丢，
@@ -1255,6 +1311,7 @@ static void win_set_focus(int idx)
     win_paint_chrome(old);
     win_paint_chrome(idx);
     taskbar_chips();
+    win_info_sync();
     fb_commit(0);
 }
 
@@ -1501,76 +1558,31 @@ static void wall_build(void)
     g_wall_ready = 1;
 }
 
-/* 整屏重画：壁纸 + 按 z 序逐个窗口（框架 + 内容）+ 任务栏。
-   关键：必须「一个窗口画完整再画下一个」，
-   之前写成「先画所有框架、再画所有内容」，
-   结果内容会穿透上层窗口（files 的列表画到 maximized 的 monitor 上）。 */
+/* 只更新三个窗口的内容画布。
+   壁纸、窗口外壳（圆角/阴影/毛玻璃标题栏）、任务栏、菜单全部由宿主用 CSS 画——
+   内核画不出抗锯齿圆角，硬要画就是「伪造古董」。
+   内核仍然负责内容的每一个像素：终端文字、进程表、文件列表。 */
 void desktop_redraw(void)
 {
-    u32 *buf = (u32 *)FB_BASE;
-
-    if (!g_wall_ready) wall_build();
-    /* 整块拷回：480k 个字，约 1 条指令一个 */
-    {
-        u32 *dst = buf, *src = g_wall;
-        for (u32 k = 0; k < 800u * 600u; k++) dst[k] = src[k];
+    if (g_wins[0].visible) {
+        extern void term_grid_redraw_all(void);
+        extern u32 term_grid_flush(void);
+        term_grid_redraw_all();
+        term_grid_flush();
     }
+    if (g_wins[1].visible) monitor_draw();
+    if (g_wins[2].visible) files_draw();
 
-    for (int zi = 0; zi < 3; zi++) {
-        int i = g_z[zi];
-        win_t *w = &g_wins[i];
-        if (!w->visible) continue;
+    win_info_sync();
+}
 
-        /* 阴影先画（在窗口下面） */
-        fb_rect(buf, 800, 600, 800, w->x + 6, w->y + w->h, w->w, 2, 0x040508);
-        fb_rect(buf, 800, 600, 800, w->x + w->w, w->y + 6, 2, w->h, 0x040508);
-        fb_rect(buf, 800, 600, 800, w->x + 3, w->y + w->h + 2, w->w, 1, 0x090c11);
-        fb_rect(buf, 800, 600, 800, w->x + w->w + 2, w->y + 3, 1, w->h, 0x090c11);
-
-        win_frame(buf, w->x, w->y, w->w, w->h, w->title, i == g_focus);
-        fb_rect(buf, 800, 600, 800, w->x + 1, w->y + 24,
-                w->w - 2, w->h - 25, C_TERM);
-
-        /* 内容紧跟着框架画，保证被上层窗口覆盖 */
-        if (i == 0) {
-            extern u32 term_grid_flush(void);
-            extern void term_grid_redraw_all(void);
-            /* 上面刚把内容区填成底色，这里必须整块重画：
-               只刷脏行的话，脏标记早被上一次 flush 清掉了，终端会变空白。 */
-            term_grid_redraw_all();
-            term_grid_flush();
-        } else if (i == 1) {
-            monitor_draw();
-        } else {
-            files_draw();
-        }
-    }
-
-    /* 任务栏永远在最上层 */
-    u32 ty = 600 - TASKBAR_H;
-    fb_rect(buf, 800, 600, 800, 0, ty, 800, TASKBAR_H, 0x10141a);
-    fb_rect(buf, 800, 600, 800, 0, ty, 800, 1, 0x2b3644);
-    fb_rect(buf, 800, 600, 800, 0, ty + TASKBAR_H - 2, 800, 2, 0x07090d);
-    fb_round_rect(buf, 800, 600, 800, 8, ty + 4, 72, 22, 0x171b21);
-    fb_text(buf, 800, 600, 800, 16, ty + 7, "rvsh", C_ACC, 0, 0);
-    taskbar_chips();
-    {
-        /* 用真实时间重画，别硬编码 00:00:00（每次整屏重绘都会闪一下零点） */
-        u32 secs;
-        if (g_wall_base) {
-            u64 now = clint_mtime_now();
-            secs = (g_wall_base + (u32)((now - g_wall_mtime) / 1000000ull)) % 86400u;
-        } else {
-            secs = (u32)(clint_mtime_now() / 1000000ull);
-        }
-        desktop_clock(secs);
-    }
-    fb_rect(buf, 800, 600, 800, 800 - 110, ty + 9, 1, 14, C_LINE);
-
-    if (g_menu_open) menu_draw();
-
-    fb_plane(0, FB_BASE, 0, 0, 800, 600, 800, 0);
-    fb_commit(0);
+/* 轻量刷新：只重画内容，不标记脏行（给周期/事件驱动的更新用） */
+void desktop_refresh(void)
+{
+    if (g_wins[1].visible) monitor_draw();
+    if (g_wins[2].visible) files_draw();
+    if (g_wins[0].visible) { extern u32 term_grid_flush(void); term_grid_flush(); }
+    win_info_sync();
 }
 
 static void desktop_draw(void)
@@ -1599,6 +1611,7 @@ void kmain(void)
     /* ── 图形：整个桌面由 guest 自己光栅化 ──
        宿主只把这块 RAM 贴到画布上，不做任何 UI 绘制。 */
     fb_init(800, 600);
+    win_info_init();
     term_grid_reset();
     desktop_draw();
 
