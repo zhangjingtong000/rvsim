@@ -1115,6 +1115,14 @@ static void files_draw(void)
 static int  g_focus = 0;
 static int  g_menu_open = 0;
 static int  g_dragging = 0;
+/* 按下/抬起配对状态：整屏重绘（0.4-0.7 秒）期间鼠标抬起事件会丢，
+   下一次按下的抬起就被当成拖动终点，窗口被拖到别处。
+   这里记录「当前是否还处于按下状态」，没有配对的抬起一律忽略。 */
+static int  g_btn_down = 0;
+/* 拖动候选：按下时先不进入拖动，鼠标移动超过 4 像素才真正开始。
+   否则快速点击会被当成拖动，窗口被拖到别处（第七轮实测 100ms 间隔必现）。 */
+static int  g_drag_armed = 0;
+static int  g_arm_x = 0, g_arm_y = 0;
 static int  g_drag_dx = 0, g_drag_dy = 0;
 static int  g_outline_on = 0;
 static u32  g_ol_x = 0, g_ol_y = 0;
@@ -1289,6 +1297,8 @@ static int win_chrome_hit(win_t *w, u32 mx, u32 my)
 static void win_apply_action(int idx, int act)
 {
     extern void desktop_redraw(void);
+    extern void term_grid_redraw_all(void);
+    term_grid_redraw_all();      /* 位置会变，终端内容必须整块重画 */
     win_t *w = &g_wins[idx];
     if (act == 0) {                      /* 关闭 */
         w->visible = 0;
@@ -1321,7 +1331,21 @@ void desktop_mouse(void)
 
     win_t *w = &g_wins[g_focus];
 
+    /* 配对校验：
+       - 抬起没有对应的按下 -> 丢弃（重绘期间丢的 up）
+       - 连着两次按下（上次的 up 丢了）-> 先把上一次当作结束 */
+    if (!btn) {
+        if (!g_btn_down) return;      /* 孤儿抬起，忽略 */
+        g_btn_down = 0;
+    } else {
+        if (g_btn_down && !g_dragging) {
+            /* 上一次按下没有抬起就被新按下覆盖：把旧的当作已结束 */
+            g_btn_down = 0;
+        }
+    }
+
     if (btn && !g_dragging) {
+        g_btn_down = 1;
         /* 菜单开着时优先给菜单 */
         if (g_menu_open) {
             if (menu_click(mx, my)) return;
@@ -1360,15 +1384,27 @@ void desktop_mouse(void)
         }
         win_set_focus(i);
         w = &g_wins[i];
-        if (my >= w->y && my < w->y + 23) {      /* 标题栏 */
-            g_dragging = 1;
+        if (my >= w->y && my < w->y + 23) {      /* 标题栏：先 arm，不动 */
+            g_drag_armed = 1;
+            g_arm_x = (int)mx; g_arm_y = (int)my;
             g_drag_dx = (int)mx - (int)w->x;
             g_drag_dy = (int)my - (int)w->y;
-            g_ol_x = w->x; g_ol_y = w->y;
-            drag_outline(g_ol_x, g_ol_y, w->w, w->h, C_ACC);
-            g_outline_on = 1;
-            fb_commit(0);
         }
+        return;
+    }
+
+    /* 还按着但没超过阈值：既不拖动也不算点击（等抬起） */
+    if (btn && !g_dragging && g_drag_armed) {
+        int dx = (int)mx - g_arm_x, dy = (int)my - g_arm_y;
+        if (dx * dx + dy * dy < 16) return;      /* < 4 像素：继续等 */
+        /* 超过阈值，真正进入拖动 */
+        g_dragging = 1;
+        g_drag_armed = 0;
+        w = &g_wins[g_focus];
+        g_ol_x = w->x; g_ol_y = w->y;
+        drag_outline(g_ol_x, g_ol_y, w->w, w->h, C_ACC);
+        g_outline_on = 1;
+        fb_commit(0);
         return;
     }
 
@@ -1389,8 +1425,15 @@ void desktop_mouse(void)
         return;
     }
 
+    if (!btn && g_drag_armed && !g_dragging) {
+        g_drag_armed = 0;      /* 只是点击，没拖动 */
+        return;
+    }
+
     if (!btn && g_dragging) {
         g_dragging = 0;
+        g_btn_down = 0;
+        g_drag_armed = 0;
         if (g_outline_on) {
             drag_outline(g_ol_x, g_ol_y, w->w, w->h, 0x141c28);
             g_outline_on = 0;
@@ -1433,6 +1476,33 @@ static void desktop_clock(u32 secs)
     fb_text(buf, 800, 600, 800, 800 - 96, ty + 9, t, C_FG2, C_BG, 0);
 }
 
+/* 壁纸缓存：渐变 + 点阵 + 桌面图标一共约 90 万条指令，
+   每帧重算太贵（这就是整屏重绘要 0.4-0.7 秒的主因）。
+   画一次存起来，之后整屏重绘直接拷回去。 */
+static u32 g_wall[800 * 600];
+static int g_wall_ready = 0;
+
+static void wall_build(void)
+{
+    u32 *buf = g_wall;
+    fb_gradient_v(buf, 800, 600, 800, 0x1c2b3f, 0x060910);
+    for (u32 gy = 8; gy < 600 - TASKBAR_H; gy += 8)
+        for (u32 gx = 8; gx < 800; gx += 8)
+            buf[gy * 800 + gx] = 0x121a26;
+
+    static const char *icons[4] = { "terminal", "monitor", "files", "readme" };
+    for (int k = 0; k < 4; k++) {
+        u32 ix = 646, iy = 404 + (u32)k * 42;
+        fb_round_rect(buf, 800, 600, 800, ix, iy, 28, 24, 0x1b2432);
+        fb_frame(buf, 800, 600, 800, ix, iy, 28, 24, 0x2b3644);
+        fb_rect(buf, 800, 600, 800, ix + 6, iy + 6, 16, 2, 0x5eead4);
+        fb_rect(buf, 800, 600, 800, ix + 6, iy + 11, 12, 2, 0x3a4756);
+        fb_rect(buf, 800, 600, 800, ix + 6, iy + 16, 14, 2, 0x3a4756);
+        fb_text(buf, 800, 600, 800, ix - 4, iy + 26, icons[k], C_FG2, 0x0a0e14, 1);
+    }
+    g_wall_ready = 1;
+}
+
 /* 整屏重画：壁纸 + 按 z 序逐个窗口（框架 + 内容）+ 任务栏。
    关键：必须「一个窗口画完整再画下一个」，
    之前写成「先画所有框架、再画所有内容」，
@@ -1441,23 +1511,11 @@ void desktop_redraw(void)
 {
     u32 *buf = (u32 *)FB_BASE;
 
-    fb_gradient_v(buf, 800, 600, 800, 0x1c2b3f, 0x060910);
-    for (u32 gy = 8; gy < 600 - TASKBAR_H; gy += 8)
-        for (u32 gx = 8; gx < 800; gx += 8)
-            buf[gy * 800 + gx] = 0x121a26;
-
-    /* 桌面图标：文件快捷方式，扁平方块 + 标签（在窗口之下） */
+    if (!g_wall_ready) wall_build();
+    /* 整块拷回：480k 个字，约 1 条指令一个 */
     {
-        static const char *icons[4] = { "terminal", "monitor", "files", "readme" };
-        for (int k = 0; k < 4; k++) {
-            u32 ix = 646, iy = 404 + (u32)k * 42;
-            fb_round_rect(buf, 800, 600, 800, ix, iy, 28, 24, 0x1b2432);
-            fb_frame(buf, 800, 600, 800, ix, iy, 28, 24, 0x2b3644);
-            fb_rect(buf, 800, 600, 800, ix + 6, iy + 6, 16, 2, 0x5eead4);
-            fb_rect(buf, 800, 600, 800, ix + 6, iy + 11, 12, 2, 0x3a4756);
-            fb_rect(buf, 800, 600, 800, ix + 6, iy + 16, 14, 2, 0x3a4756);
-            fb_text(buf, 800, 600, 800, ix - 4, iy + 26, icons[k], C_FG2, 0x0a0e14, 1);
-        }
+        u32 *dst = buf, *src = g_wall;
+        for (u32 k = 0; k < 800u * 600u; k++) dst[k] = src[k];
     }
 
     for (int zi = 0; zi < 3; zi++) {
@@ -1477,10 +1535,8 @@ void desktop_redraw(void)
 
         /* 内容紧跟着框架画，保证被上层窗口覆盖 */
         if (i == 0) {
-            extern void term_grid_redraw_all(void);
             extern u32 term_grid_flush(void);
-            term_grid_redraw_all();
-            term_grid_flush();
+            term_grid_flush();       /* 只画脏行：全画 21 行要多花 28 万条指令 */
         } else if (i == 1) {
             monitor_draw();
         } else {
@@ -1867,6 +1923,12 @@ void shell_loop(void)
     __asm__ volatile("csrs sstatus, %0" : : "r"(0x40000u));
 
     shell_start();
+
+    /* 进程是在 shell_start 里 spawn 的，desktop_draw 那时还没有数据。
+       去掉定时刷新之后没有别的地方会补画，所以这里重画一次，
+       让 monitor 的进程表、files 的文件列表一开始就是真实内容。 */
+    { extern void desktop_redraw(void); desktop_redraw(); }
+
     volatile u8 *lsr = (volatile u8 *)(UART_BASE + 5);
     volatile u8 *rbr = (volatile u8 *)(UART_BASE + 0);
     for (;;) {

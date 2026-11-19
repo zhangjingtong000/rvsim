@@ -103,6 +103,10 @@ button.wide{flex:1}
 
 #screen-wrap{display:flex;align-items:center;justify-content:center;
   background:#040507;padding:0;flex:1 1 auto;min-height:0;overflow:hidden}
+/* IME 需要真实的可编辑元素：canvas 收不到输入法组合事件。
+   把它做成不可见但可聚焦，点画布时把焦点交给它。 */
+#ime{position:absolute;left:-9999px;top:0;width:10px;height:10px;opacity:0}
+
 #screen{max-width:100%;max-height:100%;width:auto;height:auto;
   aspect-ratio:4 / 3;image-rendering:pixelated;display:block;cursor:none}
 #term{flex:0 0 0;display:none;min-height:0;overflow-y:auto;background:#050608;padding:10px 14px;
@@ -213,6 +217,7 @@ main > .col:last-child{overflow-y:auto;max-height:calc(100vh - 40px)}
   </div>
   <div id="screen-wrap">
       <canvas id="screen" width="800" height="600"></canvas>
+      <input id="ime" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
     </div>
     <div class="termbar">
       <b>UART</b><span>115200 8N1</span>
@@ -351,6 +356,8 @@ function screenPointerBind(){
 
   cv.addEventListener("pointerdown", e => {
     if(!M) return;
+    const ime = document.getElementById("ime");
+    if (ime) ime.focus();
     const [x, y] = toFb(e);
     curX = x; curY = y; curInside = true;
     M._rv_mem_write32(MOUSE_X, x);
@@ -766,6 +773,20 @@ let lastInputAt = 0;
 
 /* 键盘监听挂在 document 上：用户点的是画布里的终端窗口，
    不该被要求先去点画布下方那条隐藏的 HTML 终端。 */
+/* IME / 输入法：input 事件拿到的是已经组合好的文本，
+   比 keydown 可靠得多（中文在 keydown 里根本看不到）。
+   发走之后立刻清空，当作一个「字符流入口」。 */
+document.addEventListener("input", e => {
+  if (!loaded || !M) return;
+  if (e.target && e.target.id !== "ime") return;
+  const ime = e.target;
+  const txt = ime.value;
+  if (!txt) return;
+  ime.value = "";
+  lastInputAt = Date.now();
+  for (const b of _enc.encode(txt)) M._rv_uart_write(b);
+});
+
 /* 粘贴：中文输入最可靠的方式（不依赖 IME 的 key 事件） */
 document.addEventListener("paste", e => {
   if (!loaded || !M) return;
