@@ -514,6 +514,12 @@ function winInit() {
     el.innerHTML = '<div class="win-bar"><span class="win-title"></span>'
       + '<span class="win-dots"><i data-act="0"></i><i data-act="1"></i><i data-act="2"></i></span></div>'
       + '<canvas class="win-body"></canvas>';
+    /* 关键：pointerdown 必须阻止冒泡。
+       它绑在 #desk 上做统一的事件转发，点在窗口里会同时触发「窗口自己的点击」
+       和「#desk 的点击」，两次叠加：第一次把窗口 arm 成拖动，第二次落到 (0,0)，
+       表现就是「点关闭，窗口跳到左上角」。 */
+    el.addEventListener("pointerdown", ev => ev.stopPropagation());
+    el.addEventListener("click", ev => ev.stopPropagation());
     winLayer.appendChild(el);
     winEls.push({ el, ctx: el.querySelector(".win-body").getContext("2d"), body: el.querySelector(".win-body"), w: 0, h: 0, seq: 0 });
   }
@@ -528,9 +534,9 @@ function winInit() {
         const b = base + i * 9;
         const x = A[b + 6], y = A[b + 7], w = A[b + 1];
         // 与内核 win_chrome_hit 一致：红=x+w-20, 黄=x+w-33, 绿=x+w-46，y+8..y+20
-        // 视觉上从左到右是 红/黄/绿，内核从右到左才是 红/黄/绿，所以反过来算
-        const k = 2 - act;
-        sendGuestClick([x + w - 20 - k * 13 + 4, y + 13]);
+        // 视觉从左到右是 红/黄/绿；内核的 x 是从右往左排的，
+        // 所以第 act 个点对应内核的 (2-act) 号位置
+        sendGuestClick([x + w - 20 - (2 - act) * 13 + 4, y + 13]);
       };
     });
   }

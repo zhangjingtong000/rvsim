@@ -1353,8 +1353,9 @@ static int win_chrome_hit(win_t *w, u32 mx, u32 my)
     for (int i = 0; i < 3; i++) {
         u32 bx = w->x + w->w - 20 - i * 13;
         if (mx >= bx && mx < bx + 9) {
-            /* i=0 红(关闭) i=1 黄(最小化) i=2 绿(最大化) */
-            return (i == 0) ? 0 : (i == 1 ? 1 : 2);
+            /* 窗口右端往左排：i=0 最右=绿(最大化) i=1 黄(最小化) i=2 最左=红(关闭)
+               这样和 macOS 的「左红右绿」顺序一致 */
+            return (i == 0) ? 2 : (i == 1 ? 1 : 0);
         }
     }
     return -1;
