@@ -1404,6 +1404,44 @@ static void win_apply_action(int idx, int act)
    内核执行完把命令字清零。 */
 #define WIN_CMD_PA 0x83FFE200u
 
+/* ── 终端网格共享区（宿主用真字体渲染）──
+   内核不再光栅化文字，只发布字符网格：
+   - cells: 22×61 的 u32 码点（0=空 0xFFFFFFFF=宽字符右半格）
+   - row_seq: 每行版本号，只有变化的行需要宿主重绘
+   - cursor / 行数 / 列数
+   放在独立一页 0x83FE0000，不和窗口表挤。 */
+#define TERM_SYNC_PA 0x83FE0000u
+
+u32 term_cols(void); u32 term_rows(void);
+u32 term_cursor_x(void); u32 term_cursor_y(void);
+u32 *term_cells_ptr(void); u32 *term_rowseq_ptr(void);
+
+typedef struct {
+    u32 magic;       /* 'TRM1' */
+    u32 cols, rows;
+    u32 cells_addr;  /* u32[rows*cols] 码点 */
+    u32 rowseq_addr; /* u32[rows] 每行版本号 */
+    u32 cursor_x, cursor_y, cursor_visible;
+    u32 seq;         /* 整块版本号 */
+} term_sync_t;
+
+#define TERM_SYNC_PTR ((term_sync_t *)TERM_SYNC_PA)
+
+/* 每轮把网格元信息发布给宿主（几十条指令，可以每轮做） */
+void term_sync_publish(void)
+{
+    term_sync_t *t = TERM_SYNC_PTR;
+    t->magic = 0x54524D31u;
+    t->cols = term_cols();
+    t->rows = term_rows();
+    t->cells_addr = (u32)term_cells_ptr();
+    t->rowseq_addr = (u32)term_rowseq_ptr();
+    t->cursor_x = term_cursor_x();
+    t->cursor_y = term_cursor_y();
+    t->cursor_visible = 1;
+    t->seq++;
+}
+
 static void win_cmd_poll(void)
 {
     volatile u32 *cmd = (volatile u32 *)WIN_CMD_PA;
@@ -1572,33 +1610,6 @@ static void desktop_clock(u32 secs)
     /* 先清掉旧的 8 个字符位，再写新的 */
     fb_rect(buf, 800, 600, 800, 800 - 96, ty + 9, 64, 16, C_BG);
     fb_text(buf, 800, 600, 800, 800 - 96, ty + 9, t, C_FG2, C_BG, 0);
-}
-
-/* 壁纸缓存：渐变 + 点阵 + 桌面图标一共约 90 万条指令，
-   每帧重算太贵（这就是整屏重绘要 0.4-0.7 秒的主因）。
-   画一次存起来，之后整屏重绘直接拷回去。 */
-static u32 g_wall[800 * 600];
-static int g_wall_ready = 0;
-
-static void wall_build(void)
-{
-    u32 *buf = g_wall;
-    fb_gradient_v(buf, 800, 600, 800, 0x1c2b3f, 0x060910);
-    for (u32 gy = 8; gy < 600 - TASKBAR_H; gy += 8)
-        for (u32 gx = 8; gx < 800; gx += 8)
-            buf[gy * 800 + gx] = 0x121a26;
-
-    static const char *icons[4] = { "terminal", "monitor", "files", "readme" };
-    for (int k = 0; k < 4; k++) {
-        u32 ix = 646, iy = 404 + (u32)k * 42;
-        fb_round_rect(buf, 800, 600, 800, ix, iy, 28, 24, 0x1b2432);
-        fb_frame(buf, 800, 600, 800, ix, iy, 28, 24, 0x2b3644);
-        fb_rect(buf, 800, 600, 800, ix + 6, iy + 6, 16, 2, 0x5eead4);
-        fb_rect(buf, 800, 600, 800, ix + 6, iy + 11, 12, 2, 0x3a4756);
-        fb_rect(buf, 800, 600, 800, ix + 6, iy + 16, 14, 2, 0x3a4756);
-        fb_text(buf, 800, 600, 800, ix - 4, iy + 26, icons[k], C_FG2, 0x0a0e14, 1);
-    }
-    g_wall_ready = 1;
 }
 
 /* 只更新三个窗口的内容画布。
@@ -2007,6 +2018,7 @@ void shell_loop(void)
 
         desktop_mouse();
         win_cmd_poll();
+        term_sync_publish();
 
         /* 不再定时整屏重绘：一次重绘约 0.4-0.7 秒，期间屏幕处于
            「清壁纸 -> 画窗口」的中间态，看起来像闪烁，而且这期间

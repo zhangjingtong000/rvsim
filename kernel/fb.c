@@ -41,6 +41,7 @@ u32 g_fb_w, g_fb_h;
 /* 网格存 Unicode 码点：ASCII 是单宽，汉字是双宽。
    0 = 空，0xFFFFFFFF = 被左边宽字符占用的右半格。 */
 static u32 g_term[TERM_ROWS][TERM_COLS];
+static u32 g_row_seq[TERM_ROWS];   /* 每行内容版本号，给宿主做增量渲染 */
 static u8   g_term_dirty[TERM_ROWS];
 static u32  g_term_cx, g_term_cy;
 
@@ -111,6 +112,7 @@ static void term_newline(void)
         }
         for (u32 x = 0; x < TERM_COLS; x++) g_term[TERM_ROWS-1][x] = ' ';
         g_term_dirty[TERM_ROWS-1] = 1;
+        for (u32 y = 0; y < TERM_ROWS; y++) g_row_seq[y]++;
         g_term_cy = TERM_ROWS - 1;
     }
 }
@@ -142,6 +144,7 @@ int term_grid_putc(char c)
             g_term[g_term_cy][g_term_cx + 1] = 0xFFFFFFFFu;   /* 右半格被占 */
             g_term_cx += 2;
             g_term_dirty[g_term_cy] = 1;
+            g_row_seq[g_term_cy]++;
         }
         utf8_cp = 0;
         return 1;
@@ -156,6 +159,7 @@ int term_grid_putc(char c)
     if (g_term_cx >= TERM_COLS) term_newline();
     g_term[g_term_cy][g_term_cx++] = (u32)b;
     g_term_dirty[g_term_cy] = 1;
+    g_row_seq[g_term_cy]++;
     return 1;
 }
 
@@ -186,6 +190,14 @@ void term_grid_redraw_all(void)
 {
     for (u32 y = 0; y < TERM_ROWS; y++) g_term_dirty[y] = 1;
 }
+
+/* 供宿主读取的网格入口（真字体渲染用） */
+u32 *term_cells_ptr(void)   { return &g_term[0][0]; }
+u32 *term_rowseq_ptr(void)  { return g_row_seq; }
+u32  term_cols(void)        { return TERM_COLS; }
+u32  term_rows(void)        { return TERM_ROWS; }
+u32  term_cursor_x(void)    { return g_term_cx; }
+u32  term_cursor_y(void)    { return g_term_cy; }
 
 u32 term_grid_flush(void)
 {

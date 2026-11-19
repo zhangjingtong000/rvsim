@@ -6,12 +6,44 @@
 <title>rvsim · RISC-V 迷你机</title>
 <style>
 :root{
-  --bg:#07080a;--s1:#0c0e12;--s2:#111419;--s3:#171b21;
-  --line:#1d222a;--line2:#2b323c;
-  --fg:#e9ecf0;--fg2:#a3abb6;--fg3:#7b8595;
-  --acc:#5eead4;--ok:#4ade80;--warn:#fbbf24;--err:#f87171;
-  --mono:ui-monospace,"JetBrains Mono","Sarasa Mono SC","Noto Sans Mono CJK SC",Consolas,monospace;
-  --sans:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC",sans-serif;
+  /* ── Fluent 深色 token（取自 Win11 公开值，深色底上微调）── */
+  --bg-root:#070A0F;
+  --s0:#0E131A;  /* 窗口内容底 */
+  --s1:#151B24;  /* 标题栏、侧栏 */
+  --s2:#1B222C;  /* 菜单、卡片 */
+  --s3:#232B37;  /* 悬停 */
+  --s4:#2C3543;  /* 按下/选中 */
+  --stroke-sub:rgba(255,255,255,.06);
+  --stroke:rgba(255,255,255,.10);
+  --stroke-strong:rgba(255,255,255,.16);
+  --t1:#F3F6FA;  /* 15.8:1 */
+  --t2:#A9B4C4;  /*  8.1:1 */
+  --t3:#6E7B8D;  /*  4.4:1，仅 caption */
+  --t-disabled:#4A5566;
+  --acc:#2DD4BF; --acc-hover:#5EEAD4; --acc-press:#14B8A6; --on-acc:#04211C;
+  --focus:#5EEAD4;
+  --info:#60A5FA; --ok:#34D399; --warn:#FBBF24; --danger:#F87171; --danger-strong:#C42B1C;
+
+  --r-window:10px; --r-flyout:10px; --r-control:6px; --r-tile:8px;
+
+  --elev-1:0 1px 2px rgba(0,0,0,.30), 0 8px 20px -6px rgba(0,0,0,.45);
+  --elev-2:0 1px 2px rgba(0,0,0,.35), 0 18px 44px -12px rgba(0,0,0,.62);
+  --elev-3:0 8px 20px rgba(0,0,0,.30), 0 28px 64px -16px rgba(0,0,0,.70);
+  --elev-4:0 4px 12px rgba(0,0,0,.35), 0 12px 32px -8px rgba(0,0,0,.50);
+
+  --font-ui:"Segoe UI Variable Text","Segoe UI","Microsoft YaHei UI","Microsoft YaHei","PingFang SC",system-ui,sans-serif;
+  --font-display:"Segoe UI Variable Display","Segoe UI Variable Text","Segoe UI","Microsoft YaHei UI",system-ui,sans-serif;
+  --font-mono:"Cascadia Mono","Cascadia Code",Consolas,"Microsoft YaHei UI","Microsoft YaHei",ui-monospace,monospace;
+
+  --ease-decel:cubic-bezier(.1,.9,.2,1);
+  --ease-accel:cubic-bezier(.4,0,1,1);
+  --dur-fast:150ms; --dur-normal:200ms; --dur-slow:300ms;
+
+  /* 旧变量名映射：避免这次换 token 把既有样式打散 */
+  --bg:var(--s1); --fg:var(--t1); --fg2:var(--t2); --fg3:var(--t3);
+  --line:var(--stroke); --line2:var(--stroke-strong);
+  --mono:var(--font-mono); --sans:var(--font-ui); --err:var(--danger);
+  --acc-strong:var(--acc-hover);
 }
 *{box-sizing:border-box;margin:0;padding:0}
 html,body{height:100%}
@@ -112,17 +144,27 @@ button.wide{flex:1}
 
 /* ── 现代桌面：壁纸、圆角窗口、毛玻璃标题栏、Dock ── */
 #desk{position:relative;width:100%;height:100%;overflow:hidden;background:#0a0d14}
-#wallpaper{position:absolute;inset:0;
+#wallpaper{position:fixed;inset:0;z-index:0;
   background:
-    radial-gradient(1100px 620px at 18% 8%, rgba(88,120,255,.30), transparent 62%),
-    radial-gradient(900px 520px at 82% 92%, rgba(45,212,191,.22), transparent 60%),
-    radial-gradient(700px 460px at 62% 22%, rgba(168,85,247,.16), transparent 66%),
-    linear-gradient(165deg, #10151f 0%, #0a0d14 52%, #070a10 100%)}
-#wallpaper::after{content:"";position:absolute;inset:0;opacity:.35;
-  background-image:radial-gradient(rgba(255,255,255,.05) 1px, transparent 1px);
-  background-size:3px 3px}
+    radial-gradient(1200px 800px at 18% 8%,  rgba(45,212,191,.10), transparent 62%),
+    radial-gradient(1000px 700px at 82% 90%, rgba(59,130,246,.14), transparent 64%),
+    linear-gradient(155deg,#0D1626 0%,#0A1018 48%,#070A0F 100%)}
+#wallpaper::after{content:"";position:absolute;inset:0;
+  background:radial-gradient(120% 90% at 50% 45%, transparent 55%, rgba(0,0,0,.45) 100%)}
 
-#winlayer{position:absolute;inset:0}
+#icons{position:absolute;inset:0;z-index:1;padding:28px;display:flex;
+  flex-direction:column;flex-wrap:wrap;gap:4px;align-content:flex-start}
+.desk-icon{width:84px;height:96px;display:flex;flex-direction:column;align-items:center;
+  gap:6px;padding:8px 4px 6px;border-radius:8px;cursor:default;user-select:none;
+  transition:background .12s}
+.desk-icon:hover{background:rgba(255,255,255,.06)}
+.desk-icon.sel{background:rgba(45,212,191,.18);box-shadow:inset 0 0 0 1px rgba(45,212,191,.5)}
+.desk-icon svg{width:44px;height:44px;flex:0 0 auto}
+.desk-icon span{font:400 12px/18px var(--font-ui);color:var(--t1);text-align:center;
+  max-width:76px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+  text-shadow:0 1px 3px rgba(0,0,0,.7)}
+
+#winlayer{position:absolute;inset:0;z-index:5}
 
 .win{position:absolute;border-radius:13px;overflow:hidden;
   background:#12161d;
@@ -300,6 +342,7 @@ main > .col:last-child{overflow-y:auto;max-height:calc(100vh - 40px)}
   <div id="screen-wrap">
       <div id="desk">
         <div id="wallpaper"></div>
+        <div id="icons"></div>
         <div id="winlayer"></div>
         <div id="dock">
           <div class="dock-launch" id="dockLaunch">
@@ -529,15 +572,16 @@ function winInit() {
     el.style.display = "none";
     el.innerHTML = '<div class="win-bar"><span class="win-title"></span>'
       + '<span class="win-dots"><i data-act="0"></i><i data-act="1"></i><i data-act="2"></i></span></div>'
-      + '<canvas class="win-body"></canvas>';
-    /* 关键：pointerdown 必须阻止冒泡。
-       它绑在 #desk 上做统一的事件转发，点在窗口里会同时触发「窗口自己的点击」
-       和「#desk 的点击」，两次叠加：第一次把窗口 arm 成拖动，第二次落到 (0,0)，
-       表现就是「点关闭，窗口跳到左上角」。 */
-    el.addEventListener("pointerdown", ev => ev.stopPropagation());
-    el.addEventListener("click", ev => ev.stopPropagation());
+      + (i === 0 ? '<div class="win-body term-dom"></div>' : '<canvas class="win-body"></canvas>');
+    /* 注意：窗口整体不能拦 pointerdown。
+       #desk 靠 pointerdown 做拖动和输入焦点，拦掉就什么都动不了。
+       只需要拦「窗控点」自己（下面单独给 .win-dots 绑），
+       否则一次点击会被处理两次（拖动 + 窗控点）。 */
     winLayer.appendChild(el);
-    winEls.push({ el, ctx: el.querySelector(".win-body").getContext("2d"), body: el.querySelector(".win-body"), w: 0, h: 0, seq: 0 });
+    const bodyEl = el.querySelector(".win-body");
+    winEls.push({ el, body: bodyEl,
+                  ctx: (bodyEl && bodyEl.tagName === "CANVAS") ? bodyEl.getContext("2d") : null,
+                  w: 0, h: 0, seq: 0 });
   }
   // 窗控点：直接下发命令字（0x83FFE200 = 窗口号*10 + 动作）
   // 不再让前端重算命中坐标——视觉顺序和内核坐标顺序对不上，试了几轮都有偏差。
@@ -548,10 +592,13 @@ function winInit() {
   };
   for (let i = 0; i < WIN_SLOTS; i++) {
     winEls[i].el.querySelectorAll(".win-dots i").forEach((dot, act) => {
-      dot.onclick = (ev) => {
+      /* 窗控点要拦 pointerdown：不拦的话 #desk 会把它当成一次「按下」，
+         和窗控点自己的动作叠加，窗口会被拖走。 */
+      dot.addEventListener("pointerdown", ev => ev.stopPropagation());
+      dot.addEventListener("click", ev => {
         ev.stopPropagation();
         sendWinCmd(i, act);     // act: 0=关闭 1=最小化 2=最大化，顺序与视觉一致
-      };
+      });
     });
   }
 
@@ -624,6 +671,114 @@ function sendGuestClick(pt) {
   }, 30);
 }
 
+/* ── 桌面图标 ──
+   内核只提供"有哪些窗口"，图标是宿主画的（SVG）。
+   关掉所有窗口后，用户靠这里重新打开。 */
+const DESK_APPS = [
+  { w:0, name:"Terminal", svg:'<rect width="44" height="44" rx="10" fill="url(#gTerm)"/><path d="M11 15l7 7-7 7M21 29h11" stroke="#5EEAD4" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" fill="none"/>' },
+  { w:1, name:"Monitor",  svg:'<rect width="44" height="44" rx="10" fill="url(#gMon)"/><path d="M10 28l6-7 5 5 6-9 7 11" stroke="#A5B4FC" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" fill="none"/>' },
+  { w:2, name:"Files",    svg:'<rect width="44" height="44" rx="10" fill="url(#gFil)"/><path d="M9 16h10l3 4h13v14a2 2 0 01-2 2H11a2 2 0 01-2-2V16z" fill="#BAE6FD" opacity=".9"/>' },
+  { w:-1, name:"Settings",svg:'<rect width="44" height="44" rx="10" fill="url(#gSet)"/><circle cx="22" cy="22" r="6" stroke="#A9B4C4" stroke-width="2.2" fill="none"/><circle cx="22" cy="22" r="11" stroke="#A9B4C4" stroke-width="1.4" fill="none" stroke-dasharray="3 4"/>' },
+  { w:-1, name:"Guide",   svg:'<rect width="44" height="44" rx="10" fill="url(#gGui)"/><path d="M13 12h9a4 4 0 014 4v17a3 3 0 00-3-3h-10V12z" fill="#86EFAC" opacity=".85"/><path d="M31 12h-4a4 4 0 00-4 4v17a3 3 0 013-3h5V12z" fill="#86EFAC" opacity=".55"/>' },
+  { w:-1, name:"About",   svg:'<rect width="44" height="44" rx="10" fill="url(#gAbt)"/><circle cx="22" cy="15" r="2.6" fill="#C4B5FD"/><rect x="20" y="21" width="4" height="13" rx="2" fill="#C4B5FD"/>' },
+];
+
+function iconsRender() {
+  const box = document.getElementById("icons");
+  if (!box || box.dataset.built) return;
+  box.dataset.built = "1";
+  // 渐变定义
+  const defs = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  defs.style.cssText = "position:absolute;width:0;height:0";
+  defs.innerHTML = '<defs>'
+    + '<linearGradient id="gTerm" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#0E2A26"/><stop offset="1" stop-color="#134E4A"/></linearGradient>'
+    + '<linearGradient id="gMon" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#1E1B4B"/><stop offset="1" stop-color="#312E81"/></linearGradient>'
+    + '<linearGradient id="gFil" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#0C4A6E"/><stop offset="1" stop-color="#0E7490"/></linearGradient>'
+    + '<linearGradient id="gSet" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#2A2F38"/><stop offset="1" stop-color="#1B222C"/></linearGradient>'
+    + '<linearGradient id="gGui" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#14532D"/><stop offset="1" stop-color="#166534"/></linearGradient>'
+    + '<linearGradient id="gAbt" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#4C1D95"/><stop offset="1" stop-color="#5B21B6"/></linearGradient>'
+    + '</defs>';
+  box.appendChild(defs);
+
+  for (const app of DESK_APPS) {
+    const d = document.createElement("div");
+    d.className = "desk-icon";
+    d.innerHTML = '<svg viewBox="0 0 44 44">' + app.svg + '</svg><span>' + app.name + '</span>';
+    d.onclick = () => {
+      box.querySelectorAll(".desk-icon").forEach(x => x.classList.remove("sel"));
+      d.classList.add("sel");
+    };
+    d.ondblclick = () => {
+      if (app.w >= 0) {
+        const off = (M._rv_ram_ptr() + (0x83FFE200 - 0x80000000)) >>> 2;
+        M.HEAPU32[off] = app.w * 10 + 5;   // 5 = 恢复并聚焦
+      } else {
+        sendCmd("echo " + app.name + ": rvsim 0.9  -  RV32IMA  -  M/S/U  -  Sv32");
+      }
+    };
+    box.appendChild(d);
+  }
+}
+
+/* ── 终端用真字体渲染 ──
+   内核不再光栅化文字，只发布 22×61 的码点网格 + 每行版本号。
+   宿主按行增量更新，字体是浏览器的真实字体。 */
+const TERM_SYNC_PA = 0x83FE0000;
+let termEls = null, termRows = 0, termCols = 0, termSeq = [];
+
+function termRender() {
+  if (!M) return;
+  const A = M.HEAPU32;
+  const ram = M._rv_ram_ptr();
+  const tb = (ram + (TERM_SYNC_PA - 0x80000000)) >>> 2;
+  if (A[tb] !== 0x54524D31) return;      // magic 不对，内核还没发布
+
+  const cols = A[tb + 1], rows = A[tb + 2];
+  const cellsAddr = A[tb + 3] >>> 0, rowseqAddr = A[tb + 4] >>> 0;
+  const cx = A[tb + 5], cy = A[tb + 6], cvis = A[tb + 7];
+
+  const host = winEls[0] && winEls[0].el.querySelector(".term-dom");
+  if (!host) return;
+
+  // 首次建行
+  if (!termEls || termRows !== rows || termCols !== cols) {
+    termRows = rows; termCols = cols;
+    termSeq = new Array(rows).fill(-1);
+    host.innerHTML = "";
+    termEls = [];
+    for (let y = 0; y < rows; y++) {
+      const d = document.createElement("div");
+      d.className = "term-line";
+      host.appendChild(d);
+      termEls.push(d);
+    }
+  }
+
+  const offC = (ram + (cellsAddr - 0x80000000)) >>> 2;
+  const offR = (ram + (rowseqAddr - 0x80000000)) >>> 2;
+
+  for (let y = 0; y < rows; y++) {
+    const rseq = A[offR + y];
+    if (rseq === termSeq[y]) continue;
+    termSeq[y] = rseq;
+    let txt = "";
+    for (let x = 0; x < cols; x++) {
+      const cp = A[offC + y * cols + x];
+      if (cp === 0xFFFFFFFF) continue;        // 宽字符右半格
+      if (cp === 0 || cp === 32) { txt += " "; continue; }
+      txt += String.fromCodePoint(cp);
+    }
+    termEls[y].textContent = txt.replace(/\s+$/, "");
+  }
+
+  // 光标
+  for (const el of termEls) el.classList.remove("has-cursor");
+  if (cvis && cy < rows && termEls[cy]) {
+    termEls[cy].classList.add("has-cursor");
+    termEls[cy].style.setProperty("--cx", cx);
+  }
+}
+
 function winSync() {
   if (!winLayer || !M) return;
   const A = M.HEAPU32;
@@ -665,6 +820,7 @@ function winSync() {
       we.seq = 0;
     }
 
+    if (!we.ctx) continue;          // 终端是 DOM，不需要贴图
     const off = (ramBase + (buf - 0x80000000)) >>> 2;
     const img = we.ctx.createImageData(w, h);
     const d = img.data;
@@ -1051,6 +1207,7 @@ function tick(){
   const res=stepBudget(speed>=2?45:1);
   pumpUart();
   winSync();
+  termRender();
   dockClock();
   screenRender();
   frameNo++;
@@ -1246,6 +1403,7 @@ function startRvsim(){ createRvsim().then(m=>{
   M=m;ubuf=m._malloc(4096);
   screenInit();
   winInit();
+  iconsRender();
   screenPointerBind();
   if(typeof m._rv_mem_write32 !== "function"){
     setState("wasm 版本过期，请 Ctrl+Shift+R", "err");
