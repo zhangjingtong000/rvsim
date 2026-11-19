@@ -1195,10 +1195,13 @@ static int menu_click(u32 mx_, u32 my_)
         g_menu_open = 0;
         g_focus = item;
         desktop_redraw();
-    } else if (item == 3) {
+    } else if (item == 3) {          /* About：把版本信息打到终端里 */
         extern void desktop_redraw(void);
         g_menu_open = 0;
         desktop_redraw();
+        uart_puts("rvsim 0.9  RV32IMA  M/S/U  Sv32\n");
+        uart_puts("800x600 desktop, all pixels rasterised by the guest\n");
+        uart_puts("type help for the command list\n");
     }
     return 1;
 }

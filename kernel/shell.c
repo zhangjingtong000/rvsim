@@ -316,6 +316,13 @@ void shell_input(char ch)
         }
 
         if (g_len > 0) {
+
+extern int g_term_silent;
+            /* @ 前缀：只回 UART，不写窗口网格（调试面板查询用） */
+            if (g_line[0] == '@') {
+                g_term_silent = 1;
+                for (int k = 0; g_line[k]; k++) g_line[k] = g_line[k + 1];
+            }
             if (streq(g_line, "help"))        cmd_help();
             else if (streq(g_line, "ps"))     cmd_ps();
             else if (streq(g_line, "uptime")) {
@@ -459,6 +466,26 @@ void shell_input(char ch)
                     }
                 }
                 proc_dump_regs(pid);
+            }
+            else if (ADV && streq(g_line, "ll")) {
+                /* 人类可读的文件表；ls 保留 JSON 给契约测试与 AI 调用 */
+                char nm2[24]; u32 sz2;
+                for (u32 i2 = 0; i2 < 16; i2++) {
+                    if (!fs_entry(i2, nm2, sizeof(nm2), &sz2)) continue;
+                    if (nm2[0] == 0) continue;
+                    uart_puts(fs_entry_type(i2) == 1 ? "d  " : "-  ");
+                    char nb[12]; int nl2 = 0;
+                    if (sz2 == 0) nb[nl2++] = '0';
+                    else { char t2[12]; int tl = 0; u32 v2 = sz2;
+                           while (v2) { t2[tl++] = (char)('0' + v2 % 10); v2 /= 10; }
+                           for (int k2 = tl - 1; k2 >= 0; k2--) nb[nl2++] = t2[k2]; }
+                    nb[nl2] = 0;
+                    uart_puts(nb);
+                    /* 网格会过滤 \t（控制字符），用空格补齐到 8 列 */
+                    for (int pad = nl2; pad < 8; pad++) uart_putc(' ');
+                    uart_puts(nm2);
+                    uart_puts("\n");
+                }
             }
             else if (ADV && (streq(g_line, "ls") || starts_with(g_line, "ls "))) {
                 /* ls [path]：path 为空表示根，否则只列该前缀之下的条目 */
@@ -719,6 +746,8 @@ void shell_input(char ch)
     }
 
     goto shell_done;              /* 普通字符：直接返回，不要清空行缓冲 */
+
+    { extern int g_term_silent; g_term_silent = 0; }
 
 shell_done:
     redirect_end();

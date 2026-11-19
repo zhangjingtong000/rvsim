@@ -655,12 +655,14 @@ function boot(bytes,name){
    而且轮询会和用户输入抢同一根串口。 */
 function refreshPanels(){
   if(!M || !loaded) return;
+  /* @ 前缀：内核只把结果写 UART，不写窗口网格。
+     否则按一次 F12，用户终端就被 ps/log/ls 的 JSON 刷满，而且关抽屉也不消失。 */
   quietOut = true;
-  sendCmd("ps");
-  setTimeout(()=>sendCmd("log last 8"), 260);
-  setTimeout(()=>sendCmd("snaps"), 520);
-  setTimeout(()=>sendCmd("plans"), 780);
-  setTimeout(()=>sendCmd("ls"), 1040);
+  sendCmd("@ps");
+  setTimeout(()=>sendCmd("@log last 8"), 260);
+  setTimeout(()=>sendCmd("@snaps"), 520);
+  setTimeout(()=>sendCmd("@plans"), 780);
+  setTimeout(()=>sendCmd("@ls"), 1040);
   setTimeout(()=>{ quietOut = false; }, 1600);
 }
 

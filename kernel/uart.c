@@ -44,6 +44,10 @@ void redirect_end(void)
     uart_puts(w < 0 ? ",\"ok\":false}\n" : "}\n");
 }
 
+/* 静默模式：调试面板的查询命令只走 UART，不写窗口网格，
+   否则按一次 F12 就把用户终端刷满 JSON。 */
+int g_term_silent = 0;
+
 void uart_putc(char c)
 {
     volatile u8 *thr = (volatile u8 *)(UART_BASE + 0);
@@ -55,7 +59,7 @@ void uart_putc(char c)
         g_redir_buf[g_redir_len++] = c;
 
     /* 同时写进窗口的文本网格：屏幕上的终端就是真实输出 */
-    term_grid_putc(c);
+    if (!g_term_silent) term_grid_putc(c);
 
     g_uart_tail[g_uart_head] = c;
     g_uart_head = (g_uart_head + 1u) % UART_TAIL_CAP;
