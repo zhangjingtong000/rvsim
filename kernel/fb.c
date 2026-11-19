@@ -63,7 +63,7 @@ void term_grid_reset(void)
     u32 *buf = kernel_term_buf();
     fb_rect(buf, TERM_BUF_W, TERM_BUF_H, TERM_BUF_W,
             TERM_ORIGIN_X, TERM_ORIGIN_Y,
-            TERM_COLS * 8, TERM_ROWS * 16, 0x050608);
+            TERM_COLS * 8, TERM_ROWS * 16, 0x12161d);
 }
 
 /* 在字模表里查码点；返回索引，找不到返回 -1 */
@@ -198,21 +198,21 @@ u32 term_grid_flush(void)
         /* 先清整行背景：否则旧字符不会被擦掉，新内容叠在旧内容上变成乱码 */
         fb_rect(buf, TERM_BUF_W, TERM_BUF_H, TERM_BUF_W,
                 TERM_ORIGIN_X, TERM_ORIGIN_Y + y * 16,
-                TERM_COLS * 8, 16, 0x050608);
+                TERM_COLS * 8, 16, 0x12161d);
         for (u32 x = 0; x < TERM_COLS; x++) {
             u32 cp = g_term[y][x];
             if (cp == 0 || cp == ' ') continue;
             if (cp == 0xFFFFFFFFu) continue;          /* 宽字符右半格，左边已画 */
             if (cp > 127) {
                 cjk_draw(buf, TERM_BUF_W, TERM_ORIGIN_X + x * 8,
-                         TERM_ORIGIN_Y + y * 16, cp, 0xc9d1d9, 0x050608, 1);
+                         TERM_ORIGIN_Y + y * 16, cp, 0xc9d1d9, 0x12161d, 1);
                 continue;
             }
             char ch = (char)cp;
             u32 fg = (ch == '>') ? 0x5eead4 : ((ch == '?') ? 0xf87171 : 0xc9d1d9);
             fb_char(buf, TERM_BUF_W, TERM_BUF_H, TERM_BUF_W,
                     TERM_ORIGIN_X + x * 8, TERM_ORIGIN_Y + y * 16,
-                    ch, fg, 0x050608, 0);
+                    ch, fg, 0x12161d, 0);
         }
     }
     return dirty;

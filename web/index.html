@@ -17,12 +17,21 @@
 html,body{height:100%}
 body{background:var(--bg);color:var(--fg);font:13px/1.5 var(--sans);overflow:hidden;-webkit-font-smoothing:antialiased}
 
-header{height:50px;display:flex;align-items:center;gap:14px;padding:0 18px;
+/* 桌面独占全屏：调试器的头尾栏默认隐藏，右上角留一个悬浮开关 */
+header{display:none!important;
+  height:50px;display:flex;align-items:center;gap:14px;padding:0 18px;
        border-bottom:1px solid var(--line);background:var(--s1)}
 .brand{display:flex;align-items:baseline;gap:9px}
 .brand b{font-size:15px;font-weight:600;letter-spacing:-.01em}
 .brand i{font-style:normal;font-size:11px;color:var(--fg3);font-family:var(--mono)}
 .grow{flex:1}
+#floatDebug{position:fixed;right:14px;top:12px;z-index:60;width:34px;height:34px;
+  display:flex;align-items:center;justify-content:center;border-radius:10px;cursor:pointer;
+  font-size:15px;color:rgba(236,241,246,.6);
+  background:rgba(20,24,31,.7);backdrop-filter:blur(14px);
+  border:1px solid rgba(255,255,255,.08);transition:all .15s}
+#floatDebug:hover{color:#5eead4;border-color:rgba(94,234,212,.35)}
+
 #dbgToggle{font-size:11.5px;color:var(--fg2);padding:5px 10px;border-radius:6px;
   background:var(--s2);border:1px solid var(--line);cursor:pointer;user-select:none}
 #dbgToggle:hover{color:var(--fg);border-color:var(--line2)}
@@ -86,7 +95,7 @@ button.wide{flex:1}
 .termwrap{display:flex;flex-direction:column;height:100%;padding:0;
   min-height:0;overflow:hidden}   /* flex item 默认 min-height:auto，
                                      不设 0 的话容器会被内容撑开，#term 就永远滚不动 */
-.termbar{height:30px;display:flex;align-items:center;gap:10px;padding:0 16px;
+.termbar{display:none!important;height:30px;display:flex;align-items:center;gap:10px;padding:0 16px;
          border-bottom:1px solid var(--line);background:var(--s1);font-family:var(--mono);font-size:11px;color:var(--fg3)}
 .termbar b{color:var(--fg2);font-weight:500}
 /* 启动画面：wasm 加载 + 内核启动大概要几秒，这段空白用品牌帧填上 */
@@ -116,7 +125,7 @@ button.wide{flex:1}
 #winlayer{position:absolute;inset:0}
 
 .win{position:absolute;border-radius:13px;overflow:hidden;
-  background:rgba(18,22,29,.86);
+  background:#12161d;
   -webkit-backdrop-filter:blur(22px) saturate(150%);
   backdrop-filter:blur(22px) saturate(150%);
   box-shadow:0 1px 0 rgba(255,255,255,.06) inset, 0 18px 48px -12px rgba(0,0,0,.7), 0 0 0 1px rgba(255,255,255,.055);
@@ -125,14 +134,17 @@ button.wide{flex:1}
 .win.focused{box-shadow:0 1px 0 rgba(255,255,255,.08) inset, 0 26px 64px -14px rgba(0,0,0,.8), 0 0 0 1px rgba(94,234,212,.28)}
 .win-bar{height:36px;display:flex;align-items:center;gap:8px;padding:0 12px;
   font:500 12.5px/1 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",system-ui,sans-serif;
-  color:rgba(236,241,246,.72);background:rgba(255,255,255,.035);
+  color:rgba(236,241,246,.72);background:rgba(255,255,255,.045);
   border-bottom:1px solid rgba(255,255,255,.055);cursor:default;user-select:none}
 .win.focused .win-bar{color:rgba(236,241,246,.95)}
 .win-dots{margin-left:auto;display:flex;gap:7px}
 .win-dots i{width:10px;height:10px;border-radius:50%;display:block;cursor:pointer;
   transition:filter .12s}
+.win-dots i:nth-child(1){background:#ff5f57}
+.win-dots i:nth-child(2){background:#febc2e}
+.win-dots i:nth-child(3){background:#28c840}
 .win-dots i:hover{filter:brightness(1.35)}
-.win-body{display:block;width:100%;height:auto;image-rendering:pixelated}
+.win-body{display:block;image-rendering:pixelated;background:#12161d}
 
 #dock{position:absolute;left:0;right:0;bottom:0;height:54px;display:flex;align-items:center;gap:10px;
   padding:0 14px;
@@ -230,6 +242,7 @@ main > .col:last-child{overflow-y:auto;max-height:calc(100vh - 40px)}
   <div class="pill" id="st"><span class="dot"></span><span id="stT">未启动</span></div>
 </header>
 
+<div id="floatDebug" title="调试面板 (F12)">⚙</div>
 <main>
   <!-- 左 -->
   <div class="col">
@@ -399,12 +412,13 @@ function screenPointerBind(){
   const MOUSE_X = 0x10003044, MOUSE_Y = 0x10003048;
   const MOUSE_BTN = 0x1000304C, MOUSE_EV = 0x10003050;
 
+  /* 与 winSync 摆放窗口用同一套变换，否则鼠标命中和视觉位置会错位
+     （之前一个按宽度撑满、一个按 min() 等比居中，位移只走 70%） */
   function toFb(e){
     const r = cv.getBoundingClientRect();
-    /* #desk 的宽高比是 800:600，按宽度换算即可 */
-    const sc = r.width / 800;
-    const x = Math.round((e.clientX - r.left) / sc);
-    const y = Math.round((e.clientY - r.top) / sc);
+    const L = deskTransform(r.width, r.height);
+    const x = Math.round((e.clientX - r.left - L.ox) / L.scale);
+    const y = Math.round((e.clientY - r.top - L.oy) / L.scale);
     return [Math.max(0, Math.min(799, x)), Math.max(0, Math.min(599, y))];
   }
 
@@ -428,8 +442,16 @@ function screenPointerBind(){
     curX = x; curY = y; curInside = true;
     M._rv_mem_write32(MOUSE_X, x);
     M._rv_mem_write32(MOUSE_Y, y);
-    M._rv_mem_write32(MOUSE_BTN, 1);
+    /* 先补一次抬起，清掉内核可能残留的按下状态 */
+    M._rv_mem_write32(MOUSE_BTN, 0);
     M._rv_mem_write32(MOUSE_EV, 1);
+    setTimeout(() => {
+      if (!M) return;
+      M._rv_mem_write32(MOUSE_X, x);
+      M._rv_mem_write32(MOUSE_Y, y);
+      M._rv_mem_write32(MOUSE_BTN, 1);
+      M._rv_mem_write32(MOUSE_EV, 1);
+    }, 30);
     cv.setPointerCapture(e.pointerId);
   });
 
@@ -454,6 +476,17 @@ function screenPointerBind(){
    内核在 0x83FFE000 维护一张窗口表，宿主按它摆窗口、贴内容。
    外壳（圆角/阴影/毛玻璃标题栏/Dock）全部由 CSS 画。 */
 const WIN_INFO_PA = 0x83FFE000;
+
+/* 逻辑画布 800x600 在桌面区域里的变换；事件换算和窗口摆放必须共用 */
+function deskTransform(w, h) {
+  const availW = w, availH = h - 54;
+  const scale = Math.min(availW / 800, availH / 600) * 0.96;
+  return {
+    scale,
+    ox: (availW - 800 * scale) / 2,
+    oy: (availH - 600 * scale) / 2,
+  };
+}
 const WIN_SLOTS = 3;
 const winEls = [];
 let winLayer = null, dockApps = null;
@@ -484,6 +517,28 @@ function winInit() {
     winLayer.appendChild(el);
     winEls.push({ el, ctx: el.querySelector(".win-body").getContext("2d"), body: el.querySelector(".win-body"), w: 0, h: 0, seq: 0 });
   }
+  // 窗控点：红=关闭 黄=最小化 绿=最大化，换算成 guest 逻辑坐标发过去。
+  // 用 forEach 的索引而不是 dataset，避免属性读取出错导致点到隔壁按钮。
+  for (let i = 0; i < WIN_SLOTS; i++) {
+    winEls[i].el.querySelectorAll(".win-dots i").forEach((dot, act) => {
+      dot.onclick = (ev) => {
+        ev.stopPropagation();
+        const A = M.HEAPU32;
+        const base = (M._rv_ram_ptr() + (WIN_INFO_PA - 0x80000000)) >>> 2;
+        const b = base + i * 9;
+        const x = A[b + 6], y = A[b + 7], w = A[b + 1];
+        // 与内核 win_chrome_hit 一致：红=x+w-20, 黄=x+w-33, 绿=x+w-46，y+8..y+20
+        // 视觉上从左到右是 红/黄/绿，内核从右到左才是 红/黄/绿，所以反过来算
+        const k = 2 - act;
+        sendGuestClick([x + w - 20 - k * 13 + 4, y + 13]);
+      };
+    });
+  }
+
+  // 汉堡：开始菜单（guest 的任务栏按钮在 8..80, 570..600）
+  const launch = document.getElementById("dockLaunch");
+  if (launch) launch.onclick = () => sendGuestClick([40, 585]);
+
   // Dock 上的应用条目
   if (dockApps) {
     for (let i = 0; i < WIN_SLOTS; i++) {
@@ -509,8 +564,14 @@ function sendGuestClick(pt) {
   if (!M) return;
   const wk = (a, v) => M._rv_mem_write32(a, v);
   wk(0x10003044, pt[0]); wk(0x10003048, pt[1]);
-  wk(0x1000304C, 1); wk(0x10003050, 1);
-  setTimeout(() => { if (!M) return; wk(0x1000304C, 0); wk(0x10003050, 1); }, 90);
+  /* 先补一次抬起：内核的按下/抬起是配对状态，任何丢失的 up 都会让它
+     永久停在「按住中」，之后所有点击都被忽略。 */
+  wk(0x1000304C, 0); wk(0x10003050, 1);
+  setTimeout(() => {
+    if (!M) return;
+    wk(0x1000304C, 1); wk(0x10003050, 1);
+    setTimeout(() => { if (!M) return; wk(0x1000304C, 0); wk(0x10003050, 1); }, 60);
+  }, 30);
 }
 
 function winSync() {
@@ -518,12 +579,9 @@ function winSync() {
   const A = M.HEAPU32;
   const ramBase = M._rv_ram_ptr();
   const base = (ramBase + (WIN_INFO_PA - 0x80000000)) >>> 2;
-  /* 等比缩放 + 居中：保持 800x600 的逻辑布局，不要横向撑满 */
   const desk = document.getElementById("desk");
-  const availW = desk.clientWidth, availH = desk.clientHeight - 54;
-  const scale = Math.min(availW / 800, availH / 600) * 0.96;
-  const ox = (availW - 800 * scale) / 2;
-  const oy = (availH - 600 * scale) / 2;
+  const L = deskTransform(desk.clientWidth, desk.clientHeight);
+  const scale = L.scale, ox = L.ox, oy = L.oy;
 
   for (let i = 0; i < WIN_SLOTS; i++) {
     const b = base + i * 9;
@@ -538,6 +596,7 @@ function winSync() {
     // 位置/大小（按画布比例缩放）
     we.el.style.left = (ox + x * scale) + "px";
     we.el.style.top = (oy + y * scale) + "px";
+    we.el.style.width = (w * scale) + "px";
     we.el.style.zIndex = 10 + z;
     we.el.classList.toggle("focused", !!focused);
 
@@ -1080,10 +1139,19 @@ function render(){
 }
 
 /* 事件 */
+const _fd = document.getElementById("floatDebug");
+if (_fd) _fd.onclick = () => {
+  document.body.classList.toggle("drawer-open");
+  if (document.body.classList.contains("drawer-open") && typeof refreshPanels === "function") refreshPanels();
+};
 document.getElementById("dbgToggle").onclick = () => {
   document.body.classList.toggle("drawer-open");
   if(document.body.classList.contains("drawer-open")) refreshPanels();
 };
+/* 调试面板按钮：逐个判空。
+   之前只要有一个 id 对不上就抛 TypeError，整段脚本从 createRvsim 之后全不执行，
+   表现是 M 一直是 null、页面停在「未启动」，排查方向会被彻底带偏。 */
+try {
 $("bKernel").onclick=()=>bootUrl("images/kernel.elf","mini-kernel");
 $("bTest").onclick=()=>bootUrl("images/rv32ui-p-add","rv32ui-p-add");
 $("bUpload").onclick=()=>$("file").click();
@@ -1115,6 +1183,8 @@ $("reg").onclick=e=>{
   inp.onblur=done;
   inp.onkeydown=k=>{if(k.key==="Enter")inp.blur();if(k.key==="Escape"){inp.value=hx(cur);inp.blur();}};
 };
+} catch (e) { console.warn('debug panel bind:', e); }
+
 
 
 /* wasm 的缓存破坏由构建脚本处理（文件名带内容哈希），

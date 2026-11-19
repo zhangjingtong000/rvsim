@@ -946,7 +946,7 @@ static void fs_seed(void)
 #define C_FG2     0xa3abb6
 #define C_FG3     0x7b8595
 #define C_ACC     0x5eead4
-#define C_TERM    0x050608
+#define C_TERM    0x12161d
 #define C_TEXT    0xc9d1d9
 
 #define WIN_TERM_X 18
@@ -1062,6 +1062,16 @@ static void win_info_init(void)
     g_win_info[2].title = (u32)"Files";
 }
 
+/* 启动时把三块内容画布填满底色。
+   不填的话，没有被绘制到的区域是 BSS 的 0（纯黑），
+   在窗口里表现为一圈黑边。 */
+void win_buf_init(void)
+{
+    for (u32 i = 0; i < WINBUF_TERM_W * WINBUF_TERM_H; i++) g_buf_term[i] = 0x12161d;
+    for (u32 i = 0; i < WINBUF_SIDE_W * WINBUF_SIDE_H; i++) g_buf_mon[i] = 0x12161d;
+    for (u32 i = 0; i < WINBUF_SIDE_W * WINBUF_SIDE_H; i++) g_buf_fs[i] = 0x12161d;
+}
+
 u32 kernel_win_info(void) { return (u32)g_win_info; }
 u32 *kernel_term_buf(void) { return g_buf_term; }
 
@@ -1073,7 +1083,7 @@ static void monitor_draw(void)
     const u32 line = 16;
     u32 y = MON_BODY_Y;
 
-    fb_rect(buf, BW, BH, BW, 0, 0, BW, BH, 0x050608);
+    fb_rect(buf, BW, BH, BW, 0, 0, BW, BH, 0x12161d);
     fb_text(buf, BW, BH, BW, MON_BODY_X, y, "PID STATE  PC", C_FG3, C_TERM, 1);
     y += line;
 
@@ -1131,7 +1141,7 @@ static void files_draw(void)
     const u32 line = 16;
     u32 y = FS_BODY_Y;
 
-    fb_rect(buf, BW, BH, BW, 0, 0, BW, BH, 0x050608);
+    fb_rect(buf, BW, BH, BW, 0, 0, BW, BH, 0x12161d);
     fb_text(buf, BW, BH, BW, FS_BODY_X, y, "NAME          SIZE", C_FG3, C_TERM, 1);
     y += line;
 
@@ -1186,13 +1196,13 @@ static u32  g_ol_x = 0, g_ol_y = 0;
 static void wins_init(void)
 {
     g_wins[0].x = WIN_TERM_X; g_wins[0].y = WIN_TERM_Y;
-    g_wins[0].w = WIN_TERM_W; g_wins[0].h = WIN_TERM_H;
+    g_wins[0].w = WINBUF_TERM_W; g_wins[0].h = WINBUF_TERM_H;
     g_wins[0].title = "rvsh - terminal";
     g_wins[1].x = WIN_MON_X; g_wins[1].y = WIN_MON_Y;
-    g_wins[1].w = WIN_MON_W; g_wins[1].h = WIN_MON_H;
+    g_wins[1].w = WINBUF_SIDE_W; g_wins[1].h = WINBUF_SIDE_H;
     g_wins[1].title = "monitor";
     g_wins[2].x = WIN_FS_X; g_wins[2].y = WIN_FS_Y;
-    g_wins[2].w = WIN_FS_W; g_wins[2].h = WIN_FS_H;
+    g_wins[2].w = WINBUF_SIDE_W; g_wins[2].h = WINBUF_SIDE_H;
     g_wins[2].title = "files";
     for (int i = 0; i < 3; i++) {
         g_wins[i].visible = 1;
@@ -1612,6 +1622,7 @@ void kmain(void)
        宿主只把这块 RAM 贴到画布上，不做任何 UI 绘制。 */
     fb_init(800, 600);
     win_info_init();
+    win_buf_init();
     term_grid_reset();
     desktop_draw();
 
