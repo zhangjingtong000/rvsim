@@ -61,11 +61,37 @@ void fs_init(void)
 
 /* 路径规范化：去掉开头的 '/'，其余原样保留。
    存储和查找都走这一份，名字才不会出现两种写法。 */
-static void fs_norm(const char *in, char *out, int cap)
+static int fs_norm(const char *in, char *out, int cap)
 {
-    if (!in) { out[0] = 0; return; }
+    int n = 0;
+    if (!in) { out[0] = 0; return 0; }
     while (*in == '/') in++;
+    while (in[n]) n++;
+    if (n >= cap) { out[0] = 0; return -1; }   /* 太长必须报错，不能截断后当成功 */
     k_strcpy_n(out, in, cap);
+    return 0;
+}
+
+static fs_file_t *fs_find(const char *name);   /* 定义在下面 */
+
+/* 确保 path 的每一级父目录都存在。
+   RAMFS 是平铺命名空间，写 a/b/c.txt 时如果不把 a、a/b 建成目录，
+   这个文件就只能靠 shell 访问，图形界面永远进不去——数据在，入口没有。 */
+static int fs_ensure_parents(const char *path)
+{
+    char buf[FS_NAME_MAX];
+    int n = 0;
+    while (path[n] && n < FS_NAME_MAX - 1) { buf[n] = path[n]; n++; }
+    buf[n] = 0;
+    for (int i = 1; i < n; i++) {
+        if (buf[i] != '/') continue;
+        buf[i] = 0;
+        fs_file_t *d = fs_find(buf);
+        if (d && !d->is_dir) return -1;      /* 父路径上是个文件，这条路径不成立 */
+        fs_mkdir(buf);
+        buf[i] = '/';
+    }
+    return 0;
 }
 
 /* ── 查找 ── */
@@ -73,7 +99,7 @@ static fs_file_t *fs_find(const char *name)
 {
     char key[FS_NAME_MAX];
     if (!name || !name[0]) return 0;
-    fs_norm(name, key, FS_NAME_MAX);
+    if (fs_norm(name, key, FS_NAME_MAX) < 0) return 0;
     if (!key[0]) return 0;
     for (u32 i = 0; i < FS_MAX_FILES; i++)
         if (g_files[i].used && k_streq(g_files[i].name, key)) return &g_files[i];
@@ -97,12 +123,13 @@ int fs_write(const char *name, const u8 *data, u32 len)
 {
     char key[FS_NAME_MAX];
     if (!name || !name[0]) return -1;
-    fs_norm(name, key, FS_NAME_MAX);
+    if (fs_norm(name, key, FS_NAME_MAX) < 0) return -1;
     if (!key[0]) return -1;
-    if (k_strlen(key) >= FS_NAME_MAX) return -1;
     if (len > FS_DATA_MAX) return -1;
+    if (fs_ensure_parents(key) < 0) return -1;
 
     fs_file_t *f = fs_find(key);
+    if (f && f->is_dir) return -1;            /* 目录没有内容，别把文件写进目录项 */
     if (!f) {
         for (u32 i = 0; i < FS_MAX_FILES; i++) {
             if (!g_files[i].used) { f = &g_files[i]; break; }
@@ -123,7 +150,7 @@ int fs_write(const char *name, const u8 *data, u32 len)
 int fs_read(const char *name, u8 *out, u32 cap)
 {
     fs_file_t *f = fs_find(name);
-    if (!f) return -1;
+    if (!f || f->is_dir) return -1;      /* 目录没有内容，读它是调用方的错 */
     u32 n = f->size;
     if (n > cap) n = cap;
     for (u32 i = 0; i < n; i++) out[i] = f->data[i];
@@ -140,8 +167,21 @@ int fs_size(const char *name)
 /* 删除：成功返回 0，不存在返回 -1 */
 int fs_remove(const char *name)
 {
+    char key[FS_NAME_MAX];
     fs_file_t *f = fs_find(name);
     if (!f) return -1;
+    if (fs_norm(name, key, FS_NAME_MAX) < 0) return -1;
+    if (f->is_dir) {
+        int plen = k_strlen(key);
+        for (u32 i = 0; i < FS_MAX_FILES; i++) {
+            if (!g_files[i].used) continue;
+            if (g_files[i].name[plen] != '/') continue;
+            if (!fs_under(g_files[i].name, key)) continue;
+            g_files[i].used = 0;
+            g_files[i].name[0] = 0;
+            g_files[i].size = 0;
+        }
+    }
     f->used = 0;
     f->name[0] = 0;
     f->size = 0;
@@ -152,13 +192,32 @@ int fs_remove(const char *name)
    目标已存在时失败，不做静默覆盖——覆盖掉的那个文件没有回收站。 */
 int fs_rename(const char *from, const char *to)
 {
-    char key[FS_NAME_MAX];
+    char key[FS_NAME_MAX], old[FS_NAME_MAX];
     fs_file_t *f = fs_find(from);
     if (!f || !to || !to[0]) return -1;
-    fs_norm(to, key, FS_NAME_MAX);
+    if (fs_norm(to, key, FS_NAME_MAX) < 0) return -2;
     if (!key[0]) return -1;
-    if (k_strlen(key) >= FS_NAME_MAX) return -2;
+    if (fs_norm(from, old, FS_NAME_MAX) < 0) return -1;
+    if (k_streq(old, key)) return 0;            /* 改成自己：成功的无操作 */
     if (fs_find(key)) return -3;
+    if (fs_ensure_parents(key) < 0) return -1;
+
+    if (f->is_dir) {
+        /* 目录改名要把所有子项的前缀一起换掉。
+           只改目录项的话，子文件全留在旧路径下：看不见、进不去、也删不掉。 */
+        int fl = k_strlen(old), tl = k_strlen(key);
+        for (u32 i = 0; i < FS_MAX_FILES; i++) {
+            if (!g_files[i].used) continue;
+            if (g_files[i].name[fl] != '/') continue;
+            if (!fs_under(g_files[i].name, old)) continue;
+            int rest = k_strlen(g_files[i].name) - fl;
+            if (tl + rest >= FS_NAME_MAX) continue;   /* 新前缀放不下就跳过 */
+            char nb[FS_NAME_MAX];
+            for (int k = 0; k < tl; k++) nb[k] = key[k];
+            for (int k = 0; k <= rest; k++) nb[tl + k] = g_files[i].name[fl + k];
+            k_strcpy_n(g_files[i].name, nb, FS_NAME_MAX);
+        }
+    }
     k_strcpy_n(f->name, key, FS_NAME_MAX);
     return 0;
 }
@@ -168,10 +227,13 @@ int fs_mkdir(const char *name)
 {
     char key[FS_NAME_MAX];
     if (!name || !name[0]) return -1;
-    fs_norm(name, key, FS_NAME_MAX);
+    if (fs_norm(name, key, FS_NAME_MAX) < 0) return -1;
     if (!key[0]) return -1;
-    if (k_strlen(key) >= FS_NAME_MAX) return -1;
-    if (fs_find(key)) return 0;
+    {
+        fs_file_t *e = fs_find(key);
+        if (e) return e->is_dir ? 0 : -2;     /* 同名文件存在：报冲突，别假装成功 */
+    }
+    if (fs_ensure_parents(key) < 0) return -1;
 
     for (u32 i = 0; i < FS_MAX_FILES; i++) {
         if (!g_files[i].used) {

@@ -1405,11 +1405,14 @@ void host_cmd_poll(void)
         hcmd_name(c->p0, a, sizeof(a));
         rc = (fs_mkdir(a) < 0) ? 1u : 0u;
         break;
-    case HCMD_KILL:
-        /* 正在跑的进程杀不掉（它的 satp 还挂着），交给定时器中断 */
-        if (proc_kill(c->a0) == -2) g_hcmd_kill = (int)c->a0;
-        rc = 0;
-        break;
+    case HCMD_KILL: {
+        /* 正在跑的进程杀不掉（它的 satp 还挂着），交给定时器中断。
+           不存在的 pid 必须报失败——以前这里无条件 rc=0，
+           宿主 killProc(99) 也返回成功，调用方没法判断。 */
+        int r = proc_kill(c->a0);
+        if (r == -2) { g_hcmd_kill = (int)c->a0; rc = 0; }
+        else rc = (r == 0) ? 0u : 1u;
+        break; }
     case HCMD_READ:
         hcmd_name(c->p0, a, sizeof(a));
         {

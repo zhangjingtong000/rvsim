@@ -256,6 +256,7 @@ input{font:inherit;color:inherit;background:none;border:0;outline:0}
 .win-body{flex:1 1 auto;min-height:0;position:relative;overflow:hidden}
 /* 宿主应用的内容长度是固定的，窗口小时要能滚，不能直接裁掉最后一行 */
 .host-win .win-body{overflow:auto}
+.host-win.solid{background:#12161D}
 
 /* 终端：字符网格由内核发布，这里用等宽真字体画 */
 .term-dom{padding:10px 12px;overflow:hidden;background:var(--s0);
@@ -699,6 +700,12 @@ const _uartDec = new TextDecoder();
 const desk = () => document.getElementById("os");
 const guestOff = (pa) => (M._rv_ram_ptr() + (pa - 0x80000000)) >>> 2;   /* 字索引，给 HEAPU32 */
 const guestByte = (pa) => M._rv_ram_ptr() + (pa - 0x80000000);          /* 字节偏移，给 HEAPU8 */
+const _dec = new TextDecoder("utf-8");
+/* 文件名是用户输入，直接拼进 innerHTML 会被当成标签。
+   <b>x</b> 会把行渲染坏，带引号的名字会把 data-name 截断，那一行的
+   双击/删除/重命名就全失效了。所有拼进 HTML 的文本都要过这里。 */
+const esc = (v) => String(v).replace(/[&<>"']/g, (c) => (
+  { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
 /* ══ 启动画面 ══ */
 function setProgress(pct, text) {
@@ -1649,13 +1656,10 @@ function deskTransform(w, h) {
 function winReadStr(addr, max) {
   const B = M.HEAPU8;
   const off = M._rv_ram_ptr() + (addr - 0x80000000);
-  let s = "";
-  for (let i = 0; i < max; i++) {
-    const c = B[off + i];
-    if (!c) break;
-    s += String.fromCharCode(c);
-  }
-  return s;
+  let n = 0;
+  while (n < max && B[off + n]) n++;
+  /* 必须按 UTF-8 解：逐字节 fromCharCode 会把中文拆成 Latin-1 乱码 */
+  return _dec.decode(B.subarray(off, off + n));
 }
 
 /* 终端字号自适应：按「列数刚好铺满宽度」定字号，再把行高拉伸填满高度。
@@ -1768,13 +1772,9 @@ let sysInfo = { nproc: 0, nfile: 0, nrun: 0 };
 
 function readStrAt(byteOff, max) {
   const B = M.HEAPU8;
-  let s = "";
-  for (let i = 0; i < max; i++) {
-    const c = B[byteOff + i];
-    if (!c) break;
-    s += String.fromCharCode(c);
-  }
-  return s;
+  let n = 0;
+  while (n < max && B[byteOff + n]) n++;
+  return _dec.decode(B.subarray(byteOff, byteOff + n));
 }
 
 /* 往终端发命令之前先确认终端窗口是可见的。
@@ -1823,19 +1823,15 @@ function fsPathText() { return fsCwd ? "/" + fsCwd : "/"; }
 
 /* 文件操作失败时在路径栏上留一句话。
    以前失败是静默的：点完「重命名」什么都不变，用户不知道是没点到还是内核拒绝了。 */
-let filesToastTimer = null;
+let filesToastTimer = null, filesToastMsg = "";
+/* 提示做成状态而不是一次性写文本：文件列表一变就会重渲染路径栏，
+   之前写完马上被 panelsRender 覆盖，用户只看到路径栏闪了一下红色，
+   错误文字一次都没出现过。 */
 function filesToast(msg) {
-  const body = winEls[2] && winEls[2].body;
-  if (!body) return;
-  const el = body.querySelector(".fpath");
-  if (!el) return;
+  filesToastMsg = msg;
   clearTimeout(filesToastTimer);
-  el.textContent = msg;
-  el.style.color = "#F87171";
-  filesToastTimer = setTimeout(() => {
-    el.style.color = "";
-    el.textContent = fsPathText();
-  }, 2400);
+  filesToastTimer = setTimeout(() => { filesToastMsg = ""; panelsRender(); }, 3000);
+  panelsRender();
 }
 
 /* 窗口内的小输入框：不用 window.prompt（浅色系统弹窗在深色桌面上很突兀） */
@@ -1926,10 +1922,15 @@ function importProgram() {
       const nm = joinPath(f.name);
       /* 走 UART 传二进制不现实，直接按字节写进宿主与内核约定的数据页，
          再让内核把它当文件存下来。 */
-      const off = guestByte(HCMD_DATA_PA);
-      const n = Math.min(buf.length, HCMD_DATA_MAX);
-      M.HEAPU8.set(buf.subarray(0, n), off);
-      hostCmdRaw(1, nm, "", 0, n).then(refreshFiles).catch(refreshFiles);
+      if (buf.length > HCMD_DATA_MAX) {
+        filesToast("程序 " + buf.length + " 字节，超过 " + HCMD_DATA_MAX + " 上限");
+        return;
+      }
+      M.HEAPU8.set(buf, guestByte(HCMD_DATA_PA));
+      hostCmdRaw(1, nm, "", 0, buf.length).then((rc) => {
+        if (rc !== 0) filesToast("导入失败（名字太长或文件槽已满）");
+        refreshFiles();
+      }).catch((e) => filesToast("导入失败：" + e.message));
     };
     rd.readAsArrayBuffer(f);
   };
@@ -2035,7 +2036,7 @@ function buildEditor(id, path, text) {
   const n = hostWins.size;
   const size = [430, 330];
   const el = document.createElement("div");
-  el.className = "win host-win";
+  el.className = "win host-win solid";   /* 读写界面不该有底噪，整窗不透明 */
   el.style.width = size[0] + "px";
   el.style.height = size[1] + "px";
   el.style.left = Math.round(150 + n * 26) + "px";
@@ -2043,7 +2044,7 @@ function buildEditor(id, path, text) {
   el.style.zIndex = ++hostZ;
   el.innerHTML =
     '<div class="win-bar"><span class="win-ico">' + EDIT_ICO + '</span>'
-    + '<span class="win-title">' + path + '</span>'
+    + '<span class="win-title">' + esc(path) + '</span>'
     + '<span class="win-ctl">'
     + '<button class="min" title="最小化"><svg viewBox="0 0 10 10"><path d="M2 5h6" stroke="currentColor" stroke-width="1.2"/></svg></button>'
     + '<button class="close" title="关闭"><svg viewBox="0 0 10 10"><path d="M2.5 2.5l5 5M7.5 2.5l-5 5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg></button>'
@@ -2167,16 +2168,14 @@ function panelsRender() {
     if (sig !== fileSig) {
       fileSig = sig;
       const sc = fs.querySelector(".fscroll");
-      const pathEl = fs.querySelector(".fpath");
-      if (pathEl) pathEl.textContent = fsPathText();
       const upBtn = fs.querySelector('.fbar button[data-f="up"]');
       if (upBtn) upBtn.disabled = !fsCwd;
       let h = '<table class="ftab"><colgroup><col><col style="width:62px"></colgroup>'
         + '<thead><tr><th>NAME</th><th class="r">SIZE</th></tr></thead><tbody>';
       for (const r of rows) {
         const shown = fsCwd ? r.name.slice(fsCwd.length + 1) : r.name;
-        h += '<tr data-name="' + r.name + '" data-dir="' + (r.dir ? "1" : "0") + '">'
-           + '<td class="nm">' + (r.dir ? "▸ " : "") + shown + '</td>'
+        h += '<tr data-name="' + esc(r.name) + '" data-dir="' + (r.dir ? "1" : "0") + '">'
+           + '<td class="nm">' + (r.dir ? "▸ " : "") + esc(shown) + '</td>'
            + '<td class="r ' + (r.dir ? "dim" : "mono") + '">' + (r.dir ? "—" : r.size) + '</td></tr>';
       }
       if (!rows.length) h += '<tr><td class="dim" colspan="2" style="padding:12px">空目录</td></tr>';
@@ -2196,6 +2195,15 @@ function panelsRender() {
           fileCtx(tr.dataset.name, tr.dataset.dir === "1", ev.clientX, ev.clientY);
         });
       });
+    }
+    /* 路径栏每帧校正：失败提示不改数据，靠签名比较永远等不到那一次渲染。
+       顺带也把「窗口拉大之后路径栏没刷新」这种边角一并兜住。 */
+    const pathEl = fs.querySelector(".fpath");
+    if (pathEl) {
+      const want = filesToastMsg || fsPathText();
+      const color = filesToastMsg ? "#F87171" : "";
+      if (pathEl.textContent !== want) pathEl.textContent = want;
+      if (pathEl.style.color !== color) pathEl.style.color = color;
     }
     /* 行高每帧校正一次（内部有变化才写的短路），窗口拉大拉小都跟得上 */
     panelRowHeight(fs.querySelector(".fscroll"), rows.length, 22, 34, 26);
@@ -2957,7 +2965,16 @@ window.rv = {
   suspendProc(pid) { return hostCmd(6, "", "", pid, null); },
   resumeProc(pid) { return hostCmd(7, "", "", pid, null); },
   get fsCwd() { return fsCwd; },
-  fsChdir(path) { fsCwd = path || ""; fileSig = ""; panelsRender(); return fsCwd; },
+  fsChdir(path) {
+    /* 不能进文件、不能进不存在的路径：以前直接赋值，
+       路径栏会显示 /readme.txt 这种不存在的位置，列表空、退不回来。 */
+    const p = String(path || "").replace(/^\/+/, "").replace(/\/+$/, "");
+    if (p && !fsIsDir(p)) return fsCwd;
+    fsCwd = p;
+    fileSig = "";
+    panelsRender();
+    return fsCwd;
+  },
   openFile(name) { openFileByName(name); return true; },
   closeWin(i) { if (M) sendWinCmd(i * 10 + 0); },
   focusWin(i) { if (M) sendWinCmd(i * 10 + 5); },
@@ -2972,7 +2989,6 @@ window.rv = {
 const HCMD_PA = 0x83FFC000, HCMD_DATA_PA = 0x83FFD000;
 const HCMD_DATA_MAX = 4096, HCMD_MAGIC = 0x48434D44;
 const HCMD_HDR = 24;            /* magic seq op a0 len rc，各 4 字节 */
-const _dec = new TextDecoder("utf-8");
 let hcmdSeq = 0;
 
 function hostCmd(op, p0, p1, a0, data) {
@@ -2989,10 +3005,13 @@ function hostCmd(op, p0, p1, a0, data) {
     put(p0, nameOff);
     put(p1, nameOff + 64);
     let len = 0;
-    if (data) {
+    if (data != null) {
       const b = _enc.encode(data);
-      len = Math.min(b.length, HCMD_DATA_MAX);
-      B.set(b.subarray(0, len), guestByte(HCMD_DATA_PA));
+      if (b.length > HCMD_DATA_MAX) {
+        return reject(new Error("内容 " + b.length + " 字节，超过单次写入上限 " + HCMD_DATA_MAX));
+      }
+      len = b.length;
+      B.set(b, guestByte(HCMD_DATA_PA));
     }
     const i = baseW;
     A[i] = 0;                     /* 先摘掉 magic，避免内核读到写了一半的命令 */

@@ -1134,6 +1134,100 @@ test("12.5", "反复开关 20 次状态一致", async (p) => {
   eq(await p.evaluate(() => window.rv.state.wins[0].visible), true);
 });
 
+// ── 对抗性用例：边界与注入 ──
+test("13.16", "中文文件名可读可写可打开", async (p) => {
+  eq(await p.evaluate(() => window.rv.fsWrite("中文名测试.txt", "CN")), 0);
+  await sleep(500);
+  ok((await p.evaluate(() => window.rv.state.files.map((f) => f.name))).indexOf("中文名测试.txt") >= 0, "内核里名字不对");
+  ok((await p.evaluate(() => [...document.querySelectorAll("tr[data-name]")].map((r) => r.dataset.name))).indexOf("中文名测试.txt") >= 0,
+     "界面上的名字是乱码");
+  eq(await p.evaluate(() => window.rv.fsRead("中文名测试.txt")), "CN");
+});
+
+test("13.17", "文件名里的 HTML 不会被当成标签", async (p) => {
+  eq(await p.evaluate(() => window.rv.fsWrite("<b>inj.txt", "1")), 0);
+  await sleep(500);
+  eq(await p.evaluate(() => !!document.querySelector(".ftab tbody b")), false, "名字里的 <b> 被渲染成了元素");
+  eq(await p.evaluate(() => !!document.querySelector(".ftab tbody img")), false, "名字里的 <img> 被渲染成了元素");
+  eq(await p.evaluate(() => window.rv.fsWrite('q"t.txt', "2")), 0);
+  await sleep(500);
+  eq(await p.evaluate(() => {
+    const tr = [...document.querySelectorAll("tr[data-name]")].find((r) => r.dataset.name === 'q"t.txt');
+    return tr ? tr.dataset.name : null;
+  }), 'q"t.txt', "带引号的名字把 data-name 截断了");
+});
+
+test("13.18", "删除目录会连带删掉子项", async (p) => {
+  eq(await p.evaluate(() => window.rv.fsMkdir("cascade")), 0);
+  eq(await p.evaluate(() => window.rv.fsWrite("cascade/kid.txt", "KID")), 0);
+  await sleep(400);
+  eq(await p.evaluate(() => window.rv.fsRemove("cascade")), 0);
+  await sleep(400);
+  eq(await p.evaluate(() => window.rv.fsRead("cascade/kid.txt")), null, "目录删了但子文件还在（重建同名目录会复活）");
+});
+
+test("13.19", "目录改名会迁移子项", async (p) => {
+  eq(await p.evaluate(() => window.rv.fsMkdir("mvdir")), 0);
+  eq(await p.evaluate(() => window.rv.fsWrite("mvdir/kid.txt", "K3")), 0);
+  await sleep(400);
+  eq(await p.evaluate(() => window.rv.fsRename("mvdir", "mvdir2")), 0);
+  await sleep(400);
+  eq(await p.evaluate(() => window.rv.fsRead("mvdir2/kid.txt")), "K3", "改名后新路径下没有子项");
+  eq(await p.evaluate(() => window.rv.fsRead("mvdir/kid.txt")), null, "旧路径下还留着子项");
+});
+
+test("13.20", "文件与目录不能互相顶替", async (p) => {
+  eq(await p.evaluate(() => window.rv.fsMkdir("readme.txt")), 1, "对已存在的文件建目录应该报冲突");
+  eq(await p.evaluate(() => window.rv.fsWrite("mvdir2", "BBB")), 1, "往目录里写文件应该失败");
+});
+
+test("13.21", "超长文件名被拒绝，不静默截断", async (p) => {
+  eq(await p.evaluate(() => window.rv.fsWrite("L".repeat(30), "x")), 1);
+  await sleep(400);
+  const bad = await p.evaluate(() => window.rv.state.files.map((f) => f.name).filter((n) => n.indexOf("LLLL") === 0));
+  eq(bad, [], "超长名字被截断后建了出来");
+});
+
+test("13.22", "超过单次写入上限被拒绝，不静默丢尾部", async (p) => {
+  const r = await p.evaluate(() => window.rv.fsWrite("too-big.txt", "A".repeat(5000))
+    .then((rc) => ({ rc })).catch((e) => ({ msg: e.message })));
+  ok(r.msg && r.msg.indexOf("4096") >= 0, "没有报错：" + JSON.stringify(r));
+  eq(await p.evaluate(() => window.rv.state.files.map((f) => f.name)), 
+     (await p.evaluate(() => window.rv.state.files.map((f) => f.name))).filter((n) => n !== "too-big.txt"), "文件还是建出来了");
+});
+
+test("13.23", "对不存在的进程操作要报失败", async (p) => {
+  eq(await p.evaluate(() => window.rv.killProc(99)), 1);
+  eq(await p.evaluate(() => window.rv.killProc(-1)), 1);
+});
+
+test("13.24", "不能进入文件或不存在的路径", async (p) => {
+  await p.evaluate(() => window.rv.fsChdir(""));
+  await sleep(300);
+  eq(await p.evaluate(() => window.rv.fsChdir("readme.txt")), "", "进了文件");
+  eq(await p.evaluate(() => window.rv.fsChdir("no/such")), "", "进了不存在的路径");
+});
+
+test("13.25", "文件操作失败有可见提示", async (p) => {
+  await p.evaluate(() => window.rv.fsChdir(""));
+  await sleep(300);
+  await p.evaluate(() => document.querySelector('tr[data-name="readme.txt"]').click());
+  await sleep(200);
+  await p.evaluate(() => document.querySelector('.fbar button[data-f="rename"]').click());
+  await sleep(300);
+  await p.evaluate(() => { document.querySelector(".fdlg input").value = "hello.elf"; });
+  await p.evaluate(() => document.querySelector('.fdlg button[data-r="1"]').click());
+  await sleep(400);
+  const v = await p.evaluate(() => {
+    const e = document.querySelector(".fpath");
+    return { t: e.textContent, c: getComputedStyle(e).color };
+  });
+  ok(v.t.indexOf("失败") >= 0, "路径栏没有错误文字：" + JSON.stringify(v));
+  ok(v.c.indexOf("248, 113, 113") >= 0, "错误提示没有变红：" + JSON.stringify(v));
+  await sleep(3400);
+  eq(await p.evaluate(() => document.querySelector(".fpath").textContent), "/", "提示没有自动恢复");
+});
+
 // ══════════════════════════════════════════════════════════
 // 运行器
 // ══════════════════════════════════════════════════════════
@@ -1156,10 +1250,10 @@ test("13.2", "图形界面能新建文件", async (p) => {
 });
 
 test("13.3", "图形界面能新建文件夹", async (p) => {
-  eq(await p.evaluate(() => window.rv.fsMkdir("/gui-dir")), 0);
+  eq(await p.evaluate(() => window.rv.fsMkdir("gui-dir")), 0);
   await sleep(500);
   const dir = await p.evaluate(() => {
-    const tr = [...document.querySelectorAll("tr[data-name]")].find((r) => r.dataset.name === "/gui-dir");
+    const tr = [...document.querySelectorAll("tr[data-name]")].find((r) => r.dataset.name === "gui-dir");
     return tr ? tr.dataset.dir : null;
   });
   eq(dir, "1", "目录行没出现或没标成目录");
@@ -1179,29 +1273,29 @@ test("13.5", "图形界面能删除", async (p) => {
 });
 
 test("13.6", "双击目录进入并显示路径", async (p) => {
-  eq(await p.evaluate(() => window.rv.fsWrite("/gui-dir/inner.txt", "x")), 0);
+  eq(await p.evaluate(() => window.rv.fsWrite("gui-dir/inner.txt", "x")), 0);
   await sleep(500);
   await p.evaluate(() => {
-    const tr = [...document.querySelectorAll("tr[data-name]")].find((r) => r.dataset.name === "/gui-dir");
+    const tr = [...document.querySelectorAll("tr[data-name]")].find((r) => r.dataset.name === "gui-dir");
     tr.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
   });
   await sleep(700);
-  eq(await p.evaluate(() => window.rv.fsCwd), "/gui-dir", "没有切进目录");
+  eq(await p.evaluate(() => window.rv.fsCwd), "gui-dir", "没有切进目录");
   eq(await p.evaluate(() => document.querySelector(".fpath").textContent), "/gui-dir");
-  eq(await p.evaluate(() => [...document.querySelectorAll("tr[data-name]")].map((r) => r.dataset.name)), ["/gui-dir/inner.txt"]);
+  eq(await p.evaluate(() => [...document.querySelectorAll("tr[data-name]")].map((r) => r.dataset.name)), ["gui-dir/inner.txt"]);
 });
 
 test("13.7", "返回上一级", async (p) => {
   await p.evaluate(() => document.querySelector('.fbar button[data-f="up"]').click());
   await sleep(600);
   eq(await p.evaluate(() => window.rv.fsCwd), "");
-  ok((await p.evaluate(() => [...document.querySelectorAll("tr[data-name]")].map((r) => r.dataset.name))).indexOf("/gui-dir") >= 0,
-     "回到根之后看不到 /gui-dir");
+  ok((await p.evaluate(() => [...document.querySelectorAll("tr[data-name]")].map((r) => r.dataset.name))).indexOf("gui-dir") >= 0,
+     "回到根之后看不到 gui-dir");
 });
 
 test("13.8", "文件行右键三项", async (p) => {
   const items = await p.evaluate(() => {
-    const tr = [...document.querySelectorAll("tr[data-name]")].find((r) => r.dataset.name === "/gui-dir");
+    const tr = [...document.querySelectorAll("tr[data-name]")].find((r) => r.dataset.name === "gui-dir");
     const q = tr.getBoundingClientRect();
     tr.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, clientX: q.x + 20, clientY: q.y + 8 }));
     const v = window.rv.ui.ctxMenu;
