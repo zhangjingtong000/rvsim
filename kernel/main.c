@@ -1249,6 +1249,17 @@ static void win_apply_action(int idx, int act)
    低 4 位是动作（0 关闭 / 1 最小化 / 2 最大化）。
    内核执行完把命令字清零。 */
 #define WIN_CMD_PA 0x83FFE200u
+/* 窗口位置回写：宿主自己完成拖动（同一帧生效，无延迟），
+   松手后把最终逻辑坐标写到这里，内核只做记录。
+   seq 单调递增，内核靠它判断「有新位置」。 */
+#define WIN_POS_PA  0x83FFE210u
+
+typedef struct {
+    u32 idx, x, y, seq;
+} win_pos_t;
+
+#define WIN_POS ((volatile win_pos_t *)WIN_POS_PA)
+static u32 g_last_pos_seq = 0;
 
 /* ── 终端网格共享区（宿主用真字体渲染）──
    内核不再光栅化文字，只发布字符网格：
@@ -1361,6 +1372,18 @@ void term_sync_publish(void)
 
 static void win_cmd_poll(void)
 {
+    /* 先处理宿主回写的窗口位置 */
+    u32 pseq = WIN_POS->seq;
+    if (pseq && pseq != g_last_pos_seq) {
+        g_last_pos_seq = pseq;
+        u32 i = WIN_POS->idx;
+        if (i < 3) {
+            g_wins[i].x = WIN_POS->x;
+            g_wins[i].y = WIN_POS->y;
+            win_info_sync();
+        }
+    }
+
     volatile u32 *cmd = (volatile u32 *)WIN_CMD_PA;
     u32 v = *cmd;
     if (!v || v == 0xFFFFFFFFu) return;
