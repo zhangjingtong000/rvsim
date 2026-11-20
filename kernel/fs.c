@@ -59,12 +59,24 @@ void fs_init(void)
     }
 }
 
+/* 路径规范化：去掉开头的 '/'，其余原样保留。
+   存储和查找都走这一份，名字才不会出现两种写法。 */
+static void fs_norm(const char *in, char *out, int cap)
+{
+    if (!in) { out[0] = 0; return; }
+    while (*in == '/') in++;
+    k_strcpy_n(out, in, cap);
+}
+
 /* ── 查找 ── */
 static fs_file_t *fs_find(const char *name)
 {
+    char key[FS_NAME_MAX];
     if (!name || !name[0]) return 0;
+    fs_norm(name, key, FS_NAME_MAX);
+    if (!key[0]) return 0;
     for (u32 i = 0; i < FS_MAX_FILES; i++)
-        if (g_files[i].used && k_streq(g_files[i].name, name)) return &g_files[i];
+        if (g_files[i].used && k_streq(g_files[i].name, key)) return &g_files[i];
     return 0;
 }
 
@@ -83,11 +95,14 @@ u32 g_cur_uid = 0;
 
 int fs_write(const char *name, const u8 *data, u32 len)
 {
+    char key[FS_NAME_MAX];
     if (!name || !name[0]) return -1;
-    if (k_strlen(name) >= FS_NAME_MAX) return -1;
+    fs_norm(name, key, FS_NAME_MAX);
+    if (!key[0]) return -1;
+    if (k_strlen(key) >= FS_NAME_MAX) return -1;
     if (len > FS_DATA_MAX) return -1;
 
-    fs_file_t *f = fs_find(name);
+    fs_file_t *f = fs_find(key);
     if (!f) {
         for (u32 i = 0; i < FS_MAX_FILES; i++) {
             if (!g_files[i].used) { f = &g_files[i]; break; }
@@ -97,7 +112,7 @@ int fs_write(const char *name, const u8 *data, u32 len)
         f->is_dir = 0;
         f->owner = (u8)g_cur_uid;
         f->mode  = 1;              /* 默认所有登录者可写，root 可改 */
-        k_strcpy_n(f->name, name, FS_NAME_MAX);
+        k_strcpy_n(f->name, key, FS_NAME_MAX);
     }
     for (u32 i = 0; i < len; i++) f->data[i] = data[i];
     f->size = len;
@@ -137,20 +152,26 @@ int fs_remove(const char *name)
    目标已存在时失败，不做静默覆盖——覆盖掉的那个文件没有回收站。 */
 int fs_rename(const char *from, const char *to)
 {
+    char key[FS_NAME_MAX];
     fs_file_t *f = fs_find(from);
     if (!f || !to || !to[0]) return -1;
-    if (k_strlen(to) >= FS_NAME_MAX) return -2;
-    if (fs_find(to)) return -3;
-    k_strcpy_n(f->name, to, FS_NAME_MAX);
+    fs_norm(to, key, FS_NAME_MAX);
+    if (!key[0]) return -1;
+    if (k_strlen(key) >= FS_NAME_MAX) return -2;
+    if (fs_find(key)) return -3;
+    k_strcpy_n(f->name, key, FS_NAME_MAX);
     return 0;
 }
 
 /* 创建目录。已存在则返回 0（幂等）。 */
 int fs_mkdir(const char *name)
 {
+    char key[FS_NAME_MAX];
     if (!name || !name[0]) return -1;
-    if (k_strlen(name) >= FS_NAME_MAX) return -1;
-    if (fs_find(name)) return 0;
+    fs_norm(name, key, FS_NAME_MAX);
+    if (!key[0]) return -1;
+    if (k_strlen(key) >= FS_NAME_MAX) return -1;
+    if (fs_find(key)) return 0;
 
     for (u32 i = 0; i < FS_MAX_FILES; i++) {
         if (!g_files[i].used) {
@@ -159,7 +180,7 @@ int fs_mkdir(const char *name)
             g_files[i].owner = (u8)g_cur_uid;
             g_files[i].mode  = 1;
             g_files[i].size = 0;
-            k_strcpy_n(g_files[i].name, name, FS_NAME_MAX);
+            k_strcpy_n(g_files[i].name, key, FS_NAME_MAX);
             return 0;
         }
     }

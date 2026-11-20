@@ -1817,6 +1817,26 @@ function fsIsDir(name) {
 function joinPath(nm) { return (fsCwd ? fsCwd + "/" : "") + String(nm).replace(/^\/+/, ""); }
 function refreshFiles() { fileSig = ""; panelsRender(); }
 
+/* 路径栏文本。内核里存的是规范名（ui-dir），显示成 /ui-dir 才像路径。 */
+function fsPathText() { return fsCwd ? "/" + fsCwd : "/"; }
+
+/* 文件操作失败时在路径栏上留一句话。
+   以前失败是静默的：点完「重命名」什么都不变，用户不知道是没点到还是内核拒绝了。 */
+let filesToastTimer = null;
+function filesToast(msg) {
+  const body = winEls[2] && winEls[2].body;
+  if (!body) return;
+  const el = body.querySelector(".fpath");
+  if (!el) return;
+  clearTimeout(filesToastTimer);
+  el.textContent = msg;
+  el.style.color = "#F87171";
+  filesToastTimer = setTimeout(() => {
+    el.style.color = "";
+    el.textContent = fsPathText();
+  }, 2400);
+}
+
 /* 窗口内的小输入框：不用 window.prompt（浅色系统弹窗在深色桌面上很突兀） */
 function filesAsk(title, value) {
   return new Promise((resolve) => {
@@ -1851,16 +1871,23 @@ function filesAsk(title, value) {
 function filesDelete(name) {
   filesAsk("删除 " + name + "？（输入 yes 确认）", "").then((v) => {
     if (v !== "yes") return;
-    window.rv.fsRemove(name).then(refreshFiles).catch(refreshFiles);
+    window.rv.fsRemove(name).then((rc) => {
+      if (rc !== 0) filesToast("删除失败");
+      refreshFiles();
+    }).catch((e) => filesToast("删除失败：" + e.message));
   });
 }
 
 function filesRename(name) {
-  const base = name.slice(name.lastIndexOf("/") + 1);
+  const slash = name.lastIndexOf("/");
+  const base = name.slice(slash + 1);
+  const parent = slash > 0 ? name.slice(0, slash) : "";
   filesAsk("重命名 " + base, base).then((nm) => {
     if (!nm || nm === base) return;
-    const parent = name.slice(0, name.lastIndexOf("/"));
-    window.rv.fsRename(name, (parent ? parent + "/" : "") + nm).then(refreshFiles).catch(refreshFiles);
+    window.rv.fsRename(name, (parent ? parent + "/" : "") + nm).then((rc) => {
+      if (rc !== 0) filesToast("重命名失败：名字太长或已存在");
+      refreshFiles();
+    }).catch((e) => filesToast("重命名失败：" + e.message));
   });
 }
 
@@ -1945,6 +1972,10 @@ function bindFilesBar(fs) {
   const bar = fs.querySelector(".fbar");
   if (!bar || bar.dataset.bound) return;
   bar.dataset.bound = "1";
+  bar.querySelectorAll("button[data-tip]").forEach((b) => {
+    b.addEventListener("pointerenter", () => tipShow(b, b.dataset.tip));
+    b.addEventListener("pointerleave", tipHide);
+  });
   bar.addEventListener("click", (ev) => {
     const b = ev.target.closest("button[data-f]");
     if (!b) return;
@@ -1959,11 +1990,17 @@ function bindFilesBar(fs) {
       panelsRender();
     } else if (act === "new") {
       filesAsk("新建文件", "untitled.txt").then((nm) => {
-        if (nm) window.rv.fsWrite(joinPath(nm), "").then(refreshFiles).catch(refreshFiles);
+        if (nm) window.rv.fsWrite(joinPath(nm), "").then((rc) => {
+      if (rc !== 0) filesToast("新建失败：名字太长或空间不足");
+      refreshFiles();
+    }).catch((e) => filesToast("新建失败：" + e.message));
       });
     } else if (act === "mkdir") {
       filesAsk("新建文件夹", "docs").then((nm) => {
-        if (nm) window.rv.fsMkdir(joinPath(nm)).then(refreshFiles).catch(refreshFiles);
+        if (nm) window.rv.fsMkdir(joinPath(nm)).then((rc) => {
+      if (rc !== 0) filesToast("新建文件夹失败：名字太长或空间不足");
+      refreshFiles();
+    }).catch((e) => filesToast("新建文件夹失败：" + e.message));
       });
     } else if (act === "rename") {
       if (selName) filesRename(selName);
@@ -2106,12 +2143,12 @@ function panelsRender() {
       const I = (d) => '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"'
         + ' stroke-linecap="round" stroke-linejoin="round">' + d + '</svg>';
       fs.innerHTML = '<div class="fbar">'
-        + '<button data-f="up" title="上一级">' + I('<path d="M8 12.5V4M4.2 7.4L8 3.6l3.8 3.8"/>') + '</button>'
-        + '<button data-f="new" title="新建文件">' + I('<path d="M3.5 2.5h6l3 3v8h-9z"/><path d="M9.5 2.5v3h3"/><path d="M8 8.6v3.2M6.4 10.2h3.2"/>') + '</button>'
-        + '<button data-f="mkdir" title="新建文件夹">' + I('<path d="M2.5 4.6h4l1.2 1.6h5.8v7.2h-11z"/><path d="M8 9.2v3M6.5 10.7h3"/>') + '</button>'
-        + '<button data-f="rename" title="重命名">' + I('<path d="M2.6 13.4l.9-2.9 7-7 2 2-7 7z"/><path d="M9.5 4.5l2 2"/>') + '</button>'
-        + '<button data-f="del" title="删除">' + I('<path d="M3.5 5h9"/><path d="M6.5 5V3.4h3V5"/><path d="M5 5l.6 8.6h4.8L11 5"/>') + '</button>'
-        + '<button data-f="import" title="导入程序（.elf / .bin）">' + I('<path d="M8 2.6v7"/><path d="M5 6.6L8 9.6l3-3"/><path d="M3 11.4v2.2h10v-2.2"/>') + '</button>'
+        + '<button data-f="up" data-tip="上一级" aria-label="上一级">' + I('<path d="M8 12.5V4M4.2 7.4L8 3.6l3.8 3.8"/>') + '</button>'
+        + '<button data-f="new" data-tip="新建文件" aria-label="新建文件">' + I('<path d="M3.5 2.5h6l3 3v8h-9z"/><path d="M9.5 2.5v3h3"/><path d="M8 8.6v3.2M6.4 10.2h3.2"/>') + '</button>'
+        + '<button data-f="mkdir" data-tip="新建文件夹" aria-label="新建文件夹">' + I('<path d="M2.5 4.6h4l1.2 1.6h5.8v7.2h-11z"/><path d="M8 9.2v3M6.5 10.7h3"/>') + '</button>'
+        + '<button data-f="rename" data-tip="重命名" aria-label="重命名">' + I('<path d="M2.6 13.4l.9-2.9 7-7 2 2-7 7z"/><path d="M9.5 4.5l2 2"/>') + '</button>'
+        + '<button data-f="del" data-tip="删除" aria-label="删除">' + I('<path d="M3.5 5h9"/><path d="M6.5 5V3.4h3V5"/><path d="M5 5l.6 8.6h4.8L11 5"/>') + '</button>'
+        + '<button data-f="import" data-tip="导入程序（.elf / .bin）" aria-label="导入程序（.elf / .bin）">' + I('<path d="M8 2.6v7"/><path d="M5 6.6L8 9.6l3-3"/><path d="M3 11.4v2.2h10v-2.2"/>') + '</button>'
         + '</div><div class="fpath"></div><div class="fscroll"></div>';
       bindFilesBar(fs);
     }
@@ -2128,7 +2165,7 @@ function panelsRender() {
       fileSig = sig;
       const sc = fs.querySelector(".fscroll");
       const pathEl = fs.querySelector(".fpath");
-      if (pathEl) pathEl.textContent = fsCwd || "/";
+      if (pathEl) pathEl.textContent = fsPathText();
       const upBtn = fs.querySelector('.fbar button[data-f="up"]');
       if (upBtn) upBtn.disabled = !fsCwd;
       let h = '<table class="ftab"><colgroup><col><col style="width:62px"></colgroup>'
