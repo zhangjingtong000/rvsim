@@ -1399,6 +1399,25 @@ static void win_cmd_poll(void)
     *cmd = 0;
     u32 idx = v / 10u, act = v % 10u;
     if (idx >= 3) return;
+    if (act == 6) {                  /* 6 = 还原到窗口的默认尺寸与位置 */
+        static const u32 DEF[3][4] = {
+            { WIN_TERM_X, WIN_TERM_Y, WIN_TERM_W, WIN_TERM_H },
+            { WIN_MON_X,  WIN_MON_Y,  WIN_MON_W,  WIN_MON_H },
+            { WIN_FS_X,   WIN_FS_Y,   WIN_FS_W,   WIN_FS_H },
+        };
+        g_wins[idx].x = DEF[idx][0];
+        g_wins[idx].y = DEF[idx][1];
+        g_wins[idx].w = DEF[idx][2];
+        g_wins[idx].h = DEF[idx][3];
+        g_wins[idx].maximized = 0;
+        g_wins[idx].rx = g_wins[idx].x; g_wins[idx].ry = g_wins[idx].y;
+        g_wins[idx].rw = g_wins[idx].w; g_wins[idx].rh = g_wins[idx].h;
+        g_wins[idx].visible = 1;
+        g_focus = (int)idx;
+        win_raise((int)idx);
+        { extern void desktop_redraw(void); desktop_redraw(); }
+        return;
+    }
     if (act == 5) {                  /* 5 = 只恢复可见 + 聚焦（任务栏/菜单用） */
         g_wins[idx].visible = 1;
         g_focus = (int)idx;

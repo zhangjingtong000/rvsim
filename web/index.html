@@ -134,6 +134,22 @@ input{font:inherit;color:inherit;background:none;border:0;outline:0}
              width .1s var(--ease-decel),height .1s var(--ease-decel),opacity .1s}
 #snapGhost.on{opacity:1}
 
+/* 吸附布局选择器：悬停最大化按钮 450ms 弹出（Win11 行为） */
+#snapPicker{position:absolute;z-index:70;display:none;gap:6px;
+  padding:10px;grid-template-columns:1fr 1fr;
+  background:rgba(32,38,47,.97);
+  -webkit-backdrop-filter:blur(30px) saturate(180%);
+  backdrop-filter:blur(30px) saturate(180%);
+  border:1px solid var(--stroke);border-radius:var(--r-flyout);
+  box-shadow:var(--elev-3);animation:smIn .12s var(--ease-decel)}
+#snapPicker.on{display:grid}
+.sl{position:relative;width:96px;height:64px;border-radius:var(--r-control);
+  background:rgba(255,255,255,.03);border:1px solid var(--stroke);overflow:hidden}
+.sl-cell{position:absolute;border-radius:3px;
+  background:rgba(255,255,255,.14);border:1px solid rgba(255,255,255,.22);
+  transition:background .1s,border-color .1s}
+.sl-cell:hover{background:rgba(45,212,191,.42);border-color:rgba(94,234,212,.7)}
+
 /* 键盘焦点环：Win11 是贴边的 2px 白环，内缩 -2px 避免被 overflow 裁掉 */
 :focus-visible{outline:2px solid #FFFFFF;outline-offset:2px}
 .dicon:focus-visible,.dock-app:focus-visible,.dock-btn:focus-visible,
@@ -435,6 +451,7 @@ body.drawer #drawer{transform:translateX(0)}
   <div id="wall"></div>
   <div id="icons"></div>
   <div id="snapGhost"></div>
+  <div id="snapPicker"></div>
   <div id="winlayer"></div>
 
   <div id="dock">
@@ -979,20 +996,91 @@ function snapZonePx(px, py, W, H) {
   return null;
 }
 
-function snapShow(zone, L) {
+function snapShow(zone) {
+  if (!zone) { snapHide(); return; }
+  snapShowRect(...SNAP[zone]);
+}
+function snapHide() {
+  const g = $("snapGhost");
+  if (g) g.classList.remove("on");
+}
+
+/* 按逻辑矩形显示占位（布局选择器预览用） */
+function snapShowRect(x, y, w, h) {
   const g = $("snapGhost");
   if (!g) return;
-  if (!zone) { g.classList.remove("on"); return; }
-  const [x, y, w, h] = SNAP[zone];
+  const osR = desk().getBoundingClientRect();
+  const L = deskTransform(osR.width, osR.height);
   g.style.left = (L.ox + x * L.scale).toFixed(1) + "px";
   g.style.top = (L.oy + y * L.scale).toFixed(1) + "px";
   g.style.width = (w * L.scale).toFixed(1) + "px";
   g.style.height = (h * L.scale).toFixed(1) + "px";
   g.classList.add("on");
 }
-function snapHide() {
-  const g = $("snapGhost");
-  if (g) g.classList.remove("on");
+
+/* ── 吸附布局（Win11 Snap Layouts 的 4 种）──
+   百分比表示，应用时 ×8 / ×6 换算成 800x600 的逻辑坐标。 */
+const SNAP_LAYOUTS = [
+  [[0, 0, 50, 100], [50, 0, 50, 100]],                          /* 两列 */
+  [[0, 0, 66.7, 100], [66.7, 0, 33.3, 100]],                    /* 2/3 + 1/3 */
+  [[0, 0, 33.3, 100], [33.3, 0, 33.3, 100], [66.6, 0, 33.4, 100]], /* 三列 */
+  [[0, 0, 50, 50], [50, 0, 50, 50], [0, 50, 50, 50], [50, 50, 50, 50]], /* 四宫格 */
+];
+let snapPickerFor = -1, snapPickerTimer = null, snapPickerHideTimer = null;
+
+function snapPickerBuild() {
+  const p = $("snapPicker");
+  if (!p || p.dataset.built) return;
+  p.dataset.built = "1";
+  for (const cells of SNAP_LAYOUTS) {
+    const box = document.createElement("div");
+    box.className = "sl";
+    for (const [x, y, w, h] of cells) {
+      const c = document.createElement("div");
+      c.className = "sl-cell";
+      c.style.left = x + "%";
+      c.style.top = y + "%";
+      c.style.width = "calc(" + w + "% - 4px)";
+      c.style.height = "calc(" + h + "% - 4px)";
+      c.style.margin = "2px";
+      c.onpointerenter = () => snapShowRect(x * 8, y * 6, w * 8, h * 6);
+      c.onpointerleave = () => snapHide();
+      c.onclick = () => {
+        const i = snapPickerFor;
+        if (i >= 0) {
+          setWinRect(i, Math.round(x * 8), Math.round(y * 6), Math.round(w * 8), Math.round(h * 6));
+        }
+        snapPickerHide();
+        snapHide();
+      };
+      box.appendChild(c);
+    }
+    p.appendChild(box);
+  }
+  p.addEventListener("pointerenter", () => clearTimeout(snapPickerHideTimer));
+  p.addEventListener("pointerleave", () => {
+    snapPickerHideTimer = setTimeout(snapPickerHide, 260);
+  });
+}
+
+function snapPickerShow(i, anchor) {
+  const p = $("snapPicker");
+  if (!p) return;
+  snapPickerBuild();
+  snapPickerFor = i;
+  p.classList.add("on");
+  const r = anchor.getBoundingClientRect();
+  const osR = desk().getBoundingClientRect();
+  const pw = p.offsetWidth || 224;
+  p.style.left = Math.max(8, Math.min(osR.width - pw - 8, r.right - osR.left - pw)) + "px";
+  p.style.top = (r.bottom - osR.top + 6) + "px";
+}
+
+function snapPickerHide() {
+  const p = $("snapPicker");
+  if (p) p.classList.remove("on");
+  snapPickerFor = -1;
+  snapHide();
 }
 
 /* 窗口位置回写：只挪位置 / 位置+尺寸（吸附） */
@@ -1084,7 +1172,7 @@ function winInit() {
         /* 拖到屏幕边缘就亮吸附预览（Win11 的 Snap Layouts） */
         const L = deskTransform(osR.width, osR.height);
         we.zone = snapZonePx(e2.clientX - osR.left, e2.clientY - osR.top, osR.width, osR.height);
-        snapShow(we.zone, L);
+        snapShow(we.zone);
       };
       const up = () => {
         window.removeEventListener("pointermove", move);
@@ -1123,6 +1211,19 @@ function winInit() {
 
     /* 窗控按钮：直接下发命令字，不让前端重算命中坐标
        （视觉顺序和内核坐标顺序对不上，试过几轮都有偏差） */
+    const maxBtn = el.querySelector(".win-ctl .max");
+    if (maxBtn) {
+      maxBtn.addEventListener("pointerenter", () => {
+        clearTimeout(snapPickerTimer);
+        clearTimeout(snapPickerHideTimer);
+        snapPickerTimer = setTimeout(() => snapPickerShow(i, maxBtn), 450);
+      });
+      maxBtn.addEventListener("pointerleave", () => {
+        clearTimeout(snapPickerTimer);
+        snapPickerHideTimer = setTimeout(snapPickerHide, 260);
+      });
+    }
+
     el.querySelectorAll(".win-ctl button").forEach((b) => {
       b.addEventListener("pointerdown", (ev) => ev.stopPropagation());
       b.addEventListener("click", (ev) => {
@@ -1841,6 +1942,23 @@ document.addEventListener("keydown", (e) => {
   const tag = e.target && e.target.tagName;
   if (e.target && e.target.id !== "ime" && (tag === "INPUT" || tag === "TEXTAREA")) return;
   if (e.target && e.target.closest && e.target.closest(UI_FOCUS)) return;
+
+  /* Alt+方向：Win11 的 Win+方向 被浏览器占用，这里换成 Alt。
+     ←/→ 半屏，↑ 最大化，↓ 还原到默认尺寸。 */
+  if (e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey) {
+    const map = { ArrowLeft: "left", ArrowRight: "right", ArrowUp: "top", ArrowDown: "restore" };
+    const z = map[e.key];
+    if (z) {
+      e.preventDefault();
+      const ws = window.rv.state.wins;
+      const i = ws.findIndex((w) => w.focused && w.visible);
+      if (i >= 0) {
+        if (z === "restore") M.HEAPU32[guestOff(WIN_CMD_PA)] = i * 10 + 6;
+        else setWinRect(i, ...SNAP[z]);
+      }
+      return;
+    }
+  }
 
   if (e.ctrlKey && (e.key === "c" || e.key === "C")) {
     M._rv_uart_write(3); e.preventDefault(); return;
