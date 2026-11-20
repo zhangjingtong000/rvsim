@@ -493,11 +493,12 @@ body.drawer #drawer{transform:translateX(0)}
    窗口只有 216px 宽，按钮做成纯图标；文字留给 tooltip 和右键菜单。 */
 .fbar{display:flex;gap:1px;align-items:center;padding:4px 5px;flex:0 0 auto;
   border-bottom:1px solid var(--stroke)}
+.fbar .sep{width:1px;height:15px;margin:0 3px;background:var(--stroke);flex:0 0 auto}
 .fbar button{width:23px;height:22px;display:grid;place-items:center;flex:0 0 auto;
   border-radius:var(--r-control);color:var(--t2)}
 .fbar button:hover{background:rgba(255,255,255,.09);color:var(--t1)}
 .fbar button:disabled{color:var(--t-disabled);pointer-events:none}
-.fbar svg{width:13px;height:13px}
+.fbar svg{width:14px;height:14px;stroke-width:1.8}
 .fbar .grow{flex:1 1 auto}
 .fpath{padding:2px 8px;flex:0 0 auto;font:400 11px/15px var(--font-mono);color:var(--t3);
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis;border-bottom:1px solid var(--stroke)}
@@ -2144,10 +2145,12 @@ function panelsRender() {
         + ' stroke-linecap="round" stroke-linejoin="round">' + d + '</svg>';
       fs.innerHTML = '<div class="fbar">'
         + '<button data-f="up" data-tip="上一级" aria-label="上一级">' + I('<path d="M8 12.5V4M4.2 7.4L8 3.6l3.8 3.8"/>') + '</button>'
+        + '<span class="sep"></span>'
         + '<button data-f="new" data-tip="新建文件" aria-label="新建文件">' + I('<path d="M3.5 2.5h6l3 3v8h-9z"/><path d="M9.5 2.5v3h3"/><path d="M8 8.6v3.2M6.4 10.2h3.2"/>') + '</button>'
         + '<button data-f="mkdir" data-tip="新建文件夹" aria-label="新建文件夹">' + I('<path d="M2.5 4.6h4l1.2 1.6h5.8v7.2h-11z"/><path d="M8 9.2v3M6.5 10.7h3"/>') + '</button>'
         + '<button data-f="rename" data-tip="重命名" aria-label="重命名">' + I('<path d="M2.6 13.4l.9-2.9 7-7 2 2-7 7z"/><path d="M9.5 4.5l2 2"/>') + '</button>'
         + '<button data-f="del" data-tip="删除" aria-label="删除">' + I('<path d="M3.5 5h9"/><path d="M6.5 5V3.4h3V5"/><path d="M5 5l.6 8.6h4.8L11 5"/>') + '</button>'
+        + '<span class="sep"></span>'
         + '<button data-f="import" data-tip="导入程序（.elf / .bin）" aria-label="导入程序（.elf / .bin）">' + I('<path d="M8 2.6v7"/><path d="M5 6.6L8 9.6l3-3"/><path d="M3 11.4v2.2h10v-2.2"/>') + '</button>'
         + '</div><div class="fpath"></div><div class="fscroll"></div>';
       bindFilesBar(fs);
