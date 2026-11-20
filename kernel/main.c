@@ -1071,7 +1071,6 @@ static int  g_btn_down = 0;
 static int  g_drag_armed = 0;
 static int  g_arm_x = 0, g_arm_y = 0;
 static int  g_drag_dx = 0, g_drag_dy = 0;
-static int  g_outline_on = 0;
 static u32  g_ol_x = 0, g_ol_y = 0;
 
 static void wins_init(void)
@@ -1194,15 +1193,6 @@ static int win_hit(u32 mx, u32 my)
     return -1;
 }
 
-/* 拖拽轮廓：只画四条边（约 3.5k 像素，比整窗重绘便宜两个数量级） */
-static void drag_outline(u32 x, u32 y, u32 w, u32 h, u32 col)
-{
-    u32 *buf = (u32 *)FB_BASE;
-    fb_rect(buf, 800, 600, 800, x, y, w, 1, col);
-    fb_rect(buf, 800, 600, 800, x, y + h - 1, w, 1, col);
-    fb_rect(buf, 800, 600, 800, x, y, 1, h, col);
-    fb_rect(buf, 800, 600, 800, x + w - 1, y, 1, h, col);
-}
 
 /* 命中标题栏右侧的三个窗控点；返回 0=关闭 1=最小化 2=最大化 -1=没点中 */
 static int win_chrome_hit(win_t *w, u32 mx, u32 my)
@@ -1462,26 +1452,23 @@ void desktop_mouse(void)
         g_drag_armed = 0;
         w = &g_wins[g_focus];
         g_ol_x = w->x; g_ol_y = w->y;
-        drag_outline(g_ol_x, g_ol_y, w->w, w->h, C_ACC);
-        g_outline_on = 1;
-        fb_commit(0);
         return;
     }
 
     if (btn && g_dragging) {
         u32 nx = (mx >= (u32)g_drag_dx) ? mx - (u32)g_drag_dx : 0;
         u32 ny = (my >= (u32)g_drag_dy) ? my - (u32)g_drag_dy : 0;
-        /* 夹在画布内：窗口不能被拖出屏幕（否则内容会溢出到任务栏下面） */
+        /* 夹在画布内：窗口不能被拖出屏幕 */
         if (nx + w->w > 800) nx = 800 - w->w;
         if (ny + w->h > 600 - TASKBAR_H) ny = 600 - TASKBAR_H - w->h;
         if (nx == g_ol_x && ny == g_ol_y) return;
-        if (g_outline_on) {
-            drag_outline(g_ol_x, g_ol_y, w->w, w->h, 0x141c28);  /* 擦旧框 */
-        }
         g_ol_x = nx; g_ol_y = ny;
-        drag_outline(nx, ny, w->w, w->h, C_ACC);
-        g_outline_on = 1;
-        fb_commit(0);
+        /* 直接改窗口坐标、让宿主跟着走。
+           以前这里是画一个矩形轮廓到 framebuffer，但宿主早就不读那块
+           内存了 —— 拖动过程中屏幕上什么都没有，松手才「啪」地跳过去。 */
+        w->x = nx;
+        w->y = ny;
+        win_info_sync();
         return;
     }
 
@@ -1494,14 +1481,7 @@ void desktop_mouse(void)
         g_dragging = 0;
         g_btn_down = 0;
         g_drag_armed = 0;
-        if (g_outline_on) {
-            drag_outline(g_ol_x, g_ol_y, w->w, w->h, 0x141c28);
-            g_outline_on = 0;
-        }
-        w->x = g_ol_x;
-        w->y = g_ol_y;
-        extern void desktop_redraw(void);
-        desktop_redraw();          /* 只在松手时整屏重画一次 */
+        win_info_sync();
     }
 }
 
