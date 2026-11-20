@@ -88,11 +88,11 @@ input{font:inherit;color:inherit;background:none;border:0;outline:0}
 #os{position:fixed;inset:0;overflow:hidden}
 #wall{position:absolute;inset:0;z-index:0;
   background:
-    radial-gradient(1150px 760px at 16% 6%, rgba(45,212,191,.14), transparent 62%),
-    radial-gradient(1000px 720px at 84% 92%, rgba(59,130,246,.17), transparent 64%),
-    radial-gradient(900px 620px at 55% 108%, rgba(45,212,191,.07), transparent 66%),
-    radial-gradient(700px 500px at 62% 38%, rgba(124,58,237,.09), transparent 70%),
-    linear-gradient(155deg,#0E1828 0%,#0A1018 46%,#070A0F 100%)}
+    radial-gradient(1150px 760px at 16% 6%, rgba(45,212,191,.17), transparent 62%),
+    radial-gradient(1000px 720px at 84% 92%, rgba(59,130,246,.21), transparent 64%),
+    radial-gradient(900px 620px at 55% 108%, rgba(45,212,191,.09), transparent 66%),
+    radial-gradient(700px 500px at 62% 38%, rgba(124,58,237,.11), transparent 70%),
+    linear-gradient(155deg,#101D30 0%,#0B1220 46%,#080B12 100%)}
 #wall::after{content:"";position:absolute;inset:0;
   background:radial-gradient(125% 95% at 50% 42%,transparent 52%,rgba(0,0,0,.5) 100%)}
 
@@ -149,6 +149,8 @@ input{font:inherit;color:inherit;background:none;border:0;outline:0}
 .win-ctl button.close:active{background:#A4261A;color:#fff}
 
 .win-body{flex:1 1 auto;min-height:0;position:relative;overflow:hidden}
+/* 宿主应用的内容长度是固定的，窗口小时要能滚，不能直接裁掉最后一行 */
+.host-win .win-body{overflow:auto}
 
 /* 终端：字符网格由内核发布，这里用等宽真字体画 */
 .term-dom{padding:10px 12px;overflow:hidden;background:var(--s0);
@@ -210,7 +212,8 @@ input{font:inherit;color:inherit;background:none;border:0;outline:0}
   width:5px;height:3px;border-radius:2px;background:transparent;
   transition:width .16s var(--ease-decel),background .16s}
 .dock-app.active .ind{width:16px;background:var(--acc)}
-.dock-sep{width:1px;height:24px;margin:0 9px;background:rgba(255,255,255,.22)}
+.dock-sep{width:1.5px;height:24px;margin:0 10px;background:rgba(255,255,255,.24);
+  border-radius:1px}
 
 .dock-tray{margin-left:auto;display:flex;align-items:center;gap:10px;padding-right:4px}
 .tray-dot{width:7px;height:7px;border-radius:50%;background:var(--ok);
@@ -302,6 +305,10 @@ body.drawer #drawer{transform:translateX(0)}
   font-family:var(--font-mono);font-size:11.5px}
 .kv .k{color:var(--t3);font-family:var(--font-ui);font-size:11.5px}
 .kv .v{color:var(--t1)}
+/* 窄窗口里的键值对：space-between 会把中间拉出两百多像素的空档，
+   看起来像两张不相关的表。这里改成左对齐 + 固定间距。 */
+.kv.tight{justify-content:flex-start;gap:14px;padding:4px 0}
+.kv.tight .k{min-width:56px}
 #reg{display:grid;grid-template-columns:1fr 1fr;gap:0 10px;
   font-family:var(--font-mono);font-size:11.5px}
 .rg{display:flex;justify-content:space-between;padding:1.5px 4px;border-radius:3px}
@@ -664,7 +671,7 @@ function hostWinOpen(id) {
   const app = APPS.find((a) => a.id === id);
   const layer = $("winlayer");
   if (!app || !layer) return;
-  const size = id === "settings" ? [340, 380] : id === "guide" ? [400, 460] : [320, 300];
+  const size = id === "settings" ? [340, 392] : id === "guide" ? [400, 520] : [330, 344];
   const n = hostWins.size;
   const el = document.createElement("div");
   el.className = "win host-win";
@@ -739,10 +746,10 @@ function hostWinBody(id) {
       + '<div class="set-row"><div><div class="lb">开机动画</div><div class="sb">下次刷新后生效</div></div>'
       + '<div class="sw on" id="setBoot"></div></div>'
       + '<div style="margin:14px 12px 0;padding-top:12px;border-top:1px solid var(--stroke-sub)">'
-      + '<div class="kv"><span class="k">架构</span><span class="v">RV32IMA</span></div>'
-      + '<div class="kv"><span class="k">特权级</span><span class="v">M / S / U</span></div>'
-      + '<div class="kv"><span class="k">分页</span><span class="v">Sv32</span></div>'
-      + '<div class="kv"><span class="k">内存</span><span class="v">64 MiB</span></div>'
+      + '<div class="kv tight"><span class="k">架构</span><span class="v">RV32IMA</span></div>'
+      + '<div class="kv tight"><span class="k">特权级</span><span class="v">M / S / U</span></div>'
+      + '<div class="kv tight"><span class="k">分页</span><span class="v">Sv32</span></div>'
+      + '<div class="kv tight"><span class="k">内存</span><span class="v">64 MiB</span></div>'
       + '</div></div>';
   }
   if (id === "guide") {
@@ -775,7 +782,8 @@ function hostWinBody(id) {
     + '<div><div class="k">地址翻译</div><div class="v">Sv32</div></div>'
     + '<div><div class="k">物理内存</div><div class="v">64 MiB</div></div>'
     + '<div><div class="k">内核</div><div class="v">NOMMU-hosted</div></div>'
-    + '<div><div class="k">吞吐</div><div class="v" id="aboutRate">—</div></div>'
+    + '<div><div class="k">吞吐</div><div class="v" id="aboutRate">'
+    + (curRate ? (curRate / 1e6).toFixed(1) + " M/s" : "—") + '</div></div>'
     + '</div>'
     + '<div class="doc" style="margin-top:14px;font-size:11.5px;color:var(--t3);text-align:center">'
     + '本科项目 · 可被 AI 完全操控的操作系统</div>'
@@ -816,11 +824,11 @@ function applyWallpaper(i) {
   const w = $("wall");
   if (!w) return;
   w.style.background = i === 0
-    ? "radial-gradient(1150px 760px at 16% 6%, rgba(45,212,191,.14), transparent 62%),"
-      + "radial-gradient(1000px 720px at 84% 92%, rgba(59,130,246,.17), transparent 64%),"
-      + "radial-gradient(900px 620px at 55% 108%, rgba(45,212,191,.07), transparent 66%),"
-      + "radial-gradient(700px 500px at 62% 38%, rgba(124,58,237,.09), transparent 70%),"
-      + "linear-gradient(155deg,#0E1828 0%,#0A1018 46%,#070A0F 100%)"
+    ? "radial-gradient(1150px 760px at 16% 6%, rgba(45,212,191,.17), transparent 62%),"
+      + "radial-gradient(1000px 720px at 84% 92%, rgba(59,130,246,.21), transparent 64%),"
+      + "radial-gradient(900px 620px at 55% 108%, rgba(45,212,191,.09), transparent 66%),"
+      + "radial-gradient(700px 500px at 62% 38%, rgba(124,58,237,.11), transparent 70%),"
+      + "linear-gradient(155deg,#101D30 0%,#0B1220 46%,#080B12 100%)"
     : WALLS[i];
 }
 
