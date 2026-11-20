@@ -71,6 +71,7 @@ void proc_reap(u32 pid)
     p->state = PROC_UNUSED;
     if (cur_proc == (int)pid) cur_proc = -1;
     front_sync();
+    panel_sync_procs();
 }
 
 int proc_kill(u32 pid)
@@ -118,6 +119,7 @@ proc_t *proc_schedule(void)
         }
     }
     front_sync();
+    panel_sync_procs();   /* 用户进程在跑时 shell 主循环是挂起的，只能在这里刷 */
     return ret;
 }
 

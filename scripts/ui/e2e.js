@@ -765,8 +765,8 @@ test("7.2.3", "Monitor 数据与 rv.state 一致", async (p) => {
   eq(b, a);
 });
 
-test("7.3.1", "Files 5 行", async (p) => {
-  eq(await p.evaluate(() => document.querySelectorAll(".win")[2].querySelectorAll("tbody tr").length), 5);
+test("7.3.1", "Files 6 行", async (p) => {
+  eq(await p.evaluate(() => document.querySelectorAll(".win")[2].querySelectorAll("tbody tr").length), 6);
 });
 
 test("7.3.2", "Files 两列", async (p) => {
@@ -908,8 +908,8 @@ test("8.4", "能力 > 20 条", async (p) => {
   ok((await p.evaluate(() => document.querySelectorAll("#caps .cap").length)) > 20);
 });
 
-test("8.5", "文件 5 条", async (p) => {
-  eq(await p.evaluate(() => document.querySelectorAll("#files .frow").length), 5);
+test("8.5", "文件 6 条", async (p) => {
+  eq(await p.evaluate(() => document.querySelectorAll("#files .frow").length), 6);
 });
 
 test("8.6", "事件流有内容", async (p) => {
@@ -1134,103 +1134,6 @@ test("12.5", "反复开关 20 次状态一致", async (p) => {
   eq(await p.evaluate(() => window.rv.state.wins[0].visible), true);
 });
 
-// ── 对抗性用例：边界与注入 ──
-test("13.16", "中文文件名可读可写可打开", async (p) => {
-  eq(await p.evaluate(() => window.rv.fsWrite("中文名测试.txt", "CN")), 0);
-  await sleep(500);
-  ok((await p.evaluate(() => window.rv.state.files.map((f) => f.name))).indexOf("中文名测试.txt") >= 0, "内核里名字不对");
-  ok((await p.evaluate(() => [...document.querySelectorAll("tr[data-name]")].map((r) => r.dataset.name))).indexOf("中文名测试.txt") >= 0,
-     "界面上的名字是乱码");
-  eq(await p.evaluate(() => window.rv.fsRead("中文名测试.txt")), "CN");
-});
-
-test("13.17", "文件名里的 HTML 不会被当成标签", async (p) => {
-  eq(await p.evaluate(() => window.rv.fsWrite("<b>inj.txt", "1")), 0);
-  await sleep(500);
-  eq(await p.evaluate(() => !!document.querySelector(".ftab tbody b")), false, "名字里的 <b> 被渲染成了元素");
-  eq(await p.evaluate(() => !!document.querySelector(".ftab tbody img")), false, "名字里的 <img> 被渲染成了元素");
-  eq(await p.evaluate(() => window.rv.fsWrite('q"t.txt', "2")), 0);
-  await sleep(500);
-  eq(await p.evaluate(() => {
-    const tr = [...document.querySelectorAll("tr[data-name]")].find((r) => r.dataset.name === 'q"t.txt');
-    return tr ? tr.dataset.name : null;
-  }), 'q"t.txt', "带引号的名字把 data-name 截断了");
-});
-
-test("13.18", "删除目录会连带删掉子项", async (p) => {
-  eq(await p.evaluate(() => window.rv.fsMkdir("cascade")), 0);
-  eq(await p.evaluate(() => window.rv.fsWrite("cascade/kid.txt", "KID")), 0);
-  await sleep(400);
-  eq(await p.evaluate(() => window.rv.fsRemove("cascade")), 0);
-  await sleep(400);
-  eq(await p.evaluate(() => window.rv.fsRead("cascade/kid.txt")), null, "目录删了但子文件还在（重建同名目录会复活）");
-});
-
-test("13.19", "目录改名会迁移子项", async (p) => {
-  eq(await p.evaluate(() => window.rv.fsMkdir("mvdir")), 0);
-  eq(await p.evaluate(() => window.rv.fsWrite("mvdir/kid.txt", "K3")), 0);
-  await sleep(400);
-  eq(await p.evaluate(() => window.rv.fsRename("mvdir", "mvdir2")), 0);
-  await sleep(400);
-  eq(await p.evaluate(() => window.rv.fsRead("mvdir2/kid.txt")), "K3", "改名后新路径下没有子项");
-  eq(await p.evaluate(() => window.rv.fsRead("mvdir/kid.txt")), null, "旧路径下还留着子项");
-});
-
-test("13.20", "文件与目录不能互相顶替", async (p) => {
-  eq(await p.evaluate(() => window.rv.fsMkdir("readme.txt")), 1, "对已存在的文件建目录应该报冲突");
-  eq(await p.evaluate(() => window.rv.fsWrite("mvdir2", "BBB")), 1, "往目录里写文件应该失败");
-});
-
-test("13.21", "超长文件名被拒绝，不静默截断", async (p) => {
-  eq(await p.evaluate(() => window.rv.fsWrite("L".repeat(30), "x")), 1);
-  await sleep(400);
-  const bad = await p.evaluate(() => window.rv.state.files.map((f) => f.name).filter((n) => n.indexOf("LLLL") === 0));
-  eq(bad, [], "超长名字被截断后建了出来");
-});
-
-test("13.22", "超过单次写入上限被拒绝，不静默丢尾部", async (p) => {
-  const r = await p.evaluate(() => window.rv.fsWrite("too-big.txt", "A".repeat(5000))
-    .then((rc) => ({ rc })).catch((e) => ({ msg: e.message })));
-  ok(r.msg && r.msg.indexOf("4096") >= 0, "没有报错：" + JSON.stringify(r));
-  eq(await p.evaluate(() => window.rv.state.files.map((f) => f.name)), 
-     (await p.evaluate(() => window.rv.state.files.map((f) => f.name))).filter((n) => n !== "too-big.txt"), "文件还是建出来了");
-});
-
-test("13.23", "对不存在的进程操作要报失败", async (p) => {
-  eq(await p.evaluate(() => window.rv.killProc(99)), 1);
-  eq(await p.evaluate(() => window.rv.killProc(-1)), 1);
-});
-
-test("13.24", "不能进入文件或不存在的路径", async (p) => {
-  await p.evaluate(() => window.rv.fsChdir(""));
-  await sleep(300);
-  eq(await p.evaluate(() => window.rv.fsChdir("readme.txt")), "", "进了文件");
-  eq(await p.evaluate(() => window.rv.fsChdir("no/such")), "", "进了不存在的路径");
-});
-
-test("13.25", "文件操作失败有可见提示", async (p) => {
-  await p.evaluate(() => window.rv.fsChdir(""));
-  await sleep(300);
-  await p.evaluate(() => document.querySelector('tr[data-name="readme.txt"]').click());
-  await sleep(200);
-  await p.evaluate(() => document.querySelector('.fbar button[data-f="rename"]').click());
-  await sleep(300);
-  await p.evaluate(() => { document.querySelector(".fdlg input").value = "hello.elf"; });
-  await p.evaluate(() => document.querySelector('.fdlg button[data-r="1"]').click());
-  await sleep(400);
-  const v = await p.evaluate(() => {
-    const e = document.querySelector(".fpath");
-    return { t: e.textContent, c: getComputedStyle(e).color };
-  });
-  ok(v.t.indexOf("失败") >= 0, "路径栏没有错误文字：" + JSON.stringify(v));
-  ok(v.c.indexOf("248, 113, 113") >= 0, "错误提示没有变红：" + JSON.stringify(v));
-  await sleep(3400);
-  eq(await p.evaluate(() => document.querySelector(".fpath").textContent), "/", "提示没有自动恢复");
-});
-
-// ══════════════════════════════════════════════════════════
-// 运行器
-// ══════════════════════════════════════════════════════════
 // ══════════════════════════════════════════════════════════
 // 13. 文件与进程操作（图形界面）
 // ══════════════════════════════════════════════════════════
@@ -1357,9 +1260,16 @@ test("13.12", "挂起后状态为 SUSPEND，恢复后能跑完", async (p) => {
   await sleep(700);
   eq(await p.evaluate((id) => (window.rv.state.procs.find((x) => x.pid === id) || {}).state, pid), "SUSPEND");
   eq(await p.evaluate((id) => window.rv.resumeProc(id), pid), 0);
-  await sleep(1800);
-  const st = await p.evaluate(() => window.rv.state.procs.map((x) => x.state));
-  ok(st.length === 0 || st.every((x) => x === "EXIT"), "恢复后没有跑完：" + JSON.stringify(st));
+  /* 恢复之后要真的跑完：轮询到全部 EXIT，而不是拍一个固定等待 */
+  let st = [];
+  for (let i = 0; i < 20; i++) {
+    await sleep(300);
+    st = await p.evaluate(() => window.rv.state.procs.map((x) => x.state));
+    if (st.length === 0 || st.every((x) => x === "EXIT")) break;
+  }
+  ok(st.length === 0 || st.every((x) => x === "EXIT"),
+     "恢复后没有跑完：" + JSON.stringify(st) + " 终端尾："
+     + JSON.stringify((await p.evaluate(() => window.rv.state.term.join("|"))).slice(-200)));
   await shellCmd(p, "reset");
   await sleep(800);
 });
@@ -1392,6 +1302,129 @@ test("13.15", "终止正在运行的进程后回到 shell", async (p) => {
   ok((await p.evaluate(() => window.rv.state.term.join("|"))).indexOf("rvsh>") >= 0, "终止后没有回到提示符");
 });
 
+// ── 对抗性用例：边界与注入 ──
+test("13.16", "中文文件名可读可写可打开", async (p) => {
+  eq(await p.evaluate(() => window.rv.fsWrite("中文名测试.txt", "CN")), 0);
+  await sleep(500);
+  ok((await p.evaluate(() => window.rv.state.files.map((f) => f.name))).indexOf("中文名测试.txt") >= 0, "内核里名字不对");
+  ok((await p.evaluate(() => [...document.querySelectorAll("tr[data-name]")].map((r) => r.dataset.name))).indexOf("中文名测试.txt") >= 0,
+     "界面上的名字是乱码");
+  eq(await p.evaluate(() => window.rv.fsRead("中文名测试.txt")), "CN");
+});
+
+test("13.17", "文件名里的 HTML 不会被当成标签", async (p) => {
+  eq(await p.evaluate(() => window.rv.fsWrite("<b>inj.txt", "1")), 0);
+  await sleep(500);
+  eq(await p.evaluate(() => !!document.querySelector(".ftab tbody b")), false, "名字里的 <b> 被渲染成了元素");
+  eq(await p.evaluate(() => !!document.querySelector(".ftab tbody img")), false, "名字里的 <img> 被渲染成了元素");
+  eq(await p.evaluate(() => window.rv.fsWrite('q"t.txt', "2")), 0);
+  await sleep(500);
+  eq(await p.evaluate(() => {
+    const tr = [...document.querySelectorAll("tr[data-name]")].find((r) => r.dataset.name === 'q"t.txt');
+    return tr ? tr.dataset.name : null;
+  }), 'q"t.txt', "带引号的名字把 data-name 截断了");
+});
+
+test("13.18", "删除目录会连带删掉子项", async (p) => {
+  eq(await p.evaluate(() => window.rv.fsMkdir("cascade")), 0);
+  eq(await p.evaluate(() => window.rv.fsWrite("cascade/kid.txt", "KID")), 0);
+  await sleep(400);
+  eq(await p.evaluate(() => window.rv.fsRemove("cascade")), 0);
+  await sleep(400);
+  eq(await p.evaluate(() => window.rv.fsRead("cascade/kid.txt")), null, "目录删了但子文件还在（重建同名目录会复活）");
+});
+
+test("13.19", "目录改名会迁移子项", async (p) => {
+  eq(await p.evaluate(() => window.rv.fsMkdir("mvdir")), 0);
+  eq(await p.evaluate(() => window.rv.fsWrite("mvdir/kid.txt", "K3")), 0);
+  await sleep(400);
+  eq(await p.evaluate(() => window.rv.fsRename("mvdir", "mvdir2")), 0);
+  await sleep(400);
+  eq(await p.evaluate(() => window.rv.fsRead("mvdir2/kid.txt")), "K3", "改名后新路径下没有子项");
+  eq(await p.evaluate(() => window.rv.fsRead("mvdir/kid.txt")), null, "旧路径下还留着子项");
+});
+
+test("13.20", "文件与目录不能互相顶替", async (p) => {
+  eq(await p.evaluate(() => window.rv.fsMkdir("readme.txt")), 1, "对已存在的文件建目录应该报冲突");
+  eq(await p.evaluate(() => window.rv.fsWrite("mvdir2", "BBB")), 1, "往目录里写文件应该失败");
+});
+
+test("13.21", "超长文件名被拒绝，不静默截断", async (p) => {
+  eq(await p.evaluate(() => window.rv.fsWrite("L".repeat(30), "x")), 1);
+  await sleep(400);
+  const bad = await p.evaluate(() => window.rv.state.files.map((f) => f.name).filter((n) => n.indexOf("LLLL") === 0));
+  eq(bad, [], "超长名字被截断后建了出来");
+});
+
+test("13.22", "超过单次写入上限被拒绝，不静默丢尾部", async (p) => {
+  const r = await p.evaluate(() => window.rv.fsWrite("too-big.txt", "A".repeat(5000))
+    .then((rc) => ({ rc })).catch((e) => ({ msg: e.message })));
+  ok(r.msg && r.msg.indexOf("4096") >= 0, "没有报错：" + JSON.stringify(r));
+  eq(await p.evaluate(() => window.rv.state.files.map((f) => f.name)), 
+     (await p.evaluate(() => window.rv.state.files.map((f) => f.name))).filter((n) => n !== "too-big.txt"), "文件还是建出来了");
+});
+
+test("13.23", "对不存在的进程操作要报失败", async (p) => {
+  eq(await p.evaluate(() => window.rv.killProc(99)), 1);
+  eq(await p.evaluate(() => window.rv.killProc(-1)), 1);
+});
+
+test("13.24", "不能进入文件或不存在的路径", async (p) => {
+  await p.evaluate(() => window.rv.fsChdir(""));
+  await sleep(300);
+  eq(await p.evaluate(() => window.rv.fsChdir("readme.txt")), "", "进了文件");
+  eq(await p.evaluate(() => window.rv.fsChdir("no/such")), "", "进了不存在的路径");
+});
+
+test("13.25", "文件操作失败有可见提示", async (p) => {
+  await p.evaluate(() => window.rv.fsChdir(""));
+  await sleep(300);
+  await p.evaluate(() => document.querySelector('tr[data-name="readme.txt"]').click());
+  await sleep(200);
+  await p.evaluate(() => document.querySelector('.fbar button[data-f="rename"]').click());
+  await sleep(300);
+  await p.evaluate(() => { document.querySelector(".fdlg input").value = "hello.elf"; });
+  await p.evaluate(() => document.querySelector('.fdlg button[data-r="1"]').click());
+  await sleep(400);
+  const v = await p.evaluate(() => {
+    const e = document.querySelector(".fpath");
+    return { t: e.textContent, c: getComputedStyle(e).color };
+  });
+  ok(v.t.indexOf("失败") >= 0, "路径栏没有错误文字：" + JSON.stringify(v));
+  ok(v.c.indexOf("248, 113, 113") >= 0, "错误提示没有变红：" + JSON.stringify(v));
+  await sleep(3400);
+  eq(await p.evaluate(() => document.querySelector(".fpath").textContent), "/", "提示没有自动恢复");
+});
+
+test("13.26", "跑飞的用户程序能被单独终止", async (p) => {
+  await shellCmd(p, "reset");
+  await sleep(700);
+  await shellCmd(p, "run spin.elf");
+  await sleep(1400);
+  /* 到这一步 shell 已经收不到命令了（进程占着 CPU），
+     只有定时器中断能看见这些进程，也只有它能终止它们。 */
+  const live = await p.evaluate(() => window.rv.state.procs);
+  ok(live.length >= 2, "跑飞程序没起来：" + JSON.stringify(live));
+  ok(live.some((x) => x.state === "RUN"),
+     "进程表里看不到 RUN——Monitor 就没法判断该终止哪一行：" + JSON.stringify(live));
+  for (let i = 0; i < 6; i++) {
+    const left = await p.evaluate(() => window.rv.state.procs);
+    if (!left.length) break;
+    eq(await p.evaluate((id) => window.rv.killProc(id), left[0].pid), 0,
+       "终止 " + left[0].pid + " 失败：" + JSON.stringify(left));
+    await sleep(500);
+  }
+  await sleep(900);
+  eq(await p.evaluate(() => window.rv.state.procs), [], "还有进程没被终止");
+  await shellCmd(p, "whoami");
+  await sleep(1000);
+  ok((await p.evaluate(() => window.rv.state.term.join("|"))).indexOf('"user"') >= 0,
+     "终止跑飞进程后 shell 没恢复");
+});
+
+// ══════════════════════════════════════════════════════════
+// 运行器
+// ══════════════════════════════════════════════════════════
 (async () => {
   const grep = process.argv.includes("--grep")
     ? process.argv[process.argv.indexOf("--grep") + 1] : null;

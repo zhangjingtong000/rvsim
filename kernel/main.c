@@ -572,6 +572,7 @@ u32 s_trap_handler(u32 cause, u32 epc, u32 tval, u32 *regs)
                 kprintf("\n[S] proc %d 被宿主终止\n", (int)dead);
                 evt_emit(EVT_EXIT, dead, 0, 0, -9);
                 proc_t *nx = proc_schedule();
+                host_cmd_finish(0);
                 if (nx) {
                     if (nx->pgtbl) proc_switch_satp(nx->pgtbl);
                     proc_reap(dead);
@@ -582,6 +583,12 @@ u32 s_trap_handler(u32 cause, u32 epc, u32 tval, u32 *regs)
                 proc_switch_satp(g_kroot);
                 proc_reap(dead);
                 shell_loop();          /* 不返回 */
+            } else if (kp >= 0) {
+                /* 要终止的不是当前进程：直接回收。以前这里把请求丢掉还回 rc=0，
+                   宿主以为成功了，其实那一行根本没被终止。 */
+                u32 rc = (proc_kill((u32)kp) == 0) ? 0u : 1u;
+                host_cmd_finish(rc);
+                panel_sync_procs();
             }
         }
 
@@ -952,12 +959,15 @@ void shell_ps_hook(void)
 /* 把内嵌的三个程序镜像灌进 RAMFS。
    这样 run 走的是「读文件 → 装载」，而不是「按名字挑 .incbin 符号」，
    文件系统里的程序才第一次成为真正的可执行物。 */
+extern u8 spin_prog_start[], spin_prog_end[];
+
 static void fs_seed(void)
 {
     fs_write("hello.elf",  user_prog_start,  (u32)(user_prog_end  - user_prog_start));
     fs_write("fork.elf",   fork_prog_start,  (u32)(fork_prog_end  - fork_prog_start));
     fs_write("fdtest.elf", fdtest_prog_start, (u32)(fdtest_prog_end - fdtest_prog_start));
     fs_write("badptr.elf", badptr_prog_start,(u32)(badptr_prog_end - badptr_prog_start));
+    fs_write("spin.elf",   spin_prog_start,  (u32)(spin_prog_end   - spin_prog_start));
     {
         const char *msg = "rvsim RAMFS: try ls, cat readme.txt, run hello.elf";
         u32 mlen = 0;
@@ -1321,7 +1331,7 @@ static proc_row_t *g_proc_rows = (proc_row_t *)PROC_SYNC_PA;
 static file_row_t *g_file_rows = (file_row_t *)FILE_SYNC_PA;
 static sys_sync_t *g_sys = (sys_sync_t *)SYS_SYNC_PA;
 
-void panel_sync_publish(void)
+void panel_sync_procs(void)
 {
     u32 nrun = 0, nlive = 0;
     for (int i = 0; i < NPROC; i++) {
@@ -1335,6 +1345,13 @@ void panel_sync_publish(void)
             if (procs[i].state == PROC_RUN) nrun++;
         }
     }
+    g_sys->nproc = nlive;
+    g_sys->nrun = nrun;
+}
+
+void panel_sync_publish(void)
+{
+    panel_sync_procs();
     u32 nfile = 0;
     for (u32 i = 0; i < 32; i++) {
         char nm[24]; u32 sz = 0;
@@ -1353,9 +1370,7 @@ void panel_sync_publish(void)
     g_sys->cycles_lo = 0;
     g_sys->cycles_hi = 0;
     g_sys->uptime_s = 0;
-    g_sys->nproc = nlive;
     g_sys->nfile = nfile;
-    g_sys->nrun = nrun;
     g_sys->boot_ms = 0;
 }
 
@@ -1439,15 +1454,18 @@ void host_cmd_poll(void)
 int host_cmd_take_kill(void)
 {
     volatile host_cmd_t *c = g_hcmd;
-    int pid = g_hcmd_kill;
-    g_hcmd_kill = -1;
-    if (pid < 0 && c->magic == HCMD_MAGIC && c->op == HCMD_KILL && c->seq != g_hcmd_seq) {
-        g_hcmd_seq = c->seq;
-        pid = (int)c->a0;
-        c->rc = 0;
-        c->magic = 0;
-    }
-    return pid;
+    if (g_hcmd_kill >= 0) { int p = g_hcmd_kill; g_hcmd_kill = -1; return p; }
+    if (c->magic == HCMD_MAGIC && c->op == HCMD_KILL && c->seq != g_hcmd_seq) return (int)c->a0;
+    return -1;
+}
+
+void host_cmd_finish(u32 rc)
+{
+    volatile host_cmd_t *c = g_hcmd;
+    if (c->magic != HCMD_MAGIC) return;
+    g_hcmd_seq = c->seq;
+    c->rc = rc;
+    c->magic = 0;
 }
 
 /* 每轮把网格元信息发布给宿主（几十条指令，可以每轮做） */

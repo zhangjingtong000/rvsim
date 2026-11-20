@@ -120,6 +120,11 @@ u32  fs_count(void);
 /* 重命名/移动。目标已存在返回 -3，名字过长 -2，源不存在 -1。 */
 int  fs_rename(const char *from, const char *to);
 
+/* 只刷新进程表那一块。定时器中断里每轮都要调：
+   用户进程在跑的时候 shell 主循环是挂起的，不刷新的话 Monitor 会一直
+   显示「全部 READY」，用户根本不知道该终止哪一行。 */
+void panel_sync_procs(void);
+
 /* ── 宿主 → 内核控制块 ──
    Web 端要在图形界面里做「新建文件 / 删除 / 重命名 / 结束进程」，
    只靠往 UART 敲字符做不到：多行内容、二进制、非 ASCII 都不好传，
@@ -154,8 +159,10 @@ typedef struct {
 extern volatile host_cmd_t *g_hcmd;
 /* 在 shell 主循环里轮询，处理全部命令 */
 void host_cmd_poll(void);
-/* 只取「终止正在运行的进程」这一条：跑飞的用户程序只有定时器中断能看见它 */
+/* 只取「终止进程」这一条：跑飞的用户程序只有定时器中断能看见它。
+   取到之后必须调用 host_cmd_finish 回填 rc 并清 magic，否则宿主永远等不到结果。 */
 int  host_cmd_take_kill(void);
+void host_cmd_finish(u32 rc);
 
 /* 计划类型：apply 时按这个分派 */
 #define PLAN_RUN     1

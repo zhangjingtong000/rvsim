@@ -74,6 +74,11 @@ $(OBJDIR)/fdtest_prog.elf: kernel/user/fdtest.S
 	$(CROSS)gcc -march=rv32ima_zicsr_zifencei -mabi=ilp32 -mcmodel=medany -nostdlib -nostartfiles \
 		-Ttext=0x80400000 -o $(OBJDIR)/fdtest_prog.elf kernel/user/fdtest.S
 
+$(OBJDIR)/spin_prog.elf: kernel/user/spin.S
+	@mkdir -p $(OBJDIR)
+	$(CROSS)gcc -march=rv32ima_zicsr_zifencei -mabi=ilp32 -mcmodel=medany -nostdlib -nostartfiles \
+		-Ttext=0x80400000 -o $(OBJDIR)/spin_prog.elf kernel/user/spin.S
+
 $(OBJDIR)/user_prog.bin: $(OBJDIR)/user_prog.elf
 	@mkdir -p $(OBJDIR)
 	$(CROSS)gcc -march=rv32ima_zicsr_zifencei -mabi=ilp32 -mcmodel=medany -nostdlib -nostartfiles \
@@ -81,7 +86,7 @@ $(OBJDIR)/user_prog.bin: $(OBJDIR)/user_prog.elf
 	$(CROSS)objcopy -O binary $(OBJDIR)/user_prog.elf $@
 
 # 内核
-$(OBJDIR)/kernel.elf: $(KSRCS) $(KASMS) $(OBJDIR)/user_prog.bin $(OBJDIR)/fork_prog.bin $(OBJDIR)/badptr_prog.bin kernel/linker.ld
+$(OBJDIR)/kernel.elf: $(KSRCS) $(KASMS) $(OBJDIR)/user_prog.bin $(OBJDIR)/fork_prog.bin $(OBJDIR)/badptr_prog.bin $(OBJDIR)/spin_prog.elf kernel/linker.ld
 	@mkdir -p $(OBJDIR)
 	$(CROSS)gcc $(KCFLAGS) -T kernel/linker.ld -o $@ \
 		$(KASMS) $(KSRCS) -lgcc
