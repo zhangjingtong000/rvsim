@@ -150,6 +150,34 @@ input{font:inherit;color:inherit;background:none;border:0;outline:0}
   transition:background .1s,border-color .1s}
 .sl-cell:hover{background:rgba(45,212,191,.42);border-color:rgba(94,234,212,.7)}
 
+/* 悬停提示：原生 title 会弹一个浅色系统气泡，在深色界面上非常扎眼 */
+#tip{position:absolute;z-index:80;pointer-events:none;opacity:0;
+  padding:5px 10px;border-radius:var(--r-control);
+  background:rgba(40,47,58,.97);
+  -webkit-backdrop-filter:blur(20px);backdrop-filter:blur(20px);
+  border:1px solid var(--stroke);box-shadow:var(--elev-1);
+  font:400 12px/16px var(--font-ui);color:var(--t1);white-space:nowrap;
+  transition:opacity .12s var(--ease-decel)}
+#tip.on{opacity:1}
+
+/* 托盘日期面板（点托盘弹出） */
+#trayPanel{position:absolute;z-index:72;display:none;width:280px;padding:16px;
+  background:rgba(32,38,47,.97);
+  -webkit-backdrop-filter:blur(30px) saturate(180%);
+  backdrop-filter:blur(30px) saturate(180%);
+  border:1px solid var(--stroke);border-radius:var(--r-flyout);
+  box-shadow:var(--elev-3);animation:smIn .16s var(--ease-decel)}
+#trayPanel.on{display:block}
+.tp-time{font:600 26px/1.1 var(--font-display);color:var(--t1);letter-spacing:-.01em}
+.tp-date{font:400 12.5px/18px var(--font-ui);color:var(--t2);margin-top:4px}
+.tp-sep{height:1px;margin:12px 0;background:var(--stroke)}
+.tp-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:2px;margin-top:10px}
+.tp-dow{font:400 10px/16px var(--font-ui);color:var(--t3);text-align:center}
+.tp-day{font:400 11.5px/26px var(--font-mono);color:var(--t2);text-align:center;
+  border-radius:var(--r-control)}
+.tp-day.today{background:var(--acc);color:var(--on-acc);font-weight:600}
+.tp-day.dim{color:var(--t-disabled)}
+
 /* 右键菜单 */
 #ctxMenu{position:absolute;z-index:75;display:none;min-width:184px;padding:5px;
   background:rgba(32,38,47,.97);
@@ -173,11 +201,17 @@ input{font:inherit;color:inherit;background:none;border:0;outline:0}
 
 /* ── 窗口 ───────────────────────────────────────────────────── */
 .win{position:absolute;display:flex;flex-direction:column;
-  border-radius:var(--r-window);overflow:hidden;background:var(--s0);
+  border-radius:var(--r-window);overflow:hidden;
+  /* Mica：窗口整体半透明 + 背景模糊，内容区自己再铺不透明底色 */
+  background:rgba(18,22,29,.86);
+  -webkit-backdrop-filter:blur(30px) saturate(1.25);
+  backdrop-filter:blur(30px) saturate(1.25);
   border:1px solid var(--stroke);
-  box-shadow:0 1px 0 rgba(255,255,255,.05) inset,
-             0 16px 40px -10px rgba(0,0,0,.62),
-             0 2px 6px rgba(0,0,0,.35);
+  /* Win11 的四层阴影 */
+  box-shadow:0 0 0 1px rgba(0,0,0,.12),
+             0 2px 4px rgba(0,0,0,.14),
+             0 8px 16px rgba(0,0,0,.16),
+             0 16px 32px rgba(0,0,0,.18);
   transition:box-shadow .167s var(--ease-decel),border-color .167s,
              left .167s var(--ease-decel),top .167s var(--ease-decel),
              width .167s var(--ease-decel),height .167s var(--ease-decel)}
@@ -185,10 +219,18 @@ input{font:inherit;color:inherit;background:none;border:0;outline:0}
 /* 关闭：淡出 + 轻微缩小（Win11 关闭动画的观感） */
 .win.closing{opacity:0;transform:scale(.97);
   transition:opacity .12s var(--ease-accel),transform .12s var(--ease-accel)}
-.win.focused{border-color:rgba(94,234,212,.32);
-  box-shadow:0 1px 0 rgba(255,255,255,.07) inset,
-             0 26px 60px -12px rgba(0,0,0,.75),
-             0 0 0 1px rgba(94,234,212,.14)}
+.win.focused{border-color:rgba(94,234,212,.34);
+  box-shadow:0 0 0 1px rgba(94,234,212,.16),
+             0 2px 4px rgba(0,0,0,.16),
+             0 8px 16px rgba(0,0,0,.18),
+             0 20px 40px rgba(0,0,0,.22)}
+/* 吸附到屏幕边缘时，贴边那侧的圆角收成直角 */
+.win.snap-l{border-top-left-radius:0;border-bottom-left-radius:0}
+.win.snap-r{border-top-right-radius:0;border-bottom-right-radius:0}
+.win.snap-t{border-top-left-radius:0;border-top-right-radius:0}
+/* 最小化：向 dock 方向缩小淡出 */
+.win.minimizing{opacity:0;transform:scale(.9) translateY(24px);
+  transition:opacity .167s var(--ease-accel),transform .167s var(--ease-accel)}
 
 .win-bar{flex:0 0 32px;height:32px;display:flex;align-items:center;
   gap:8px;padding:0 0 0 12px;user-select:none;
@@ -264,9 +306,12 @@ input{font:inherit;color:inherit;background:none;border:0;outline:0}
 .dock-apps{display:flex;gap:6px}
 .dock-app{position:relative;width:42px;height:40px;border-radius:var(--r-control);
   display:grid;place-items:center;transition:background .12s}
-.dock-app:hover{background:rgba(255,255,255,.08)}
-.dock-app svg{width:26px;height:26px;opacity:.66;transition:opacity .12s,transform .12s}
-.dock-app:hover svg{opacity:.9;transform:translateY(-1px)}
+.dock-app:hover{background:rgba(255,255,255,.10)}
+.dock-app:active{background:rgba(255,255,255,.05)}
+.dock-app svg{width:26px;height:26px;opacity:.66;
+  transition:opacity .167s var(--ease-decel),transform .167s var(--ease-decel)}
+.dock-app:hover svg{opacity:1;transform:scale(1.08)}
+.dock-app:active svg{transform:scale(.96)}
 .dock-app.active svg{opacity:1}
 .dock-app .ind{position:absolute;bottom:2px;left:50%;transform:translateX(-50%);
   width:5px;height:3px;border-radius:2px;background:transparent;
@@ -470,6 +515,8 @@ body.drawer #drawer{transform:translateX(0)}
   <div id="snapGhost"></div>
   <div id="snapPicker"></div>
   <div id="ctxMenu"></div>
+  <div id="tip"></div>
+  <div id="trayPanel"></div>
   <div id="winlayer"></div>
 
   <div id="dock">
@@ -494,7 +541,7 @@ body.drawer #drawer{transform:translateX(0)}
         </svg>
       </button>
     </div>
-    <div class="dock-tray">
+    <div class="dock-tray" id="dockTray">
       <span class="tray-dot" id="trayDot"></span>
       <span class="tray-rate" id="trayRate">—</span>
       <span class="tray-clock"><b id="clock">--:--</b><i id="clockDate"></i></span>
@@ -706,6 +753,8 @@ function dockRender() {
     d.title = app.name;
     d.innerHTML = '<svg viewBox="0 0 44 44">' + app.ico + '</svg><span class="ind"></span>';
     d.onclick = () => launch(app.id);
+    d.addEventListener("pointerenter", () => tipShow(d, app.name));
+    d.addEventListener("pointerleave", tipHide);
     makeFocusable(d, () => launch(app.id));
     box.appendChild(d);
   }
@@ -1021,6 +1070,26 @@ function snapZonePx(px, py, W, H) {
   return null;
 }
 
+/* 拖到另一个窗口的左/右边缘时，吸附到屏幕对应半边 ——
+   对方不动，自己贴上去，效果就是并排。比「同时移动两个窗口」简单得多，
+   内核协议也不用扩。 */
+function snapToNeighbor(px, py, selfIdx, L, osR) {
+  const ws = window.rv && window.rv.ready ? window.rv.state.wins : null;
+  if (!ws) return null;
+  for (let j = 0; j < ws.length; j++) {
+    if (j === selfIdx) continue;
+    const w = ws[j];
+    if (!w.visible) continue;
+    const x = L.ox + w.x * L.scale, y = L.oy + w.y * L.scale;
+    const ww = w.w * L.scale, wh = w.h * L.scale;
+    if (py < y || py > y + wh) continue;
+    const NEAR = 40;
+    if (Math.abs(px - x) < NEAR) return "left";
+    if (Math.abs(px - (x + ww)) < NEAR) return "right";
+  }
+  return null;
+}
+
 function snapShow(zone) {
   if (!zone) { snapHide(); return; }
   snapShowRect(...SNAP[zone]);
@@ -1137,6 +1206,60 @@ function hideCtx() {
   if (m) m.classList.remove("on");
 }
 
+/* ── 悬停提示 ── */
+let tipTimer = null;
+function tipShow(el, text) {
+  clearTimeout(tipTimer);
+  tipTimer = setTimeout(() => {
+    const t = $("tip");
+    if (!t) return;
+    t.textContent = text;
+    t.classList.add("on");
+    const r = el.getBoundingClientRect();
+    const osR = desk().getBoundingClientRect();
+    const w = t.offsetWidth || 80;
+    t.style.left = Math.max(6, Math.min(osR.width - w - 6, r.left - osR.left + r.width / 2 - w / 2)) + "px";
+    t.style.top = (r.top - osR.top - 30) + "px";
+  }, 500);
+}
+function tipHide() {
+  clearTimeout(tipTimer);
+  const t = $("tip");
+  if (t) t.classList.remove("on");
+}
+
+/* ── 托盘日期面板 ── */
+function trayPanelShow() {
+  const p = $("trayPanel");
+  if (!p) return;
+  if (p.classList.contains("on")) { p.classList.remove("on"); return; }
+  const n = new Date();
+  const p2 = (v) => String(v).padStart(2, "0");
+  const DOW = ["日", "一", "二", "三", "四", "五", "六"];
+  const y = n.getFullYear(), mo = n.getMonth(), d = n.getDate();
+  const first = new Date(y, mo, 1).getDay();
+  const days = new Date(y, mo + 1, 0).getDate();
+  let grid = DOW.map((w) => '<div class="tp-dow">' + w + '</div>').join("");
+  for (let i = 0; i < first; i++) grid += '<div class="tp-day dim"></div>';
+  for (let i = 1; i <= days; i++) {
+    grid += '<div class="tp-day' + (i === d ? " today" : "") + '">' + i + '</div>';
+  }
+  p.innerHTML = '<div class="tp-time">' + p2(n.getHours()) + ":" + p2(n.getMinutes()) + ":" + p2(n.getSeconds()) + '</div>'
+    + '<div class="tp-date">' + y + " 年 " + (mo + 1) + " 月 " + d + " 日  星期" + DOW[n.getDay()] + '</div>'
+    + '<div class="tp-sep"></div>'
+    + '<div class="tp-date">' + Intl.DateTimeFormat().resolvedOptions().timeZone + '</div>'
+    + '<div class="tp-grid">' + grid + '</div>';
+  p.classList.add("on");
+  const osR = desk().getBoundingClientRect();
+  const w = 280;
+  p.style.left = Math.max(8, Math.min(osR.width - w - 8, osR.width - w - 12)) + "px";
+  p.style.top = (osR.height - 48 - 12 - p.offsetHeight) + "px";
+}
+function trayPanelHide() {
+  const p = $("trayPanel");
+  if (p) p.classList.remove("on");
+}
+
 /* 窗口位置回写：只挪位置 / 位置+尺寸（吸附） */
 function setWinPos(i, x, y) {
   if (!M) return;
@@ -1223,9 +1346,13 @@ function winInit() {
         el.style.left = x + "px";
         el.style.top = y + "px";
         we.px = x; we.py = y;
+        el.classList.remove("snap-l", "snap-r", "snap-t");
         /* 拖到屏幕边缘就亮吸附预览（Win11 的 Snap Layouts） */
         const L = deskTransform(osR.width, osR.height);
-        we.zone = snapZonePx(e2.clientX - osR.left, e2.clientY - osR.top, osR.width, osR.height);
+        const px2 = e2.clientX - osR.left, py2 = e2.clientY - osR.top;
+        let z = snapZonePx(px2, py2, osR.width, osR.height);
+        if (!z) z = snapToNeighbor(px2, py2, i, L, osR);
+        we.zone = z;
         snapShow(we.zone);
       };
       const up = () => {
@@ -1242,6 +1369,11 @@ function winInit() {
           const [sx, sy, sw, sh] = SNAP[we.zone];
           setWinRect(i, sx, sy, sw, sh);
           we.pending = false;
+          el.classList.remove("snap-l", "snap-r", "snap-t");
+          if (we.zone === "left") el.classList.add("snap-l");
+          else if (we.zone === "right") el.classList.add("snap-r");
+          else if (we.zone === "top") el.classList.add("snap-t");
+          else if (we.zone) { el.classList.add(we.zone.includes("l") ? "snap-l" : "snap-r", "snap-t"); }
           we.el.style.left = (L.ox + sx * L.scale) + "px";
           we.el.style.top = (L.oy + sy * L.scale) + "px";
           we.el.style.width = (sw * L.scale) + "px";
@@ -1291,6 +1423,13 @@ function winInit() {
             el.classList.remove("closing");
             sendWinCmd(i * 10 + 0);
           }, 120);
+        } else if (act === 1) {
+          /* 最小化：向 dock 方向缩小淡出 */
+          el.classList.add("minimizing");
+          setTimeout(() => {
+            el.classList.remove("minimizing");
+            sendWinCmd(i * 10 + 1);
+          }, 167);
         } else {
           sendWinCmd(i * 10 + act);
         }
@@ -1316,6 +1455,20 @@ function winInit() {
       ], ev.clientX, ev.clientY);
     });
   }
+  const tray = $("dockTray");
+  if (tray) {
+    tray.addEventListener("pointerdown", (e) => e.stopPropagation());
+    tray.addEventListener("click", (e) => { e.stopPropagation(); trayPanelShow(); });
+    tray.addEventListener("contextmenu", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      trayPanelHide();
+      showCtx([
+        { label: "调整日期和时间", action: () => launch("settings") },
+        { label: "任务栏设置", action: () => launch("settings") },
+      ], e.clientX, e.clientY);
+    });
+  }
   $("startBtn").onclick = (e) => { e.stopPropagation(); openStartMenu(); };
   $("dbgBtn").onclick = (e) => { e.stopPropagation(); toggleDrawer(); };
   $("dwClose").onclick = () => toggleDrawer(false);
@@ -1336,6 +1489,7 @@ function winInit() {
   desk().addEventListener("pointerdown", (e) => {
     if (!e.target.closest("#startMenu") && !e.target.closest("#startBtn")) closeStartMenu();
     if (!e.target.closest("#ctxMenu")) hideCtx();
+    if (!e.target.closest("#trayPanel") && !e.target.closest("#dockTray")) trayPanelHide();
   }, true);
 }
 
@@ -2038,6 +2192,27 @@ document.addEventListener("keydown", (e) => {
   const tag = e.target && e.target.tagName;
   if (e.target && e.target.id !== "ime" && (tag === "INPUT" || tag === "TEXTAREA")) return;
   if (e.target && e.target.closest && e.target.closest(UI_FOCUS)) return;
+
+  /* Ctrl+W 关闭 / Ctrl+M 最小化 当前窗口 */
+  if (e.ctrlKey && !e.altKey && !e.metaKey) {
+    const k = e.key.toLowerCase();
+    if (k === "w" || k === "m") {
+      e.preventDefault();
+      const ws = window.rv.state.wins;
+      const i = ws.findIndex((w) => w.focused && w.visible);
+      if (i >= 0) {
+        const el = winEls[i] && winEls[i].el;
+        if (el) {
+          el.classList.add(k === "w" ? "closing" : "minimizing");
+          setTimeout(() => {
+            el.classList.remove("closing", "minimizing");
+            sendWinCmd(i * 10 + (k === "w" ? 0 : 1));
+          }, 167);
+        }
+      }
+      return;
+    }
+  }
 
   /* Alt+方向：Win11 的 Win+方向 被浏览器占用，这里换成 Alt。
      ←/→ 半屏，↑ 最大化，↓ 还原到默认尺寸。 */
