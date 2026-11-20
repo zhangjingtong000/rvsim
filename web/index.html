@@ -141,7 +141,8 @@ input{font:inherit;color:inherit;background:none;border:0;outline:0}
   -webkit-backdrop-filter:blur(30px) saturate(180%);
   backdrop-filter:blur(30px) saturate(180%);
   border:1px solid var(--stroke);border-radius:var(--r-flyout);
-  box-shadow:var(--elev-3);animation:smIn .12s var(--ease-decel)}
+  box-shadow:var(--elev-3);animation:popIn .12s var(--ease-decel);
+  transform-origin:top left}
 #snapPicker.on{display:grid}
 .sl{position:relative;width:96px;height:64px;border-radius:var(--r-control);
   background:rgba(255,255,255,.03);border:1px solid var(--stroke);overflow:hidden}
@@ -166,7 +167,8 @@ input{font:inherit;color:inherit;background:none;border:0;outline:0}
   -webkit-backdrop-filter:blur(30px) saturate(180%);
   backdrop-filter:blur(30px) saturate(180%);
   border:1px solid var(--stroke);border-radius:var(--r-flyout);
-  box-shadow:var(--elev-3);animation:smIn .16s var(--ease-decel)}
+  box-shadow:var(--elev-3);animation:popIn .16s var(--ease-decel);
+  transform-origin:top right}
 #trayPanel.on{display:block}
 .tp-time{font:600 26px/1.1 var(--font-display);color:var(--t1);letter-spacing:-.01em}
 .tp-date{font:400 12.5px/18px var(--font-ui);color:var(--t2);margin-top:4px}
@@ -184,7 +186,8 @@ input{font:inherit;color:inherit;background:none;border:0;outline:0}
   -webkit-backdrop-filter:blur(30px) saturate(180%);
   backdrop-filter:blur(30px) saturate(180%);
   border:1px solid var(--stroke);border-radius:var(--r-flyout);
-  box-shadow:var(--elev-3);animation:smIn .12s var(--ease-decel)}
+  box-shadow:var(--elev-3);animation:popIn .12s var(--ease-decel);
+  transform-origin:top left}
 #ctxMenu.on{display:block}
 .ctx-item{padding:7px 12px;border-radius:var(--r-control);
   font:400 13px/18px var(--font-ui);color:var(--t1);cursor:default;white-space:nowrap}
@@ -343,6 +346,9 @@ input{font:inherit;color:inherit;background:none;border:0;outline:0}
   animation:smIn .25s var(--ease-decel)}
 @keyframes smIn{from{opacity:0;transform:translateX(-50%) translateY(10px) scale(.985)}
   to{opacity:1;transform:translateX(-50%) translateY(0) scale(1)}}
+/* 按 px 定位的浮层用这个：不带水平位移，弹出时不会先跳到左边 */
+@keyframes popIn{from{opacity:0;transform:translateY(-4px) scale(.97)}
+  to{opacity:1;transform:none}}
 .sm-search{display:flex;align-items:center;gap:10px;height:32px;
   padding:0 12px;border-radius:var(--r-control);background:var(--s3);
   border:1px solid var(--stroke);color:var(--t3);flex:0 0 auto}
@@ -870,7 +876,7 @@ function hostWinBody(id) {
       + '<div class="seg" id="setFs"><button data-f="0.9">小</button>'
       + '<button data-f="1" class="on">中</button><button data-f="1.15">大</button></div></div>'
       + '<div class="set-row"><div><div class="lb">开机动画</div><div class="sb">下次刷新后生效</div></div>'
-      + '<div class="sw on" id="setBoot"></div></div>'
+      + '<div class="sw" id="setBoot"></div></div>'
       + '<div style="margin:14px 12px 0;padding-top:12px;border-top:1px solid var(--stroke-sub)">'
       + '<div class="kv tight"><span class="k">架构</span><span class="v">RV32IMA</span></div>'
       + '<div class="kv tight"><span class="k">特权级</span><span class="v">M / S / U</span></div>'
@@ -918,11 +924,29 @@ function hostWinBody(id) {
 
 function bindSettings(root) {
   const wall = $("setWall"), ic = $("setIcons"), fs = $("setFs"), boot = $("setBoot");
+  if (boot) {
+    try { if (localStorage.getItem("rvsim.skipBoot") === "1") boot.classList.remove("on"); } catch (e) {}
+  }
+  try {
+    const wv = localStorage.getItem("rvsim.wall");
+    if (wv !== null && wv !== "0") {
+      applyWallpaper(+wv, false);
+      const b = document.querySelector('#setWall button[data-w="' + wv + '"]');
+      if (b) { document.querySelectorAll("#setWall button").forEach((x) => x.classList.remove("on")); b.classList.add("on"); }
+    }
+    const tv = localStorage.getItem("rvsim.termScale");
+    if (tv) {
+      termScale = +tv;
+      const b = document.querySelector('#setFs button[data-f="' + tv + '"]');
+      if (b) { document.querySelectorAll("#setFs button").forEach((x) => x.classList.remove("on")); b.classList.add("on"); }
+      termLayout(winEls[0] && winEls[0].body, true);
+    }
+  } catch (e) {}
   if (wall) wall.onclick = (e) => {
     const b = e.target.closest("button"); if (!b) return;
     wall.querySelectorAll("button").forEach((x) => x.classList.remove("on"));
     b.classList.add("on");
-    applyWallpaper(+b.dataset.w);
+    applyWallpaper(+b.dataset.w, true);
   };
   if (ic) ic.onclick = () => {
     ic.classList.toggle("on");
@@ -933,9 +957,13 @@ function bindSettings(root) {
     fs.querySelectorAll("button").forEach((x) => x.classList.remove("on"));
     b.classList.add("on");
     termScale = +b.dataset.f;
+    try { localStorage.setItem("rvsim.termScale", String(termScale)); } catch (e) {}
     termLayout(winEls[0] && winEls[0].body, true);
   };
-  if (boot) boot.onclick = () => boot.classList.toggle("on");
+  if (boot) boot.onclick = () => {
+    boot.classList.toggle("on");
+    try { localStorage.setItem("rvsim.skipBoot", boot.classList.contains("on") ? "0" : "1"); } catch (e) {}
+  };
 }
 
 let termScale = 1;
@@ -946,9 +974,10 @@ const WALLS = [
     + "linear-gradient(160deg,#0A1020 0%,#080B14 55%,#05070C 100%)",
   "linear-gradient(160deg,#0B0D11 0%,#070809 100%)",
 ];
-function applyWallpaper(i) {
+function applyWallpaper(i, persist) {
   const w = $("wall");
   if (!w) return;
+  if (persist) { try { localStorage.setItem("rvsim.wall", String(i)); } catch (e) {} }
   w.style.background = i === 0
     ? "radial-gradient(1150px 760px at 16% 6%, rgba(45,212,191,.17), transparent 62%),"
       + "radial-gradient(1000px 720px at 84% 92%, rgba(59,130,246,.21), transparent 64%),"
@@ -956,6 +985,7 @@ function applyWallpaper(i) {
       + "radial-gradient(700px 500px at 62% 38%, rgba(124,58,237,.11), transparent 70%),"
       + "linear-gradient(155deg,#101D30 0%,#0B1220 46%,#080B12 100%)"
     : WALLS[i];
+  if (persist) { try { localStorage.setItem("rvsim.wall", String(i)); } catch (e) {} }
 }
 
 /* ══ 开始菜单 ══ */
@@ -965,7 +995,9 @@ function closeStartMenu() {
 }
 
 function openStartMenu() {
-  if ($("startMenu")) { closeStartMenu(); return; }
+  /* 幂等：已经是打开状态就直接返回。开/合是按钮的职责，
+     放进这里会让「打开开始菜单」这个动作有时反而把菜单关掉。 */
+  if ($("startMenu")) return;
   const m = document.createElement("div");
   m.id = "startMenu";
   m.innerHTML =
@@ -1003,8 +1035,8 @@ function openStartMenu() {
     r.innerHTML = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" '
       + 'stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 4.5L6.5 8l-3 3.5M8.5 11.5h4"/></svg>'
       + '<span>' + it + '</span>';
-    r.onclick = () => { sendCmd(it); closeStartMenu(); focusTerm(); };
-    makeFocusable(r, () => { sendCmd(it); closeStartMenu(); focusTerm(); });
+    r.onclick = () => { ensureTerm(); sendCmd(it); closeStartMenu(); focusTerm(); };
+    makeFocusable(r, () => { ensureTerm(); sendCmd(it); closeStartMenu(); focusTerm(); });
     rec.appendChild(r);
   }
 
@@ -1051,9 +1083,32 @@ const SNAP_EDGE = 26;
    拿它跟 0 比永远不成立。底部不吸附 —— Win11 底部是任务栏。 */
 /* 窗口命令字统一入口。值加 1：idx=0/act=0 打包成 0 会被内核当成「无命令」，
    关闭第一个窗口的命令就永远发不出去。 */
+/* 命令字只有一个槽位，内核每轮主循环读一次并清零。
+   宿主连续发三条（比如「关闭全部窗口」）时，后一条会覆盖前一条，
+   只有最后一条被执行。这里串行化：发一条，等内核清空，再发下一条。 */
+const cmdQueue = [];
+let cmdBusy = false;
 function sendWinCmd(v) {
   if (!M) return;
-  M.HEAPU32[guestOff(WIN_CMD_PA)] = v + 1;
+  cmdQueue.push(v + 1);
+  drainCmd();
+}
+function drainCmd() {
+  if (cmdBusy || !cmdQueue.length || !M) return;
+  cmdBusy = true;
+  const v = cmdQueue.shift();
+  const addr = guestOff(WIN_CMD_PA);
+  M.HEAPU32[addr] = v;
+  const wait = () => {
+    if (!M) { cmdBusy = false; return; }
+    if (M.HEAPU32[addr] === 0) {
+      cmdBusy = false;
+      if (cmdQueue.length) setTimeout(drainCmd, 6);
+    } else {
+      setTimeout(wait, 6);
+    }
+  };
+  setTimeout(wait, 6);
 }
 
 function snapZonePx(px, py, W, H) {
@@ -1467,7 +1522,10 @@ function winInit() {
       ], e.clientX, e.clientY);
     });
   }
-  $("startBtn").onclick = (e) => { e.stopPropagation(); openStartMenu(); };
+  $("startBtn").onclick = (e) => {
+    e.stopPropagation();
+    if ($("startMenu")) closeStartMenu(); else openStartMenu();
+  };
   $("dbgBtn").onclick = (e) => { e.stopPropagation(); toggleDrawer(); };
   $("dwClose").onclick = () => toggleDrawer(false);
 
@@ -1537,7 +1595,7 @@ function termLayout(host, force) {
   /* 字号上限 15px：再大就不是终端而是大字报了。
      宽度铺不满时右侧留白，真实终端在宽窗口里也是这样。 */
   let fs = (W / (termCols * ratio)) * termScale;
-  fs = Math.max(7.5, Math.min(15, fs));
+  fs = Math.max(7.5, Math.min(15 * termScale, fs));
   const cw = fs * ratio;
   if (cw * termCols > W + 0.5) fs = Math.max(7.5, W / (termCols * ratio));
   /* 行高：优先铺满高度，但压在 1.15–1.55 倍字号之间，避免字大行稀 */
@@ -1633,6 +1691,14 @@ function readStrAt(byteOff, max) {
   return s;
 }
 
+/* 往终端发命令之前先确认终端窗口是可见的。
+   否则命令确实发出去了，但用户看不到任何反馈。 */
+function ensureTerm() {
+  if (!M) return;
+  const w = window.rv.state.wins[0];
+  if (w && !w.visible) sendWinCmd(0 * 10 + 5);
+}
+
 function panelsRender() {
   if (!M) return;
   const A = M.HEAPU32, ram = M._rv_ram_ptr();
@@ -1686,11 +1752,22 @@ function panelsRender() {
       let h = '<table class="ftab"><colgroup><col><col style="width:66px"></colgroup>'
         + '<thead><tr><th>NAME</th><th class="r">SIZE</th></tr></thead><tbody>';
       for (const r of rows)
-        h += '<tr><td class="nm">' + (r.dir ? "▸ " : "") + r.name + '</td>'
+        h += '<tr data-name="' + r.name + '" data-dir="' + (r.dir ? "1" : "0") + '">'
+           + '<td class="nm">' + (r.dir ? "▸ " : "") + r.name + '</td>'
            + '<td class="r ' + (r.dir ? "dim" : "mono") + '">' + (r.dir ? "—" : r.size) + '</td></tr>';
       h += '</tbody></table>';
       fs.innerHTML = h;
       panelRowHeight(fs, rows.length);
+      /* 直接绑到每一行。之前在 document / .win 上做委托实测都收不到事件，
+         绑在行上最直白也最可靠（表格重渲染时会重新绑）。 */
+      fs.querySelectorAll("tr[data-name]").forEach((tr) => {
+        if (tr.dataset.dir === "1") return;
+        tr.addEventListener("dblclick", () => {
+          const nm = tr.dataset.name;
+          ensureTerm();
+          sendCmd(/\.elf$/i.test(nm) ? "run " + nm : "cat " + nm);
+        });
+      });
     }
   }
 }
@@ -2234,7 +2311,6 @@ document.addEventListener("keydown", (e) => {
   }
   if (e.key === "Enter") { M._rv_uart_write(13); e.preventDefault(); }
   else if (e.key === "Backspace") { M._rv_uart_write(127); e.preventDefault(); }
-  else if (e.key === "Tab") { M._rv_uart_write(9); e.preventDefault(); }
   else if (e.target && e.target.id === "ime") { return; }   /* 普通字符走 input 事件 */
   else if (e.key.length >= 1 && [...e.key].length === 1) {
     for (const b of _enc.encode(e.key)) M._rv_uart_write(b);
@@ -2299,6 +2375,93 @@ try {
    这里把内核发布的状态整理成可直接消费的对象。 */
 window.rv = {
   get ready() { return !!(M && loaded); },
+
+  /* 宿主侧的全部可见状态。设计时就该把这些做成可读接口，
+     否则「点一下有没有反应」只能靠截图肉眼判断，回归测试写不出来。 */
+  get ui() {
+    const on = (id) => { const e = $(id); return !!(e && e.classList.contains("on")); };
+    const disp = (id) => { const e = $(id); return e ? getComputedStyle(e).display !== "none" : false; };
+    const hostWins = [...document.querySelectorAll(".host-win")].map((w) => ({
+      title: w.querySelector(".win-title").textContent,
+      visible: getComputedStyle(w).display !== "none",
+    }));
+    const ctx = $("ctxMenu");
+    return {
+      booted: !$("boot"),
+      drawer: document.body.classList.contains("drawer"),
+      startMenu: !!$("startMenu"),
+      trayPanel: on("trayPanel"),
+      snapPicker: on("snapPicker"),
+      snapGhost: on("snapGhost"),
+      ctxMenu: ctx && ctx.classList.contains("on")
+        ? [...ctx.querySelectorAll(".ctx-item")].map((e) => e.textContent) : null,
+      tip: on("tip") ? $("tip").textContent : null,
+      hostWins,
+      dockActive: [...document.querySelectorAll(".dock-app")].map((e) => e.classList.contains("active")),
+      iconCount: document.querySelectorAll(".dicon").length,
+      selectedIcons: [...document.querySelectorAll(".dicon.sel")].map((e) => e.dataset.app),
+      focusedWindow: (() => {
+        for (let i = 0; i < 3; i++) {
+          const el = document.querySelectorAll(".win")[i];
+          if (el && el.classList.contains("focused")) return i;
+        }
+        return -1;
+      })(),
+      snapClasses: [0, 1, 2].map((i) => {
+        const el = document.querySelectorAll(".win")[i];
+        return el ? el.className.split(" ").filter((c) => c.startsWith("snap-")) : [];
+      }),
+      termFontSize: (() => {
+        const e = document.querySelector(".term-dom");
+        return e ? parseFloat(getComputedStyle(e).fontSize) : null;
+      })(),
+      wallStyle: ($("wall") ? $("wall").style.background.slice(0, 24) : ""),
+      iconsVisible: disp("icons"),
+      clock: $("clock") ? $("clock").textContent : null,
+      rate: curRate,
+    };
+  },
+
+  /* 让测试能直接驱动 UI，而不必模拟鼠标轨迹 */
+  ui_open(id) { launch(id); return true; },
+  ui_startMenu(open) { if (open === undefined) open = !$("startMenu"); if (open) openStartMenu(); else closeStartMenu(); return !!$("startMenu"); },
+  ui_drawer(open) { toggleDrawer(open); return document.body.classList.contains("drawer"); },
+  ui_tray(open) { if (open) trayPanelShow(); else trayPanelHide(); return $("trayPanel").classList.contains("on"); },
+  ui_snapPicker(winIdx) { snapPickerShow(winIdx, document.querySelectorAll(".win")[winIdx].querySelector(".win-ctl .max")); return $("snapPicker").classList.contains("on"); },
+  ui_ctx(items, x, y) { showCtx(items, x, y); return $("ctxMenu").classList.contains("on"); },
+  ui_pickLayout(winIdx, layoutIdx, cellIdx) {
+    const cells = SNAP_LAYOUTS[layoutIdx];
+    if (!cells || !cells[cellIdx]) return false;
+    const [x, y, w, h] = cells[cellIdx];
+    setWinRect(winIdx, Math.round(x * 8), Math.round(y * 6), Math.round(w * 8), Math.round(h * 6));
+    if (M) sendWinCmd(winIdx * 10 + 5);   /* 选完布局把窗口提到最前 */
+    return true;
+  },
+  ui_clickIcon(app) { const e = document.querySelector('.dicon[data-app="' + app + '"]'); if (e) { e.click(); return true; } return false; },
+  ui_dblIcon(app) { const e = document.querySelector('.dicon[data-app="' + app + '"]'); if (e) { e.dispatchEvent(new MouseEvent("dblclick", { bubbles: true })); return true; } return false; },
+  ui_dblFile(name) {
+    const tr = [...document.querySelectorAll("tr[data-name]")].find((r) => r.dataset.name === name);
+    if (!tr) return false;
+    tr.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+    return true;
+  },
+  ui_winBtn(idx, which) {
+    const el = document.querySelectorAll(".win")[idx];
+    const b = el && el.querySelector(".win-ctl ." + which);
+    if (!b) return false;
+    b.click();
+    return true;
+  },
+  /* zone 除了 SNAP 里的 8 种，还接受 "restore"：还原到该窗口的默认尺寸。
+     应用布局的同时把窗口提到最前 —— 真实系统里选完布局，那个窗口就是焦点窗口，
+     否则用户点完布局发现窗口被别的窗口盖住了。 */
+  ui_snapTo(idx, zone) {
+    if (zone === "restore") { if (M) sendWinCmd(idx * 10 + 6); return true; }
+    if (!SNAP[zone]) return false;
+    setWinRect(idx, ...SNAP[zone]);
+    if (M) sendWinCmd(idx * 10 + 5);
+    return true;
+  },
   get state() {
     if (!M || !loaded) return { ready: false };
     const A = M.HEAPU32, ram = M._rv_ram_ptr();
@@ -2344,6 +2507,9 @@ window.rv = {
 
 /* ══ 启动序列 ══ */
 function startRvsim() {
+  let skipBoot = false;
+  try { skipBoot = localStorage.getItem("rvsim.skipBoot") === "1"; } catch (e) {}
+  if (skipBoot) { const b = $("boot"); if (b) b.remove(); }
   createRvsim().then((m) => {
     M = m;
     window.__rvsim = m;
@@ -2351,6 +2517,10 @@ function startRvsim() {
     iconsRender();
     dockRender();
     winInit();
+    /* 壁纸默认值写在 CSS 里，状态读不出来。开机就把它落成 inline style，
+       宿主和自动化都能直接读到当前用的是哪一档。 */
+    try { applyWallpaper(+(localStorage.getItem("rvsim.wall") || 0), false); }
+    catch (e) { applyWallpaper(0, false); }
     screenPointerBind();
     setProgress(8, "模拟器就绪，加载镜像…");
     bootUrl("images/kernel.elf", "mini-kernel");

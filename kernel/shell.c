@@ -792,6 +792,13 @@ void shell_start(void)
        用户打开系统应该先看到一个干净的终端，而不是一屏调试输出。 */
     { extern int g_term_silent; g_term_silent = 0; }
 
+    /* 横幅只在开机打一次。进程全部退出后 trap 会再次进入 shell_loop，
+       那里也调用本函数；如果每次都重印 MOTD，执行一条 run 就会看到
+       屏幕被开机信息顶满、刚才敲的命令被顶出可视区。 */
+    { static int banner_done = 0;
+      if (banner_done) { prompt(); return; }
+      banner_done = 1; }
+
     /* 只用字模表里有的字符和 ASCII：
        \xc2\xb7 这类 Latin-1 标点和全角逗号都不在 cjk16 字库里，
        写进去会被 term_grid_putc 丢掉，MOTD 就变成一串缺字的乱码。 */
