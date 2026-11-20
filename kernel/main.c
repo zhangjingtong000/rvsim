@@ -1397,6 +1397,9 @@ static void win_cmd_poll(void)
     u32 v = *cmd;
     if (!v || v == 0xFFFFFFFFu) return;
     *cmd = 0;
+    /* 命令字在宿主侧加了 1 偏移：idx=0 且 act=0（关闭第一个窗口）
+       打包出来正好是 0，和「没有命令」撞车，关闭操作会被静默丢掉。 */
+    v -= 1;
     u32 idx = v / 10u, act = v % 10u;
     if (idx >= 3) return;
     if (act == 6) {                  /* 6 = 还原到窗口的默认尺寸与位置 */

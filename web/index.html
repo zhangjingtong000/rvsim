@@ -150,6 +150,20 @@ input{font:inherit;color:inherit;background:none;border:0;outline:0}
   transition:background .1s,border-color .1s}
 .sl-cell:hover{background:rgba(45,212,191,.42);border-color:rgba(94,234,212,.7)}
 
+/* 右键菜单 */
+#ctxMenu{position:absolute;z-index:75;display:none;min-width:184px;padding:5px;
+  background:rgba(32,38,47,.97);
+  -webkit-backdrop-filter:blur(30px) saturate(180%);
+  backdrop-filter:blur(30px) saturate(180%);
+  border:1px solid var(--stroke);border-radius:var(--r-flyout);
+  box-shadow:var(--elev-3);animation:smIn .12s var(--ease-decel)}
+#ctxMenu.on{display:block}
+.ctx-item{padding:7px 12px;border-radius:var(--r-control);
+  font:400 13px/18px var(--font-ui);color:var(--t1);cursor:default;white-space:nowrap}
+.ctx-item:hover{background:rgba(255,255,255,.08)}
+.ctx-item.disabled{color:var(--t-disabled);pointer-events:none}
+.ctx-sep{height:1px;margin:4px 8px;background:var(--stroke)}
+
 /* 键盘焦点环：Win11 是贴边的 2px 白环，内缩 -2px 避免被 overflow 裁掉 */
 :focus-visible{outline:2px solid #FFFFFF;outline-offset:2px}
 .dicon:focus-visible,.dock-app:focus-visible,.dock-btn:focus-visible,
@@ -164,10 +178,13 @@ input{font:inherit;color:inherit;background:none;border:0;outline:0}
   box-shadow:0 1px 0 rgba(255,255,255,.05) inset,
              0 16px 40px -10px rgba(0,0,0,.62),
              0 2px 6px rgba(0,0,0,.35);
-  transition:box-shadow .16s var(--ease-decel),border-color .16s,
-             left .2s var(--ease-decel),top .2s var(--ease-decel),
-             width .2s var(--ease-decel),height .2s var(--ease-decel)}
-.win.dragging{transition:box-shadow .16s var(--ease-decel),border-color .16s}
+  transition:box-shadow .167s var(--ease-decel),border-color .167s,
+             left .167s var(--ease-decel),top .167s var(--ease-decel),
+             width .167s var(--ease-decel),height .167s var(--ease-decel)}
+.win.dragging{transition:box-shadow .167s var(--ease-decel),border-color .167s}
+/* 关闭：淡出 + 轻微缩小（Win11 关闭动画的观感） */
+.win.closing{opacity:0;transform:scale(.97);
+  transition:opacity .12s var(--ease-accel),transform .12s var(--ease-accel)}
 .win.focused{border-color:rgba(94,234,212,.32);
   box-shadow:0 1px 0 rgba(255,255,255,.07) inset,
              0 26px 60px -12px rgba(0,0,0,.75),
@@ -280,7 +297,7 @@ input{font:inherit;color:inherit;background:none;border:0;outline:0}
   backdrop-filter:blur(40px) saturate(180%);
   border:1px solid var(--stroke);border-radius:var(--r-flyout);box-shadow:var(--elev-3);
   font:400 14px/20px var(--font-ui);color:var(--t1);
-  animation:smIn .16s var(--ease-decel)}
+  animation:smIn .25s var(--ease-decel)}
 @keyframes smIn{from{opacity:0;transform:translateX(-50%) translateY(10px) scale(.985)}
   to{opacity:1;transform:translateX(-50%) translateY(0) scale(1)}}
 .sm-search{display:flex;align-items:center;gap:10px;height:32px;
@@ -452,6 +469,7 @@ body.drawer #drawer{transform:translateX(0)}
   <div id="icons"></div>
   <div id="snapGhost"></div>
   <div id="snapPicker"></div>
+  <div id="ctxMenu"></div>
   <div id="winlayer"></div>
 
   <div id="dock">
@@ -699,7 +717,7 @@ function launch(id) {
   if (!app) return;
   if (app.w >= 0) {
     if (!M) return;
-    M.HEAPU32[guestOff(WIN_CMD_PA)] = app.w * 10 + 5;   /* 5 = 恢复并聚焦 */
+    sendWinCmd(app.w * 10 + 5);   /* 5 = 恢复并聚焦 */
     hostWinClose(id === "settings" ? "" : "");
   } else {
     hostWinToggle(id);
@@ -984,6 +1002,13 @@ const SNAP_EDGE = 26;
 /* 吸附判定用屏幕像素，不是逻辑坐标：鼠标走到窗口最左缘时，
    换算出来的逻辑坐标是负的（桌面等比居中，四周有留白），
    拿它跟 0 比永远不成立。底部不吸附 —— Win11 底部是任务栏。 */
+/* 窗口命令字统一入口。值加 1：idx=0/act=0 打包成 0 会被内核当成「无命令」，
+   关闭第一个窗口的命令就永远发不出去。 */
+function sendWinCmd(v) {
+  if (!M) return;
+  M.HEAPU32[guestOff(WIN_CMD_PA)] = v + 1;
+}
+
 function snapZonePx(px, py, W, H) {
   if (px < 0 || py < 0 || px > W || py > H) return null;
   const L = px <= SNAP_EDGE, R = px >= W - SNAP_EDGE;
@@ -1083,6 +1108,35 @@ function snapPickerHide() {
   snapHide();
 }
 
+/* ── 右键菜单 ── */
+function showCtx(items, cx, cy) {
+  const m = $("ctxMenu");
+  if (!m) return;
+  m.innerHTML = "";
+  for (const it of items) {
+    if (it === "-") {
+      const d = document.createElement("div");
+      d.className = "ctx-sep";
+      m.appendChild(d);
+      continue;
+    }
+    const d = document.createElement("div");
+    d.className = "ctx-item" + (it.disabled ? " disabled" : "");
+    d.textContent = it.label;
+    if (!it.disabled) d.onclick = () => { hideCtx(); it.action(); };
+    m.appendChild(d);
+  }
+  m.classList.add("on");
+  const osR = desk().getBoundingClientRect();
+  const w = m.offsetWidth || 190, h = m.offsetHeight || 120;
+  m.style.left = Math.max(4, Math.min(cx - osR.left, osR.width - w - 8)) + "px";
+  m.style.top = Math.max(4, Math.min(cy - osR.top, osR.height - h - 8)) + "px";
+}
+function hideCtx() {
+  const m = $("ctxMenu");
+  if (m) m.classList.remove("on");
+}
+
 /* 窗口位置回写：只挪位置 / 位置+尺寸（吸附） */
 function setWinPos(i, x, y) {
   if (!M) return;
@@ -1151,7 +1205,7 @@ function winInit() {
       ev.stopPropagation();          /* 别再让 #os 给内核发一次按下 */
       if (!M) return;
       /* 点标题栏同时聚焦该窗口 */
-      M.HEAPU32[guestOff(WIN_CMD_PA)] = i * 10 + 5;
+      sendWinCmd(i * 10 + 5);
 
       const r = el.getBoundingClientRect();
       const osR = desk().getBoundingClientRect();
@@ -1206,7 +1260,7 @@ function winInit() {
     /* 双击标题栏最大化/还原（Win11 标准行为） */
     bar.addEventListener("dblclick", (ev) => {
       if (ev.target.closest(".win-ctl")) return;
-      if (M) M.HEAPU32[guestOff(WIN_CMD_PA)] = i * 10 + 2;
+      if (M) sendWinCmd(i * 10 + 2);
     });
 
     /* 窗控按钮：直接下发命令字，不让前端重算命中坐标
@@ -1229,17 +1283,59 @@ function winInit() {
       b.addEventListener("click", (ev) => {
         ev.stopPropagation();
         if (!M) return;
-        M.HEAPU32[guestOff(WIN_CMD_PA)] = i * 10 + (+b.dataset.act);
+        const act = +b.dataset.act;
+        if (act === 0) {
+          /* 关闭先播 120ms 动画，否则窗口是「啪」地消失 */
+          el.classList.add("closing");
+          setTimeout(() => {
+            el.classList.remove("closing");
+            sendWinCmd(i * 10 + 0);
+          }, 120);
+        } else {
+          sendWinCmd(i * 10 + act);
+        }
       });
+    });
+
+    /* 标题栏右键：窗口菜单 */
+    bar.addEventListener("contextmenu", (ev) => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      showCtx([
+        { label: "还原", action: () => { sendWinCmd(i * 10 + 6); } },
+        { label: "最小化", action: () => { sendWinCmd(i * 10 + 1); } },
+        { label: "最大化", action: () => { sendWinCmd(i * 10 + 2); } },
+        "-",
+        { label: "关闭", action: () => {
+            el.classList.add("closing");
+            setTimeout(() => {
+              el.classList.remove("closing");
+              sendWinCmd(i * 10 + 0);
+            }, 120);
+          } },
+      ], ev.clientX, ev.clientY);
     });
   }
   $("startBtn").onclick = (e) => { e.stopPropagation(); openStartMenu(); };
   $("dbgBtn").onclick = (e) => { e.stopPropagation(); toggleDrawer(); };
   $("dwClose").onclick = () => toggleDrawer(false);
 
+  /* 桌面右键菜单 */
+  desk().addEventListener("contextmenu", (ev) => {
+    if (ev.target.closest(".win,#dock,#startMenu,#drawer")) return;
+    ev.preventDefault();
+    showCtx([
+      { label: "刷新", action: () => { iconsRender(); } },
+      "-",
+      { label: "显示设置", action: () => launch("settings") },
+      { label: "关于本机", action: () => launch("about") },
+    ], ev.clientX, ev.clientY);
+  });
+
   /* 点桌面空白处关开始菜单 */
   desk().addEventListener("pointerdown", (e) => {
     if (!e.target.closest("#startMenu") && !e.target.closest("#startBtn")) closeStartMenu();
+    if (!e.target.closest("#ctxMenu")) hideCtx();
   }, true);
 }
 
@@ -1953,7 +2049,7 @@ document.addEventListener("keydown", (e) => {
       const ws = window.rv.state.wins;
       const i = ws.findIndex((w) => w.focused && w.visible);
       if (i >= 0) {
-        if (z === "restore") M.HEAPU32[guestOff(WIN_CMD_PA)] = i * 10 + 6;
+        if (z === "restore") sendWinCmd(i * 10 + 6);
         else setWinRect(i, ...SNAP[z]);
       }
       return;
@@ -2068,8 +2164,8 @@ window.rv = {
     return true;
   },
   launch(id) { launch(id); return true; },
-  closeWin(i) { if (M) M.HEAPU32[guestOff(WIN_CMD_PA)] = i * 10 + 0; },
-  focusWin(i) { if (M) M.HEAPU32[guestOff(WIN_CMD_PA)] = i * 10 + 5; },
+  closeWin(i) { if (M) sendWinCmd(i * 10 + 0); },
+  focusWin(i) { if (M) sendWinCmd(i * 10 + 5); },
   drawer(on) { toggleDrawer(on); },
 };
 
