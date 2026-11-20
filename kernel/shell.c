@@ -39,7 +39,9 @@ static const char *user_name(u32 uid)
     return (uid < NUSERS) ? g_user_names[uid] : "?";
 }
 
-static void prompt(void) { uart_puts("\nrvsh> "); }
+/* 提示符本身不带换行：每条命令执行完，回显或命令输出已经落了行尾，
+   再补一个 \n 就多出空行（clear 之后第一行永远空着）。 */
+static void prompt(void) { uart_puts("rvsh> "); }
 
 static int streq(const char *a, const char *b)
 {
@@ -298,8 +300,12 @@ static void cmd_restore(const char *line)
 void shell_input(char ch)
 {
     if (ch == '\r' || ch == '\n') {
+        /* @ 开头的行是调试面板的内部查询，对用户终端必须零痕迹：
+           连回车换行和随后的提示符都不该写进网格，否则按一次 F12
+           就会在终端里留下几行空白。 */
+        int was_quiet = g_input_at;
         g_line[g_len] = 0;
-        uart_putc('\n');
+        if (!was_quiet) uart_putc('\n');
 
         /* 解析 "cmd > file"：把 > 之后的部分当文件名，命令部分留给分派 */
         {
@@ -737,7 +743,9 @@ extern int g_term_silent;
             }
         }
         g_len = 0;
-        prompt();
+        { extern int g_term_silent; g_term_silent = 0; }
+        if (!was_quiet) prompt();
+        g_input_at = 0;
     } else if (ch == 0x7F || ch == 0x08) {   /* 退格 */
         if (g_len > 0) { g_len--; uart_puts("\b \b"); }
     } else if (g_len < SHELL_BUF - 1 && (u8)ch >= 0x20 && g_input_at) {
@@ -780,10 +788,33 @@ shell_done:
 
 void shell_start(void)
 {
-    uart_puts("\n=== rvsh ===\n");
+    /* 内核启动阶段的所有日志只走 UART，不进窗口网格：
+       用户打开系统应该先看到一个干净的终端，而不是一屏调试输出。 */
+    { extern int g_term_silent; g_term_silent = 0; }
+
+    /* 只用字模表里有的字符和 ASCII：
+       \xc2\xb7 这类 Latin-1 标点和全角逗号都不在 cjk16 字库里，
+       写进去会被 term_grid_putc 丢掉，MOTD 就变成一串缺字的乱码。 */
+    uart_puts("  rvsim 0.9   RISC-V RV32IMA   M/S/U   Sv32\n");
+    uart_puts("  64 MiB RAM   UART 115200 8N1   RAMFS\n");
     /* 明确声明这不是 POSIX shell：实测模型会本能地写 ps -ef、log | tail，
        然后连错好几轮。声明一次比纠正五次便宜。 */
-    if (ADV) uart_puts("简易 shell（非 POSIX，不支持管道/重定向），输入 manifest 查看能力\n");
-    else     uart_puts("简易 shell（非 POSIX，不支持管道/重定向），输入 help 查看命令\n");
+    uart_puts("  输入 help 查看命令");
+    if (ADV) uart_puts("  /  manifest 输出能力清单 JSON");
+    uart_puts("\n\n");
+
+    /* 常用命令速查：一个空终端只有提示符，用户第一眼不知道该敲什么。
+       真实登录 shell 靠 MOTD 解决这件事，这里照做。 */
+    /* 每行不超过 57 列：网格是 61 列，写满会触发自动折行，
+       折出来的尾巴（比如单独一个 s）看着像 bug。 */
+    uart_puts("  help      list all commands     ps     process table\n");
+    uart_puts("  ls        files in RAMFS        mem    memory / faults\n");
+    uart_puts("  run <f>   run a user program    log    recent events\n");
+    uart_puts("  fork      spawn a child         snap   snapshot machine\n");
+    uart_puts("  cat <f>   show file content     rm     delete a file\n");
+    uart_puts("  mkdir <d> create a directory    chmod  permissions\n");
+    uart_puts("  write <f> create a file         tail   recent output\n");
+    uart_puts("  guide     full walkthrough      manifest  capabilities\n");
+    uart_puts("\n");
     prompt();
 }

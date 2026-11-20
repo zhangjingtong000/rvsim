@@ -45,26 +45,20 @@ static u32 g_row_seq[TERM_ROWS];   /* 每行内容版本号，给宿主做增量
 static u8   g_term_dirty[TERM_ROWS];
 static u32  g_term_cx, g_term_cy;
 
-/* 终端网格画在窗口自己的内容画布上，原点就是画布内的留白 */
-#define TERM_BUF_W 512
-#define TERM_BUF_H 384
-extern u32 *kernel_term_buf(void);
-#define TERM_ORIGIN_X 10
-#define TERM_ORIGIN_Y 10
 
+/* 清空网格。
+   关键：必须逐行递增 g_row_seq —— 宿主是按行版本号做增量渲染的，
+   只把格子写成空格而不改版本号，宿主会认为「这一行没变」直接跳过，
+   表现就是 clear 命令毫无反应（终端里还挂着上一屏内容）。 */
 void term_grid_reset(void)
 {
     for (u32 y = 0; y < TERM_ROWS; y++) {
         for (u32 x = 0; x < TERM_COLS; x++) g_term[y][x] = ' ';
-        g_term_dirty[y] = 0;          /* 直接清屏，不靠 flush（flush 跳过空格） */
+        g_term_dirty[y] = 0;
+        g_row_seq[y]++;
     }
     g_term_cx = 0;
     g_term_cy = 0;
-
-    u32 *buf = kernel_term_buf();
-    fb_rect(buf, TERM_BUF_W, TERM_BUF_H, TERM_BUF_W,
-            TERM_ORIGIN_X, TERM_ORIGIN_Y,
-            TERM_COLS * 8, TERM_ROWS * 16, 0x12161d);
 }
 
 /* 在字模表里查码点；返回索引，找不到返回 -1 */
@@ -185,10 +179,13 @@ void term_grid_dump(void)
     }
 }
 
-/* 把所有行标记为脏，供整屏重画时调用 */
+/* 把每一行都标记为「变了」，让宿主整块重画 */
 void term_grid_redraw_all(void)
 {
-    for (u32 y = 0; y < TERM_ROWS; y++) g_term_dirty[y] = 1;
+    for (u32 y = 0; y < TERM_ROWS; y++) {
+        g_term_dirty[y] = 1;
+        g_row_seq[y]++;
+    }
 }
 
 /* 供宿主读取的网格入口（真字体渲染用） */
@@ -199,36 +196,6 @@ u32  term_rows(void)        { return TERM_ROWS; }
 u32  term_cursor_x(void)    { return g_term_cx; }
 u32  term_cursor_y(void)    { return g_term_cy; }
 
-u32 term_grid_flush(void)
-{
-    u32 dirty = 0;
-    u32 *buf = kernel_term_buf();
-    for (u32 y = 0; y < TERM_ROWS; y++) {
-        if (!g_term_dirty[y]) continue;
-        g_term_dirty[y] = 0;
-        dirty++;
-        /* 先清整行背景：否则旧字符不会被擦掉，新内容叠在旧内容上变成乱码 */
-        fb_rect(buf, TERM_BUF_W, TERM_BUF_H, TERM_BUF_W,
-                TERM_ORIGIN_X, TERM_ORIGIN_Y + y * 16,
-                TERM_COLS * 8, 16, 0x12161d);
-        for (u32 x = 0; x < TERM_COLS; x++) {
-            u32 cp = g_term[y][x];
-            if (cp == 0 || cp == ' ') continue;
-            if (cp == 0xFFFFFFFFu) continue;          /* 宽字符右半格，左边已画 */
-            if (cp > 127) {
-                cjk_draw(buf, TERM_BUF_W, TERM_ORIGIN_X + x * 8,
-                         TERM_ORIGIN_Y + y * 16, cp, 0xc9d1d9, 0x12161d, 1);
-                continue;
-            }
-            char ch = (char)cp;
-            u32 fg = (ch == '>') ? 0x5eead4 : ((ch == '?') ? 0xf87171 : 0xc9d1d9);
-            fb_char(buf, TERM_BUF_W, TERM_BUF_H, TERM_BUF_W,
-                    TERM_ORIGIN_X + x * 8, TERM_ORIGIN_Y + y * 16,
-                    ch, fg, 0x12161d, 0);
-        }
-    }
-    return dirty;
-}
 static u32 g_last_mouse_ev, g_last_key_ev;
 
 typedef struct {

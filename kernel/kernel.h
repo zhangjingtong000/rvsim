@@ -85,7 +85,6 @@ int  fb_mouse_pos(u32 *x, u32 *y, u32 *btn, u32 *ev);
 void fb_cursor(u32 x, u32 y, u32 on);
 void term_grid_reset(void);
 int  term_grid_putc(char c);
-u32  term_grid_flush(void);
 void term_grid_redraw_all(void);
 extern u32 g_fb_w, g_fb_h;
 

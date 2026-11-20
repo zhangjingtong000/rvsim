@@ -413,10 +413,18 @@ void status_json(int at_prompt)
    手写的那份和 manifest 不同步，顺序也不一致。 */
 void cap_help(void)
 {
+    /* 按列排版：终端是 61 列，一整串命令名折行后会把单词从中间切断，
+       读起来像乱码。这里每行最多 5 个，列宽按最长名字对齐。 */
     u32 n = (u32)(sizeof(g_caps) / sizeof(g_caps[0]));
-    kprintf("命令:");
-    for (u32 i = 0; i < n; i++) kprintf(" %s", g_caps[i].name);
-    kprintf("\n");
+    kprintf("命令（共 %d 条）:\n", (int)n);
+    for (u32 i = 0; i < n; i++) {
+        int len = 0;
+        const char *nm = g_caps[i].name;
+        while (nm[len]) len++;
+        kprintf("  %s", nm);
+        for (int pad = len; pad < 12; pad++) kprintf(" ");
+        if ((i % 5) == 4 || i + 1 == n) kprintf("\n");
+    }
 }
 
 /* ── 面向 AI 的使用指南 ──
@@ -949,61 +957,28 @@ static void fs_seed(void)
 #define C_TERM    0x12161d
 #define C_TEXT    0xc9d1d9
 
-#define WIN_TERM_X 18
-#define WIN_TERM_Y 46
-#define WIN_TERM_W 500
-#define WIN_TERM_H 384
+/* 逻辑桌面 800x600。右侧两窗对齐同一条竖边（568+216=784），
+   终端与它们之间留 24 的逻辑间隙，最大化时也不会压到 dock。 */
+#define WIN_TERM_X 64
+#define WIN_TERM_Y 48
+#define WIN_TERM_W 480
+#define WIN_TERM_H 420
 
-#define WIN_MON_X  530
-#define WIN_MON_Y  46
-#define WIN_MON_W  252
-#define WIN_MON_H  190
+#define WIN_MON_X 568
+#define WIN_MON_Y 48
+#define WIN_MON_W 216
+#define WIN_MON_H 170
 
-#define WIN_FS_X   530
-#define WIN_FS_Y   248
-#define WIN_FS_W   252
-#define WIN_FS_H   182
+#define WIN_FS_X 568
+#define WIN_FS_Y 230
+#define WIN_FS_W 216
+#define WIN_FS_H 238
 
-#define TASKBAR_H  30
+#define TASKBAR_H  0     /* dock 由宿主画，不占逻辑桌面 */
 
-static void win_frame(u32 *buf, u32 x, u32 y, u32 w, u32 h, const char *title, int focused)
-{
-    /* 外框 + 标题栏 */
-    fb_rect(buf, 800, 600, 800, x, y, w, h, C_PANEL);
-    fb_frame(buf, 800, 600, 800, x, y, w, h, focused ? C_ACC : C_LINE);
-    fb_rect(buf, 800, 600, 800, x + 1, y + 1, w - 2, 22, focused ? 0x171b21 : 0x12151a);
-    fb_rect(buf, 800, 600, 800, x + 1, y + 23, w - 2, 1, C_LINE2);
-    fb_text(buf, 800, 600, 800, x + 8, y + 4, title, focused ? C_FG : C_FG2, 0, 0);
-    /* 三个窗控圆点：红=关闭 黄=最小化 绿=最大化（暂不可点，但语义可辨） */
-    {
-        static const u32 dot[3] = { 0xef5350, 0xffca28, 0x66bb6a };
-        for (int i = 0; i < 3; i++) {
-            u32 bx = x + w - 20 - i * 13;
-            fb_round_rect(buf, 800, 600, 800, bx, y + 8, 9, 9, dot[i]);
-        }
-    }
-}
 
 /* 把秒数画成 HH:MM:SS，只重画这一小块（8 字符 ~1.6k 指令） */
-/* 极简 itoa：内核没有 libc */
-static int itoa_u32(u32 v, char *out)
-{
-    char tmp[12];
-    int n = 0;
-    if (v == 0) { out[0] = '0'; out[1] = 0; return 1; }
-    while (v) { tmp[n++] = (char)('0' + v % 10u); v /= 10u; }
-    for (int i = 0; i < n; i++) out[i] = tmp[n - 1 - i];
-    out[n] = 0;
-    return n;
-}
 
-static void hex_u32(u32 v, char *out)
-{
-    const char *d = "0123456789abcdef";
-    out[0] = '0'; out[1] = 'x';
-    for (int i = 0; i < 8; i++) out[2 + i] = d[(v >> (28 - i * 4)) & 0xF];
-    out[10] = 0;
-}
 
 #define MON_BODY_X 10
 #define MON_BODY_Y 10
@@ -1033,9 +1008,6 @@ win_rect_t *kernel_win0(void) { return (win_rect_t *)&g_wins[0]; }
 #define WINBUF_SIDE_W  300
 #define WINBUF_SIDE_H  210
 
-static u32 g_buf_term[WINBUF_TERM_W * WINBUF_TERM_H];
-static u32 g_buf_mon[WINBUF_SIDE_W * WINBUF_SIDE_H];
-static u32 g_buf_fs[WINBUF_SIDE_W * WINBUF_SIDE_H];
 
 /* 宿主读这张表来摆窗口 */
 typedef struct {
@@ -1055,113 +1027,16 @@ typedef struct {
 
 static void win_info_init(void)
 {
-    g_win_info[0].buf = (u32)g_buf_term; g_win_info[0].w = WINBUF_TERM_W; g_win_info[0].h = WINBUF_TERM_H;
+    g_win_info[0].buf = 0; g_win_info[0].w = WINBUF_TERM_W; g_win_info[0].h = WINBUF_TERM_H;
     g_win_info[0].title = (u32)"Terminal";
-    g_win_info[1].buf = (u32)g_buf_mon; g_win_info[1].w = WINBUF_SIDE_W; g_win_info[1].h = WINBUF_SIDE_H;
+    g_win_info[1].buf = 0; g_win_info[1].w = WINBUF_SIDE_W; g_win_info[1].h = WINBUF_SIDE_H;
     g_win_info[1].title = (u32)"Monitor";
-    g_win_info[2].buf = (u32)g_buf_fs; g_win_info[2].w = WINBUF_SIDE_W; g_win_info[2].h = WINBUF_SIDE_H;
+    g_win_info[2].buf = 0; g_win_info[2].w = WINBUF_SIDE_W; g_win_info[2].h = WINBUF_SIDE_H;
     g_win_info[2].title = (u32)"Files";
 }
 
-/* 启动时把三块内容画布填满底色。
-   不填的话，没有被绘制到的区域是 BSS 的 0（纯黑），
-   在窗口里表现为一圈黑边。 */
-void win_buf_init(void)
-{
-    for (u32 i = 0; i < WINBUF_TERM_W * WINBUF_TERM_H; i++) g_buf_term[i] = 0x12161d;
-    for (u32 i = 0; i < WINBUF_SIDE_W * WINBUF_SIDE_H; i++) g_buf_mon[i] = 0x12161d;
-    for (u32 i = 0; i < WINBUF_SIDE_W * WINBUF_SIDE_H; i++) g_buf_fs[i] = 0x12161d;
-}
 
 u32 kernel_win_info(void) { return (u32)g_win_info; }
-u32 *kernel_term_buf(void) { return g_buf_term; }
-
-static void monitor_draw(void)
-{
-    if (!g_wins[1].visible) return;
-    u32 *buf = g_buf_mon;
-    const u32 BW = WINBUF_SIDE_W, BH = WINBUF_SIDE_H;
-    const u32 line = 16;
-    u32 y = MON_BODY_Y;
-
-    fb_rect(buf, BW, BH, BW, 0, 0, BW, BH, 0x12161d);
-    fb_text(buf, BW, BH, BW, MON_BODY_X, y, "PID STATE  PC", C_FG3, C_TERM, 1);
-    y += line;
-
-    char num[12], hx[12];
-    for (int i = 0; i < NPROC && y + 16 < BH - 6; i++) {
-        if (procs[i].stack_pa == 0) continue;
-        char rowbuf[32];
-        int k = 0;
-        itoa_u32((u32)i, num);
-        for (int j = 0; num[j]; j++) rowbuf[k++] = num[j];
-        while (k < 4) rowbuf[k++] = ' ';
-        const char *st = (procs[i].state == PROC_RUN) ? "RUN  " :
-                         (procs[i].state == PROC_READY) ? "READY" : "EXIT ";
-        for (int j = 0; j < 5; j++) rowbuf[k++] = st[j];
-        rowbuf[k++] = ' ';
-        hex_u32(procs[i].pc, hx);
-        for (int j = 0; j < 10; j++) rowbuf[k++] = hx[j];
-        rowbuf[k] = 0;
-        u32 col = (procs[i].state == PROC_RUN) ? C_ACC : C_TEXT;
-        fb_text(buf, BW, BH, BW, MON_BODY_X, y, rowbuf, col, C_TERM, 1);
-        y += line;
-    }
-
-    /* 下半部分补统计信息：不然窗口空一大片，看着像没画完 */
-    y += 10;
-    if (y + 16 < BH - 6) {
-        char b[24]; int k = 0;
-        const char *t1 = "events ";
-        for (int j = 0; t1[j]; j++) b[k++] = t1[j];
-        itoa_u32((u32)evt_count_all(), b + k); k = 0;
-        while (b[k]) k++;
-        fb_text(buf, BW, BH, BW, MON_BODY_X, y, b, C_FG3, C_TERM, 1);
-        y += line;
-    }
-    if (y + 16 < BH - 6) {
-        char b[24]; int k = 0;
-        const char *t2 = "files  ";
-        for (int j = 0; t2[j]; j++) b[k++] = t2[j];
-        itoa_u32(fs_count(), b + k); k = 0;
-        while (b[k]) k++;
-        fb_text(buf, BW, BH, BW, MON_BODY_X, y, b, C_FG3, C_TERM, 1);
-        y += line;
-    }
-}
-
-#define FS_BODY_X 10
-#define FS_BODY_Y 10
-
-/* 文件窗口：显示的是真实的 RAMFS 内容 */
-static void files_draw(void)
-{
-    if (!g_wins[2].visible) return;
-    u32 *buf = g_buf_fs;
-    const u32 BW = WINBUF_SIDE_W, BH = WINBUF_SIDE_H;
-    const u32 line = 16;
-    u32 y = FS_BODY_Y;
-
-    fb_rect(buf, BW, BH, BW, 0, 0, BW, BH, 0x12161d);
-    fb_text(buf, BW, BH, BW, FS_BODY_X, y, "NAME          SIZE", C_FG3, C_TERM, 1);
-    y += line;
-
-    char nm[24]; u32 sz; char num[12];
-    for (u32 i = 0; i < 16 && y + 16 < BH - 6; i++) {
-        if (!fs_entry(i, nm, sizeof(nm), &sz)) continue;
-        if (nm[0] == 0) continue;
-        char rowbuf[40];
-        int k = 0;
-        for (int j = 0; nm[j] && k < 20; j++) rowbuf[k++] = nm[j];
-        while (k < 20) rowbuf[k++] = ' ';
-        itoa_u32(sz, num);
-        for (int j = 0; num[j]; j++) rowbuf[k++] = num[j];
-        rowbuf[k] = 0;
-        fb_text(buf, BW, BH, BW, FS_BODY_X, y, rowbuf,
-                fs_entry_type(i) == 1 ? C_ACC : C_TEXT, C_TERM, 1);
-        y += line;
-    }
-}
 
 /* ── 窗口表与鼠标交互 ── */
 static int  g_focus = 0;
@@ -1202,13 +1077,13 @@ static u32  g_ol_x = 0, g_ol_y = 0;
 static void wins_init(void)
 {
     g_wins[0].x = WIN_TERM_X; g_wins[0].y = WIN_TERM_Y;
-    g_wins[0].w = WINBUF_TERM_W; g_wins[0].h = WINBUF_TERM_H;
+    g_wins[0].w = WIN_TERM_W; g_wins[0].h = WIN_TERM_H;
     g_wins[0].title = "rvsh - terminal";
     g_wins[1].x = WIN_MON_X; g_wins[1].y = WIN_MON_Y;
-    g_wins[1].w = WINBUF_SIDE_W; g_wins[1].h = WINBUF_SIDE_H;
+    g_wins[1].w = WIN_MON_W; g_wins[1].h = WIN_MON_H;
     g_wins[1].title = "monitor";
     g_wins[2].x = WIN_FS_X; g_wins[2].y = WIN_FS_Y;
-    g_wins[2].w = WINBUF_SIDE_W; g_wins[2].h = WINBUF_SIDE_H;
+    g_wins[2].w = WIN_FS_W; g_wins[2].h = WIN_FS_H;
     g_wins[2].title = "files";
     for (int i = 0; i < 3; i++) {
         g_wins[i].visible = 1;
@@ -1234,29 +1109,6 @@ static void win_paint_chrome(int idx)
 }
 
 /* 只重画任务栏那三个 chip（很便宜），让高亮跟焦点联动 */
-/* 开始菜单：从任务栏 rvsh 按钮弹出，条目点击后聚焦对应窗口 */
-static void menu_draw(void)
-{
-    u32 *buf = (u32 *)FB_BASE;
-    u32 mx = 8, my = 600 - TASKBAR_H - 168, mw = 208, mh = 166;
-
-    fb_round_rect(buf, 800, 600, 800, mx, my, mw, mh, 0x141920);
-    fb_frame(buf, 800, 600, 800, mx, my, mw, mh, 0x2b3644);
-    /* 顶部标题 */
-    fb_rect(buf, 800, 600, 800, mx + 1, my + 1, mw - 2, 22, 0x1a222c);
-    fb_text(buf, 800, 600, 800, mx + 10, my + 4, "rvsim 0.9", C_ACC, 0x1a222c, 1);
-
-    static const char *items[4] = { "Terminal", "Monitor", "Files", "About" };
-    for (int i = 0; i < 4; i++) {
-        u32 iy = my + 28 + i * 30;
-        fb_text(buf, 800, 600, 800, mx + 12, iy + 6, items[i], C_FG, 0x141920, 1);
-        if (i < 3) {
-            /* 右侧显示对应窗口序号，提示点它会聚焦哪个窗口 */
-            char idx[2] = { (char)('1' + i), 0 };
-            fb_text(buf, 800, 600, 800, mx + mw - 22, iy + 6, idx, C_FG3, 0x141920, 1);
-        }
-    }
-}
 
 /* 菜单点击：返回 1 表示点击被菜单消费 */
 static int menu_click(u32 mx_, u32 my_)
@@ -1384,6 +1236,7 @@ static void win_apply_action(int idx, int act)
             if (g_wins[i].visible) { g_focus = i; break; }
     } else {                             /* 最大化 / 还原 */
         win_raise(idx);
+        g_focus = idx;                   /* 点窗控按钮也意味着要看这个窗口 */
         if (!w->maximized) {
             w->rx = w->x; w->ry = w->y; w->rw = w->w; w->rh = w->h;
             w->x = 0; w->y = 0;
@@ -1426,6 +1279,77 @@ typedef struct {
 } term_sync_t;
 
 #define TERM_SYNC_PTR ((term_sync_t *)TERM_SYNC_PA)
+
+/* ── 进程表 / 文件表导出 ──
+   Monitor 和 Files 也改用 DOM 渲染（和终端一致，避免一半真字体一半点阵）。
+   放在 0x83FD0000 / 0x83FD1000，与终端网格（0x83FE0000）分开。 */
+#define PROC_SYNC_PA 0x83FD0000u
+#define FILE_SYNC_PA 0x83FD1000u
+#define SYS_SYNC_PA  0x83FD2000u
+
+typedef struct {
+    u32 pid, state, pc, sp, live;
+} proc_row_t;              /* 20 B */
+
+typedef struct {
+    char name[24];
+    u32 size, type, owner, mode;
+} file_row_t;              /* 40 B */
+
+/* 系统状态：托盘上的速率、Monitor 里的负载都从这里来，
+   宿主不再靠抓 UART 文本猜。 */
+typedef struct {
+    u32 magic;      /* 'SYS1' */
+    u32 cycles_lo;  /* 低 32 位周期数 */
+    u32 cycles_hi;
+    u32 uptime_s;   /* 秒 */
+    u32 nproc;
+    u32 nfile;
+    u32 nrun;
+    u32 boot_ms;    /* 内核认为的启动时刻（宿主用来算 uptime） */
+} sys_sync_t;
+
+static proc_row_t *g_proc_rows = (proc_row_t *)PROC_SYNC_PA;
+static file_row_t *g_file_rows = (file_row_t *)FILE_SYNC_PA;
+static sys_sync_t *g_sys = (sys_sync_t *)SYS_SYNC_PA;
+
+void panel_sync_publish(void)
+{
+    u32 nrun = 0, nlive = 0;
+    for (int i = 0; i < NPROC; i++) {
+        g_proc_rows[i].pid = (u32)i;
+        g_proc_rows[i].state = (u32)procs[i].state;
+        g_proc_rows[i].pc = procs[i].pc;
+        g_proc_rows[i].sp = procs[i].sp;
+        g_proc_rows[i].live = procs[i].stack_pa ? 1u : 0u;
+        if (procs[i].stack_pa) {
+            nlive++;
+            if (procs[i].state == PROC_RUN) nrun++;
+        }
+    }
+    u32 nfile = 0;
+    for (u32 i = 0; i < 32; i++) {
+        char nm[24]; u32 sz = 0;
+        if (i < 16 && fs_entry(i, nm, sizeof(nm), &sz)) {
+            for (int k = 0; k < 24; k++) g_file_rows[i].name[k] = nm[k];
+            g_file_rows[i].size = sz;
+            g_file_rows[i].type = (u32)fs_entry_type(i);
+            g_file_rows[i].owner = 0;
+            g_file_rows[i].mode = 0;
+            nfile++;
+        } else {
+            g_file_rows[i].name[0] = 0;
+        }
+    }
+    g_sys->magic = 0x53595331u;   /* 'SYS1' */
+    g_sys->cycles_lo = 0;
+    g_sys->cycles_hi = 0;
+    g_sys->uptime_s = 0;
+    g_sys->nproc = nlive;
+    g_sys->nfile = nfile;
+    g_sys->nrun = nrun;
+    g_sys->boot_ms = 0;
+}
 
 /* 每轮把网格元信息发布给宿主（几十条指令，可以每轮做） */
 void term_sync_publish(void)
@@ -1618,24 +1542,16 @@ static void desktop_clock(u32 secs)
    内核仍然负责内容的每一个像素：终端文字、进程表、文件列表。 */
 void desktop_redraw(void)
 {
-    if (g_wins[0].visible) {
-        extern void term_grid_redraw_all(void);
-        extern u32 term_grid_flush(void);
-        term_grid_redraw_all();
-        term_grid_flush();
-    }
-    if (g_wins[1].visible) monitor_draw();
-    if (g_wins[2].visible) files_draw();
-
+    /* 内核不画像素：窗口内容以结构化数据发布（终端字符网格 /
+       进程表 / 文件表），外壳和文字全部由宿主用真实字体渲染。
+       曾经这里每帧软件光栅化 800x600，一次 0.4-0.7 秒，
+       期间读不到鼠标事件，约三分之一点击被吞掉。 */
     win_info_sync();
 }
 
-/* 轻量刷新：只重画内容，不标记脏行（给周期/事件驱动的更新用） */
+/* 轻量刷新：只同步窗口元数据（位置/焦点/z 序）。 */
 void desktop_refresh(void)
 {
-    if (g_wins[1].visible) monitor_draw();
-    if (g_wins[2].visible) files_draw();
-    if (g_wins[0].visible) { extern u32 term_grid_flush(void); term_grid_flush(); }
     win_info_sync();
 }
 
@@ -1647,6 +1563,9 @@ static void desktop_draw(void)
 
 void kmain(void)
 {
+    /* 启动日志只写 UART，不写窗口网格：用户开机后第一眼应该是
+       一个干净的终端，而不是一屏内核调试输出。shell_start 里会解除静默。 */
+    { extern int g_term_silent; g_term_silent = 1; }
     kprintf("\n=== rvsim mini-kernel (multiproc) ===\n");
 
     g_kroot = kernel_pgtbl();
@@ -1666,7 +1585,6 @@ void kmain(void)
        宿主只把这块 RAM 贴到画布上，不做任何 UI 绘制。 */
     fb_init(800, 600);
     win_info_init();
-    win_buf_init();
     term_grid_reset();
     desktop_draw();
 
@@ -2012,13 +1930,12 @@ void shell_loop(void)
     volatile u8 *lsr = (volatile u8 *)(UART_BASE + 5);
     volatile u8 *rbr = (volatile u8 *)(UART_BASE + 0);
     for (;;) {
-        /* 只在真有脏行时才重画+提交：否则每轮都重贴 800x600，
-           既拖慢命令执行，也让前端每帧做无谓的像素转换。 */
-        if (term_grid_flush()) fb_commit(0);
-
+        /* 不再有像素帧要提交：宿主按 term_sync_t / panel 表自己渲染。
+           每轮只做「读输入 -> 处理窗口命令 -> 发布数据」三件事。 */
         desktop_mouse();
         win_cmd_poll();
         term_sync_publish();
+        panel_sync_publish();
 
         /* 不再定时整屏重绘：一次重绘约 0.4-0.7 秒，期间屏幕处于
            「清壁纸 -> 画窗口」的中间态，看起来像闪烁，而且这期间
