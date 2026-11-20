@@ -46,6 +46,10 @@ static u32 g_term[TERM_ROWS][TERM_COLS];
    以前是宿主拿正则猜行首，猜得中是因为内核输出格式固定；改成内核自己标。
    0=普通 1=提示符 2=输入回显 3=结构化 4=内核日志 5=错误 */
 static u8  g_term_attr[TERM_ROWS][TERM_COLS];
+/* 这一行是不是上一行折下来的续行。manifest 这种长 JSON 折行后，
+   续行以 ,"desc": 开头，和上一条混在一起根本分不清；
+   宿主按这个标志在左侧画一条竖线。 */
+static u8  g_wrap[TERM_ROWS];
 static u8  g_attr_cur = 0;
 /* 滚出屏幕的历史行。终端只有 22 行，manifest 一次吐 37 条能力，
    前面的内容直接被挤掉——真实终端靠 scrollback 解决，这里照做。
@@ -53,6 +57,7 @@ static u8  g_attr_cur = 0;
 #define SCROLL_LINES 2000
 static u32 g_scroll[SCROLL_LINES][TERM_COLS];
 static u8  g_scroll_attr[SCROLL_LINES][TERM_COLS];   /* 历史行每格的属性 */
+static u8  g_scroll_wrap[SCROLL_LINES];              /* 历史行是否为折行续行 */
 static u32 g_scroll_head  = 0;   /* 下一个写入位置 */
 static u32 g_scroll_count = 0;   /* 已保存行数（上限 SCROLL_LINES） */
 static u32 g_row_seq[TERM_ROWS];   /* 每行内容版本号，给宿主做增量渲染 */
@@ -68,6 +73,7 @@ void term_grid_reset(void)
 {
     g_scroll_head = 0;
     g_scroll_count = 0;
+    for (u32 y = 0; y < TERM_ROWS; y++) g_wrap[y] = 0;
     for (u32 y = 0; y < TERM_ROWS; y++) {
         for (u32 x = 0; x < TERM_COLS; x++) { g_term[y][x] = ' '; g_term_attr[y][x] = 0; }
         g_term_dirty[y] = 0;
@@ -78,6 +84,32 @@ void term_grid_reset(void)
 }
 
 /* 在字模表里查码点；返回索引，找不到返回 -1 */
+/* 是否占两列。原来只用 cjk_lookup（预置的汉字表）判断，
+   表里没有的字符直接丢弃——于是「统一状态入口（JSON）：at_prompt」里的
+   全角括号和冒号全被吞掉，变成「统一状态入口JSONat_prompt」。
+   这里补上 Unicode 的宽字符区间。 */
+static int cjk_lookup(u32 cp);   /* 定义在后面，这里先声明 */
+
+static int is_wide(u32 cp)
+{
+    if (cjk_lookup(cp) >= 0) return 1;
+    if (cp >= 0x1100 && cp <= 0x115F) return 1;   /* Hangul Jamo */
+    if (cp >= 0x2E80 && cp <= 0x303E) return 1;   /* CJK 部首 + 标点（、。「」等） */
+    if (cp >= 0x3041 && cp <= 0x33FF) return 1;   /* 假名 + CJK 兼容 */
+    if (cp >= 0x3400 && cp <= 0x4DBF) return 1;   /* CJK 扩展 A */
+    if (cp >= 0x4E00 && cp <= 0x9FFF) return 1;   /* CJK 基本区 */
+    if (cp >= 0xA000 && cp <= 0xA4CF) return 1;   /* 彝文 */
+    if (cp >= 0xAC00 && cp <= 0xD7A3) return 1;   /* Hangul 音节 */
+    if (cp >= 0xF900 && cp <= 0xFAFF) return 1;   /* CJK 兼容表意 */
+    if (cp >= 0xFE30 && cp <= 0xFE4F) return 1;   /* CJK 兼容形式 */
+    if (cp >= 0xFF00 && cp <= 0xFF60) return 1;   /* 全角 ASCII（（）: 等） */
+    if (cp >= 0xFFE0 && cp <= 0xFFE6) return 1;   /* 全角符号 */
+    if (cp >= 0x1F300 && cp <= 0x1F64F) return 1; /* emoji */
+    if (cp >= 0x1F900 && cp <= 0x1F9FF) return 1;
+    if (cp >= 0x20000 && cp <= 0x3FFFD) return 1; /* CJK 扩展 B+ */
+    return 0;
+}
+
 static int cjk_lookup(u32 cp)
 {
     int lo = 0, hi = CJK_COUNT - 1;
@@ -96,12 +128,14 @@ static void term_newline(void)
 {
     g_term_cx = 0;
     g_term_cy++;
+    if (g_term_cy < TERM_ROWS) g_wrap[g_term_cy] = 0;
     if (g_term_cy >= TERM_ROWS) {
         /* 先把即将被挤掉的第一行存进历史，再整体上移 */
         for (u32 x = 0; x < TERM_COLS; x++) {
             g_scroll[g_scroll_head][x] = g_term[0][x];
             g_scroll_attr[g_scroll_head][x] = g_term_attr[0][x];
         }
+        g_scroll_wrap[g_scroll_head] = g_wrap[0];
         g_scroll_head = (g_scroll_head + 1) % SCROLL_LINES;
         if (g_scroll_count < SCROLL_LINES) g_scroll_count++;
         for (u32 y = 1; y < TERM_ROWS; y++) {
@@ -109,8 +143,10 @@ static void term_newline(void)
                 g_term[y-1][x] = g_term[y][x];
                 g_term_attr[y-1][x] = g_term_attr[y][x];
             }
+            g_wrap[y-1] = g_wrap[y];
             g_term_dirty[y-1] = 1;
         }
+        g_wrap[TERM_ROWS-1] = 0;
         for (u32 x = 0; x < TERM_COLS; x++) { g_term[TERM_ROWS-1][x] = ' '; g_term_attr[TERM_ROWS-1][x] = 0; }
         g_term_dirty[TERM_ROWS-1] = 1;
         for (u32 y = 0; y < TERM_ROWS; y++) g_row_seq[y]++;
@@ -139,13 +175,16 @@ int term_grid_putc(char c)
         utf8_cp = (utf8_cp << 6) | (b & 0x3F);
         if (--utf8_need) return 0;
         /* 拿到完整码点：能画就画，画不了就丢 */
-        if (cjk_lookup(utf8_cp) >= 0) {
-            if (g_term_cx + 1 >= TERM_COLS) term_newline();
+        if (utf8_cp >= 0xA0) {                  /* 非 ASCII 可打印字符 */
+            int w = is_wide(utf8_cp) ? 2 : 1;
+            if (g_term_cx + w > TERM_COLS) { term_newline(); g_wrap[g_term_cy] = 1; }
             g_term[g_term_cy][g_term_cx] = utf8_cp;
             g_term_attr[g_term_cy][g_term_cx] = g_attr_cur;
-            g_term_attr[g_term_cy][g_term_cx + 1] = g_attr_cur;
-            g_term[g_term_cy][g_term_cx + 1] = 0xFFFFFFFFu;   /* 右半格被占 */
-            g_term_cx += 2;
+            if (w == 2) {
+                g_term_attr[g_term_cy][g_term_cx + 1] = g_attr_cur;
+                g_term[g_term_cy][g_term_cx + 1] = 0xFFFFFFFFu;   /* 右半格被占 */
+            }
+            g_term_cx += w;
             g_term_dirty[g_term_cy] = 1;
             g_row_seq[g_term_cy]++;
         }
@@ -159,7 +198,7 @@ int term_grid_putc(char c)
     if (b < 32) return 0;
     if (b > 126) return 0;
 
-    if (g_term_cx >= TERM_COLS) term_newline();
+    if (g_term_cx >= TERM_COLS) { term_newline(); g_wrap[g_term_cy] = 1; }
     g_term_attr[g_term_cy][g_term_cx] = g_attr_cur;
     g_term[g_term_cy][g_term_cx++] = (u32)b;
     g_term_dirty[g_term_cy] = 1;
@@ -202,7 +241,9 @@ void term_grid_redraw_all(void)
 u32 *term_cells_ptr(void)   { return &g_term[0][0]; }
 u32 *term_scroll_ptr(void)  { return &g_scroll[0][0]; }
 u8  *term_attr_ptr(void)    { return &g_term_attr[0][0]; }
+u8  *term_wrap_ptr(void)    { return g_wrap; }
 u8  *term_scroll_attr_ptr(void) { return &g_scroll_attr[0][0]; }
+u8  *term_scroll_wrap_ptr(void) { return g_scroll_wrap; }
 void term_set_attr(u8 a)    { g_attr_cur = a; }
 u8   term_get_attr(void)    { return g_attr_cur; }
 u32  term_scroll_head(void) { return g_scroll_head; }

@@ -301,7 +301,7 @@ input{font:inherit;color:inherit;background:none;border:0;outline:0}
 /* 行盒高度交给 line-height，但空行必须显式给 min-height ——
    一个 textContent 为空的 div 在流式布局里高度是 0，
    整屏内容会往上塌几行，光标位置也跟着错位。 */
-.term-line{white-space:pre;line-height:inherit;min-height:var(--lh,20px);overflow:hidden;
+.term-line{white-space:pre;line-height:inherit;min-height:var(--lh,20px);/* 不能 overflow:hidden：折行续行的那条竖线画在 left:-7px，会被裁掉。宽字符已经按 2ch 对齐了，不需要靠裁剪防溢出；.term-dom 还有 overflow-x:hidden 兜底。 */
   color:var(--t2)}
 /* 终端配色分层。全是白字的话，提示符、命令、输出、JSON 混成一片，
    长输出根本没法扫读。色值取界面 token，不额外引入新颜色。 */
@@ -599,6 +599,20 @@ body.drawer #drawer{transform:translateX(0)}
 .term-find button:hover{background:var(--s3);color:var(--t1)}
 /* 命中的行整行高亮：不改行内 DOM，避免和属性着色、选区打架 */
 .term-line.hit{background:rgba(250,204,21,.16)}
+/* 折行续行标记。manifest 这种长 JSON 折行后，续行以 ,"desc": 开头，
+   和上一条混在一起分不清；左侧一条淡竖线就能把一条内容框起来。
+   left:-7px 落在 .term-dom 的 12px 内边距里，不会顶到第一个字符。 */
+/* 竖线必须画在行内：.term-dom 有 overflow-x:hidden，画在 left:-7px 会被裁掉
+   （实测截图字节级没变，就是因为这个）。用 inset 阴影画在 padding 区，
+   再用负 margin 把行左移、padding 把内容推回原位，字符位置不变。 */
+.term-line.wrap{margin-left:-6px;padding-left:6px;
+  box-shadow:inset 2px 0 0 rgba(255,255,255,.18)}
+/* 宽字符必须占满两格。
+   Cascadia Mono 的 ASCII 是 9.38px，中文回退到雅黑是 16px，比例 1.707 而不是 2——
+   内核按「中文占 2 列」排，渲染出来每行就短一截，中文越多右边缘越参差。
+   （MS Gothic / SimSun / SimHei 的 ASCII 恰好 8px、中文 16px，正好 2:1，
+   但它们的英文是宋体/日文字形，做终端太丑，所以不改字体，改宽度。） */
+.term-line .w2{display:inline-block;width:2ch;text-align:left;vertical-align:top;/* 全角字形只有 1em（16px），而 2ch 是 18.75px，居中会两侧各留 1.4px 空隙，看起来像「字距偏松」。横向拉伸 1.172 倍正好填满格子（2ch/1em 恒定，不随字号变），从左边拉伸所以配 text-align:left。 */transform:scaleX(1.172);transform-origin:left center}
 
 /* ── 窗口切换器（Alt+`）─────────────────────────────────────
    浏览器拿不到系统级的 Alt+Tab（那是 OS 的），所以用 Alt+`，
@@ -1927,6 +1941,17 @@ function termLayout(host, force, wPx, hPx) {
    内核标了 1=提示符 / 2=输入回显 / 5=错误，其余（0）交给行首启发式。
    以前全靠正则猜行首，猜得中是因为内核输出格式固定；现在提示符和
    用户输入在同一行里，只有内核知道哪几个字符是提示符。 */
+/* Unicode 宽字符判定，和内核 fb.c 的 is_wide 保持一致 */
+function isWideCp(cp) {
+  return (cp >= 0x1100 && cp <= 0x115F) || (cp >= 0x2E80 && cp <= 0x303E)
+      || (cp >= 0x3041 && cp <= 0x33FF) || (cp >= 0x3400 && cp <= 0x4DBF)
+      || (cp >= 0x4E00 && cp <= 0x9FFF) || (cp >= 0xA000 && cp <= 0xA4CF)
+      || (cp >= 0xAC00 && cp <= 0xD7A3) || (cp >= 0xF900 && cp <= 0xFAFF)
+      || (cp >= 0xFE30 && cp <= 0xFE4F) || (cp >= 0xFF00 && cp <= 0xFF60)
+      || (cp >= 0xFFE0 && cp <= 0xFFE6) || (cp >= 0x1F300 && cp <= 0x1F64F)
+      || (cp >= 0x1F900 && cp <= 0x1F9FF) || (cp >= 0x20000 && cp <= 0x3FFFD);
+}
+
 function segHtml(cols, getCp, getAttr) {
   /* 找到最后一个非空格的格子，尾部空白不渲染（否则每行都拖一条空格） */
   let last = -1;
@@ -1938,6 +1963,10 @@ function segHtml(cols, getCp, getAttr) {
 
   let plain = "", maxAttr = 0, cur = -1, buf = "";
   const parts = [];
+  const push = (html) => {
+    if (cur < 0) cur = 0;
+    buf += html;
+  };
   for (let x = 0; x <= last; x++) {
     const cp = getCp(x);
     if (cp === 0xFFFFFFFF) continue;            /* 宽字符右半格 */
@@ -1949,16 +1978,32 @@ function segHtml(cols, getCp, getAttr) {
       if (buf) parts.push({ a: cur, t: buf });
       cur = a; buf = "";
     }
-    buf += ch;
+    /* 宽字符包成 2ch 的 inline-block，保证和内核的列数严格对齐 */
+    buf += isWideCp(cp) ? '<span class="w2">' + esc(ch) + '</span>' : esc(ch);
   }
   if (buf) parts.push({ a: cur, t: buf });
 
   /* 整行都是普通色：交给行首启发式认 JSON / 内核日志 */
-  if (maxAttr === 0) return termLineHtml(plain);
+  if (maxAttr === 0) {
+    const html = termLineHtml(plain);
+    /* 启发式那版是纯文本转义，宽字符对齐会丢，所以把整行也过一遍 */
+    if (html.indexOf('class="w2"') < 0 && plain.length && isWidePlain(plain)) {
+      return plain.split("").map((c) => {
+        const cp = c.codePointAt(0);
+        return isWideCp(cp) ? '<span class="w2">' + esc(c) + '</span>' : esc(c);
+      }).join("");
+    }
+    return html;
+  }
   return parts.map((p) => {
     const cls = p.a === 1 ? "ta1" : p.a === 2 ? "ta2" : p.a === 5 ? "ta5" : "";
-    return cls ? '<span class="' + cls + '">' + esc(p.t) + '</span>' : esc(p.t);
+    return cls ? '<span class="' + cls + '">' + p.t + '</span>' : p.t;
   }).join("");
+}
+
+function isWidePlain(t) {
+  for (const c of t) if (isWideCp(c.codePointAt(0))) return true;
+  return false;
 }
 
 /* 一行终端文本 → 带颜色的 HTML。
@@ -2019,9 +2064,12 @@ function termRender() {
      内核的 scrollback 是环形缓冲，按 (head - count + i) 顺序读才是时间顺序。
      count 变少（clear）就整段重建；变多就只追加差的那几行。 */
   const attrAddr = A[tb + 13] >>> 0, scrollAttrAddr = A[tb + 14] >>> 0;
+  const wrapAddr = A[tb + 15] >>> 0, scrollWrapAddr = A[tb + 16] >>> 0;
   const B = M.HEAPU8;
   const attrOff = attrAddr ? guestByte(attrAddr) : 0;
   const scrollAttrOff = scrollAttrAddr ? guestByte(scrollAttrAddr) : 0;
+  const wrapOff = wrapAddr ? guestByte(wrapAddr) : 0;
+  const scrollWrapOff = scrollWrapAddr ? guestByte(scrollWrapAddr) : 0;
 
   if (scrollAddr && sLines && sCount !== termHistSynced) {
     const offS = guestOff(scrollAddr);
@@ -2031,12 +2079,16 @@ function termRender() {
     }
     const want = Math.min(sCount, sLines);
     const add = want - termHistCount;
+    /* 索引基准必须在循环外固定：termHistCount 在循环里会自增，
+       如果拿它参与算 ring，每行都会多跳一格（读成 ring[0]、ring[2]、ring[4]…），
+       越界的地方渲染成空行——表现就是「一半历史行是空白、内容错位」。 */
+    const histBase = termHistCount;
     for (let i = 0; i < add; i++) {
-      const ring = ((sHead - want + termHistCount + i) % sLines + sLines) % sLines;
+      const ring = ((sHead - want + histBase + i) % sLines + sLines) % sLines;
       const base = ring * cols;
       const abase = scrollAttrOff ? scrollAttrOff + base : 0;
       const d = document.createElement("div");
-      d.className = "term-line hist";
+      d.className = "term-line hist" + (scrollWrapOff && B[scrollWrapOff + ring] ? " wrap" : "");
       d.innerHTML = scrollAttrOff
         ? segHtml(cols, (x) => A[offS + base + x], (x) => B[abase + x])
         : termLineHtml("");
@@ -2056,6 +2108,7 @@ function termRender() {
     const html = rowAttr
       ? segHtml(cols, (x) => A[rowBase + x], (x) => B[rowAttr + x])
       : termLineHtml("");
+    if (wrapOff) termEls[y].classList.toggle("wrap", !!B[wrapOff + y]);
     if (termEls[y].innerHTML !== html) termEls[y].innerHTML = html;
   }
 

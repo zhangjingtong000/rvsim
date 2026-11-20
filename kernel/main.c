@@ -1291,7 +1291,8 @@ u32 term_cursor_x(void); u32 term_cursor_y(void);
 u32 *term_cells_ptr(void); u32 *term_rowseq_ptr(void);
 u32 *term_scroll_ptr(void);
 u32  term_scroll_head(void); u32 term_scroll_count(void); u32 term_scroll_lines(void);
-u8  *term_attr_ptr(void); u8 *term_scroll_attr_ptr(void);
+u8  *term_attr_ptr(void); u8 *term_scroll_attr_ptr(void); u8 *term_wrap_ptr(void);
+u8  *term_scroll_wrap_ptr(void);
 
 typedef struct {
     u32 magic;       /* 'TRM1' */
@@ -1308,6 +1309,8 @@ typedef struct {
     u32 scroll_lines; /* 环形容量 */
     u32 attr_addr;         /* u8[rows*cols] 当前屏每格属性 */
     u32 scroll_attr_addr;  /* u8[scroll_lines*cols] 历史行每格属性 */
+    u32 wrap_addr;         /* u8[rows] 每行是否为折行续行 */
+    u32 scroll_wrap_addr;  /* u8[scroll_lines] 历史行是否折行续行 */
 } term_sync_t;
 
 #define TERM_SYNC_PTR ((term_sync_t *)TERM_SYNC_PA)
@@ -1510,6 +1513,8 @@ void term_sync_publish(void)
     t->scroll_lines = term_scroll_lines();
     t->attr_addr = (u32)term_attr_ptr();
     t->scroll_attr_addr = (u32)term_scroll_attr_ptr();
+    t->wrap_addr = (u32)term_wrap_ptr();
+    t->scroll_wrap_addr = (u32)term_scroll_wrap_ptr();
     t->cursor_x = term_cursor_x();
     t->cursor_y = term_cursor_y();
     t->cursor_visible = 1;
