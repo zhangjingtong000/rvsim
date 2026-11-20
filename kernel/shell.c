@@ -41,7 +41,12 @@ static const char *user_name(u32 uid)
 
 /* 提示符本身不带换行：每条命令执行完，回显或命令输出已经落了行尾，
    再补一个 \n 就多出空行（clear 之后第一行永远空着）。 */
-static void prompt(void) { uart_puts("rvsh> "); }
+static void prompt(void) {
+    extern void term_set_attr(unsigned char);
+    term_set_attr(1);                 /* 提示符 */
+    uart_puts("rvsh> ");
+    term_set_attr(2);                 /* 接下来是用户输入的回显 */
+}
 
 static int streq(const char *a, const char *b)
 {
@@ -300,6 +305,9 @@ static void cmd_restore(const char *line)
 void shell_input(char ch)
 {
     if (ch == '\r' || ch == '\n') {
+        /* 命令输出一律先回到普通色：提示符打完把属性切到了「输入回显」，
+           不切回来的话，整段命令输出都会被当成用户敲的字上色。 */
+        { extern void term_set_attr(unsigned char); term_set_attr(0); }
         /* @ 开头的行是调试面板的内部查询，对用户终端必须零痕迹：
            连回车换行和随后的提示符都不该写进网格，否则按一次 F12
            就会在终端里留下几行空白。 */
@@ -783,14 +791,20 @@ extern int g_term_silent;
         /* 以前这里没有分支：3 既不等于 \r 也不满足 >= 0x20，直接落到
            shell_done，行缓冲一个字都没清。按一次 Ctrl+C 之后，
            用户敲的每条命令都会被拼在那个看不见的 0x03 后面，全部失效。 */
-        uart_puts("^C\n");
+        { extern void term_set_attr(unsigned char); term_set_attr(5); }
+    uart_puts("^C\n");
+    { extern void term_set_attr(unsigned char); term_set_attr(0); }
         g_len = 0;
         g_line[0] = 0;
         g_input_at = 0;
         { extern int g_term_silent; g_term_silent = 0; }
         prompt();
     } else if (ch == 0x7F || ch == 0x08) {   /* 退格 */
+        /* 这里必须 return。以前删完一个字符会落到下面的 goto shell_done，
+           把 g_len 清成 0；于是第二次退格时 g_len > 0 不成立，
+           用户看到的就是「只能删一个字母，再按就没反应」。 */
         if (g_len > 0) { g_len--; uart_puts("\b \b"); }
+        return;
     } else if (g_len < SHELL_BUF - 1 && (u8)ch >= 0x20 && g_input_at) {
         /* @ 开头的整行都不回显：这是调试面板的内部命令，
            不该出现在用户终端里（否则按一次 F12 就留 5 行 @ps/@ls） */
@@ -813,6 +827,7 @@ extern int g_term_silent;
             uart_tail_copy(g_cmd_snap, g_cmd_mark);
         }
         g_line[g_len++] = ch;
+        { extern void term_set_attr(unsigned char); term_set_attr(2); }
         uart_putc(ch);
         return;
     }

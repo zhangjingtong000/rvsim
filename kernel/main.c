@@ -28,6 +28,9 @@ static void proc_switch_satp(u32 *pgtbl)
 extern u32 *kernel_pgtbl(void);
 extern void enter_u_mode(u32 entry, u32 stack, u32 pid);
 void shell_loop(void);   /* shell 主循环：开机与进程全退出后共用 */
+/* 中断里只标 EXIT，回收放到 shell 主循环（proc_reap 会遍历页表 + 刷前端，
+   在中断上下文里做会把内核拖死）。定义在下面，trap 要先看到声明。 */
+extern int g_reap_pending;
 extern const u8 user_prog_start[];
 extern const u8 user_prog_end[];
 extern const u8 fork_prog_start[];
@@ -575,13 +578,13 @@ u32 s_trap_handler(u32 cause, u32 epc, u32 tval, u32 *regs)
                 host_cmd_finish(0);
                 if (nx) {
                     if (nx->pgtbl) proc_switch_satp(nx->pgtbl);
-                    proc_reap(dead);
+                    g_reap_pending = (int)dead;   /* 交给 shell 主循环回收 */
                     for (int i = 0; i < 32; i++) regs[i] = nx->regs[i];
                     proc_set_timer(20000);
                     return nx->pc;
                 }
                 proc_switch_satp(g_kroot);
-                proc_reap(dead);
+                g_reap_pending = (int)dead;   /* 交给 shell 主循环回收 */
                 shell_loop();          /* 不返回 */
             } else if (kp >= 0) {
                 /* 要终止的不是当前进程：直接回收。以前这里把请求丢掉还回 rc=0，
@@ -1286,6 +1289,9 @@ static u32 g_last_pos_seq = 0;
 u32 term_cols(void); u32 term_rows(void);
 u32 term_cursor_x(void); u32 term_cursor_y(void);
 u32 *term_cells_ptr(void); u32 *term_rowseq_ptr(void);
+u32 *term_scroll_ptr(void);
+u32  term_scroll_head(void); u32 term_scroll_count(void); u32 term_scroll_lines(void);
+u8  *term_attr_ptr(void); u8 *term_scroll_attr_ptr(void);
 
 typedef struct {
     u32 magic;       /* 'TRM1' */
@@ -1294,6 +1300,14 @@ typedef struct {
     u32 rowseq_addr; /* u32[rows] 每行版本号 */
     u32 cursor_x, cursor_y, cursor_visible;
     u32 seq;         /* 整块版本号 */
+    /* 新字段一律追加在末尾：宿主按固定偏移读前面这些，
+       插在中间会把 cursor_x/y/visible/seq 全部顶掉（实测读出了 NaN 码点）。 */
+    u32 scroll_addr;  /* u32[scroll_lines*cols] 环形历史行 */
+    u32 scroll_head;  /* 下一个写入位置 */
+    u32 scroll_count; /* 已保存行数 */
+    u32 scroll_lines; /* 环形容量 */
+    u32 attr_addr;         /* u8[rows*cols] 当前屏每格属性 */
+    u32 scroll_attr_addr;  /* u8[scroll_lines*cols] 历史行每格属性 */
 } term_sync_t;
 
 #define TERM_SYNC_PTR ((term_sync_t *)TERM_SYNC_PA)
@@ -1383,6 +1397,10 @@ volatile host_cmd_t *g_hcmd = (volatile host_cmd_t *)HCMD_PA;
 static u32 g_hcmd_seq = 0;
 static volatile int g_hcmd_kill = -1;   /* 定时器中断取走的 pid */
 int g_resume_flag = 0;                  /* shell 主循环看到就切进用户态 */
+/* 中断里只把进程标成 EXIT，真正的回收放到 shell 主循环：
+   proc_reap 会遍历页表、调 front_sync 和 panel_sync_procs，
+   这些在中断上下文里做，一旦哪一步慢了或重入，整个内核就不响应了。 */
+int g_reap_pending = -1;
 
 static void hcmd_name(const char *src, char *out, int cap)
 {
@@ -1486,6 +1504,12 @@ void term_sync_publish(void)
     t->rows = term_rows();
     t->cells_addr = (u32)term_cells_ptr();
     t->rowseq_addr = (u32)term_rowseq_ptr();
+    t->scroll_addr = (u32)term_scroll_ptr();
+    t->scroll_head = term_scroll_head();
+    t->scroll_count = term_scroll_count();
+    t->scroll_lines = term_scroll_lines();
+    t->attr_addr = (u32)term_attr_ptr();
+    t->scroll_attr_addr = (u32)term_scroll_attr_ptr();
     t->cursor_x = term_cursor_x();
     t->cursor_y = term_cursor_y();
     t->cursor_visible = 1;
@@ -2080,6 +2104,14 @@ void shell_loop(void)
     for (;;) {
         /* 不再有像素帧要提交：宿主按 term_sync_t / panel 表自己渲染。
            每轮只做「读输入 -> 处理窗口命令 -> 发布数据」三件事。 */
+        /* 中断里标成 EXIT 的进程在这里回收：proc_reap 要遍历页表、
+           刷前端状态，放在中断上下文里做会把内核拖死。 */
+        if (g_reap_pending >= 0) {
+            extern void proc_reap(u32);
+            int rp = g_reap_pending;
+            g_reap_pending = -1;
+            proc_reap((u32)rp);
+        }
         desktop_mouse();
         win_cmd_poll();
         host_cmd_poll();          /* 图形界面的文件/进程操作走这条通道 */

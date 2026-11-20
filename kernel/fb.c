@@ -41,6 +41,20 @@ u32 g_fb_w, g_fb_h;
 /* 网格存 Unicode 码点：ASCII 是单宽，汉字是双宽。
    0 = 空，0xFFFFFFFF = 被左边宽字符占用的右半格。 */
 static u32 g_term[TERM_ROWS][TERM_COLS];
+/* 每格的语义属性。终端只有"码点"是不够的：提示符、用户敲的命令、
+   普通输出、JSON、内核日志、错误，如果全是同一个颜色，长输出根本没法扫读。
+   以前是宿主拿正则猜行首，猜得中是因为内核输出格式固定；改成内核自己标。
+   0=普通 1=提示符 2=输入回显 3=结构化 4=内核日志 5=错误 */
+static u8  g_term_attr[TERM_ROWS][TERM_COLS];
+static u8  g_attr_cur = 0;
+/* 滚出屏幕的历史行。终端只有 22 行，manifest 一次吐 37 条能力，
+   前面的内容直接被挤掉——真实终端靠 scrollback 解决，这里照做。
+   环形缓冲 400 行：滚屏时把即将被挤掉的第一行存进来，宿主按需回看。 */
+#define SCROLL_LINES 2000
+static u32 g_scroll[SCROLL_LINES][TERM_COLS];
+static u8  g_scroll_attr[SCROLL_LINES][TERM_COLS];   /* 历史行每格的属性 */
+static u32 g_scroll_head  = 0;   /* 下一个写入位置 */
+static u32 g_scroll_count = 0;   /* 已保存行数（上限 SCROLL_LINES） */
 static u32 g_row_seq[TERM_ROWS];   /* 每行内容版本号，给宿主做增量渲染 */
 static u8   g_term_dirty[TERM_ROWS];
 static u32  g_term_cx, g_term_cy;
@@ -52,8 +66,10 @@ static u32  g_term_cx, g_term_cy;
    表现就是 clear 命令毫无反应（终端里还挂着上一屏内容）。 */
 void term_grid_reset(void)
 {
+    g_scroll_head = 0;
+    g_scroll_count = 0;
     for (u32 y = 0; y < TERM_ROWS; y++) {
-        for (u32 x = 0; x < TERM_COLS; x++) g_term[y][x] = ' ';
+        for (u32 x = 0; x < TERM_COLS; x++) { g_term[y][x] = ' '; g_term_attr[y][x] = 0; }
         g_term_dirty[y] = 0;
         g_row_seq[y]++;
     }
@@ -81,11 +97,21 @@ static void term_newline(void)
     g_term_cx = 0;
     g_term_cy++;
     if (g_term_cy >= TERM_ROWS) {
+        /* 先把即将被挤掉的第一行存进历史，再整体上移 */
+        for (u32 x = 0; x < TERM_COLS; x++) {
+            g_scroll[g_scroll_head][x] = g_term[0][x];
+            g_scroll_attr[g_scroll_head][x] = g_term_attr[0][x];
+        }
+        g_scroll_head = (g_scroll_head + 1) % SCROLL_LINES;
+        if (g_scroll_count < SCROLL_LINES) g_scroll_count++;
         for (u32 y = 1; y < TERM_ROWS; y++) {
-            for (u32 x = 0; x < TERM_COLS; x++) g_term[y-1][x] = g_term[y][x];
+            for (u32 x = 0; x < TERM_COLS; x++) {
+                g_term[y-1][x] = g_term[y][x];
+                g_term_attr[y-1][x] = g_term_attr[y][x];
+            }
             g_term_dirty[y-1] = 1;
         }
-        for (u32 x = 0; x < TERM_COLS; x++) g_term[TERM_ROWS-1][x] = ' ';
+        for (u32 x = 0; x < TERM_COLS; x++) { g_term[TERM_ROWS-1][x] = ' '; g_term_attr[TERM_ROWS-1][x] = 0; }
         g_term_dirty[TERM_ROWS-1] = 1;
         for (u32 y = 0; y < TERM_ROWS; y++) g_row_seq[y]++;
         g_term_cy = TERM_ROWS - 1;
@@ -116,6 +142,8 @@ int term_grid_putc(char c)
         if (cjk_lookup(utf8_cp) >= 0) {
             if (g_term_cx + 1 >= TERM_COLS) term_newline();
             g_term[g_term_cy][g_term_cx] = utf8_cp;
+            g_term_attr[g_term_cy][g_term_cx] = g_attr_cur;
+            g_term_attr[g_term_cy][g_term_cx + 1] = g_attr_cur;
             g_term[g_term_cy][g_term_cx + 1] = 0xFFFFFFFFu;   /* 右半格被占 */
             g_term_cx += 2;
             g_term_dirty[g_term_cy] = 1;
@@ -132,6 +160,7 @@ int term_grid_putc(char c)
     if (b > 126) return 0;
 
     if (g_term_cx >= TERM_COLS) term_newline();
+    g_term_attr[g_term_cy][g_term_cx] = g_attr_cur;
     g_term[g_term_cy][g_term_cx++] = (u32)b;
     g_term_dirty[g_term_cy] = 1;
     g_row_seq[g_term_cy]++;
@@ -171,6 +200,14 @@ void term_grid_redraw_all(void)
 
 /* 供宿主读取的网格入口（真字体渲染用） */
 u32 *term_cells_ptr(void)   { return &g_term[0][0]; }
+u32 *term_scroll_ptr(void)  { return &g_scroll[0][0]; }
+u8  *term_attr_ptr(void)    { return &g_term_attr[0][0]; }
+u8  *term_scroll_attr_ptr(void) { return &g_scroll_attr[0][0]; }
+void term_set_attr(u8 a)    { g_attr_cur = a; }
+u8   term_get_attr(void)    { return g_attr_cur; }
+u32  term_scroll_head(void) { return g_scroll_head; }
+u32  term_scroll_count(void){ return g_scroll_count; }
+u32  term_scroll_lines(void){ return SCROLL_LINES; }
 u32 *term_rowseq_ptr(void)  { return g_row_seq; }
 u32  term_cols(void)        { return TERM_COLS; }
 u32  term_rows(void)        { return TERM_ROWS; }

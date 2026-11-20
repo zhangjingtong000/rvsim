@@ -33,7 +33,10 @@
   --t2:rgba(255,255,255,.77);      /* TextFillColorSecondary #C5FFFFFF */
   --t3:rgba(255,255,255,.53);      /* TextFillColorTertiary  #87FFFFFF */
   --t-disabled:rgba(255,255,255,.36);
-  --acc:#2DD4BF; --acc-hover:#5EEAD4; --acc-press:#14B8A6; --on-acc:#04211C;
+  --acc:#2DD4BF;
+  /* 状态色取 Win11 Dark 的值（#6CCB5F / #FCE100 / #FF99A4）：
+     以前只有终端里的一个 #F87171，别处要用红色就各写各的。 */
+  --ok:#6CCB5F; --warn:#FCE100; --err:#FF99A4; --acc-hover:#5EEAD4; --acc-press:#14B8A6; --on-acc:#04211C;
   --ok:#34D399; --warn:#FBBF24; --danger:#F87171; --danger-strong:#C42B1C;
   --info:#60A5FA;
 
@@ -46,10 +49,30 @@
 
   --font-ui:"Segoe UI Variable Text","Segoe UI","Microsoft YaHei UI","Microsoft YaHei","PingFang SC",system-ui,sans-serif;
   --font-display:"Segoe UI Variable Display","Segoe UI Variable Text","Segoe UI","Microsoft YaHei UI",system-ui,sans-serif;
+  /* 字号阶梯。Fluent 是 Caption 12/16 · Body 14/20 · Body Strong 14/20 SemiBold
+     · Body Large 18/24 · Subtitle 20/28 · Title 28/36 · Title Large 40/52。
+     我们原来只有 12/13/14 三档小字号，没有任何标题档，层级只能靠加粗硬凑。 */
+  --fs-caption:12px; --lh-caption:16px;
+  --fs-body:14px;    --lh-body:20px;
+  --fs-large:18px;   --lh-large:24px;
+  --fs-subtitle:20px;--lh-subtitle:28px;
+  --fs-title:28px;   --lh-title:36px;
   --font-mono:"Cascadia Mono","Cascadia Code",Consolas,"Microsoft YaHei UI","Microsoft YaHei",ui-monospace,monospace;
 
-  --ease-decel:cubic-bezier(.1,.9,.2,1);
-  --dur-fast:150ms; --dur-normal:200ms;
+  /* 动效阶梯。原来散成 18 个值（100/120/130/160/167/200/220/250/280/300/
+     360/450/500/700…），每个组件各写各的，没有"系统"可言。
+     现在对齐 Fluent：100 / 167 / 250 / 333 / 500 五档，启动动画单独一档。
+     缓动三条：进入用减速、退出用加速、其余用标准。 */
+  --dur-1:100ms;   /* 微交互：hover、按下、焦点环 */
+  --dur-2:167ms;   /* 小元素进场/退场 */
+  --dur-3:250ms;   /* 中等过渡：菜单、浮层、提示 */
+  --dur-4:333ms;   /* 较大位移：窗口吸附、抽屉 */
+  --dur-5:500ms;   /* 页面级 */
+  --dur-boot:700ms;/* 启动动画，不参与交互阶梯 */
+  /* 三条曲线取 Fluent 的定义：进入 = (0,0,0,1)、退出 = (1,0,1,1)、点对点 = (0.55,0.55,0,1) */
+  --ease-decel:cubic-bezier(0,0,0,1);
+  --ease-std:cubic-bezier(.55,.55,0,1);
+  --ease-accel:cubic-bezier(1,0,1,1);
 
   /* 兼容旧名 */
   --bg:var(--s1); --fg:var(--t1); --fg2:var(--t2); --fg3:var(--t3);
@@ -68,27 +91,27 @@ input{font:inherit;color:inherit;background:none;border:0;outline:0}
 /* ── 开机画面 ───────────────────────────────────────────────── */
 #boot{position:fixed;inset:0;z-index:300;display:grid;place-items:center;
   background:radial-gradient(1100px 700px at 50% 40%,#101827,#070A0F 72%);
-  transition:opacity .45s var(--ease-decel)}
+  transition:opacity var(--dur-5) var(--ease-decel)}
 #boot.gone{opacity:0;pointer-events:none}
 .boot-in{display:flex;flex-direction:column;align-items:center;width:340px}
 .boot-mark{width:96px;height:96px;margin-bottom:26px;
-  animation:bootMark .7s var(--ease-decel) both}
+  animation:bootMark var(--dur-boot) var(--ease-decel) both}
 @keyframes bootMark{from{opacity:0;transform:scale(.9)}to{opacity:1;transform:none}}
 .boot-mark .chip{animation:chipPulse 2.6s ease-in-out infinite}
 @keyframes chipPulse{0%,100%{opacity:.9}50%{opacity:.55}}
 .boot-name{font:600 30px/1.1 var(--font-display);letter-spacing:-.02em;
-  animation:bootFade .5s .12s var(--ease-decel) both}
+  animation:bootFade var(--dur-5) var(--dur-1) var(--ease-decel) both}
 .boot-sub{margin-top:8px;font:400 12px/1.4 var(--font-mono);
   color:var(--t3);letter-spacing:.14em;
-  animation:bootFade .5s .22s var(--ease-decel) both}
+  animation:bootFade var(--dur-5) var(--dur-3) var(--ease-decel) both}
 .boot-bar{width:100%;height:3px;margin-top:34px;border-radius:2px;
   background:rgba(255,255,255,.08);overflow:hidden;
-  animation:bootFade .5s .3s var(--ease-decel) both}
+  animation:bootFade var(--dur-5) var(--dur-4) var(--ease-decel) both}
 .boot-bar i{display:block;height:100%;width:0;border-radius:2px;
   background:linear-gradient(90deg,var(--acc-press),var(--acc-hover));
-  transition:width .28s var(--ease-decel)}
+  transition:width var(--dur-4) var(--ease-decel)}
 .boot-status{margin-top:14px;height:18px;font:400 12px/18px var(--font-ui);
-  color:var(--t3);animation:bootFade .5s .36s var(--ease-decel) both}
+  color:var(--t3);animation:bootFade var(--dur-5) var(--dur-4) var(--ease-decel) both}
 @keyframes bootFade{from{opacity:0;transform:translateY(5px)}to{opacity:1;transform:none}}
 
 /* ── 桌面 ───────────────────────────────────────────────────── */
@@ -109,14 +132,17 @@ input{font:inherit;color:inherit;background:none;border:0;outline:0}
   align-content:flex-start;pointer-events:none}
 .dicon{pointer-events:auto;width:76px;height:76px;padding:4px 2px 3px;
   display:flex;flex-direction:column;align-items:center;gap:6px;
-  border-radius:7px;user-select:none;transition:background .12s,box-shadow .12s}
+  border-radius:7px;user-select:none;transition:background var(--dur-1),box-shadow var(--dur-1)}
 .dicon:hover{background:rgba(255,255,255,.07)}
 .dicon.sel{background:rgba(45,212,191,.16);box-shadow:inset 0 0 0 1px rgba(94,234,212,.45)}
 .dicon svg{width:44px;height:44px;flex:0 0 auto;
   filter:drop-shadow(0 3px 7px rgba(0,0,0,.45))}
 .dicon span{font:400 12px/16px var(--font-ui);color:#EDF1F6;text-align:center;
-  max-width:76px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
-  text-shadow:0 1px 3px rgba(0,0,0,.8)}
+  max-width:76px;overflow:hidden;text-shadow:0 1px 3px rgba(0,0,0,.8);
+  /* 两行再省略：Win11 的桌面图标标签是两行。单行的话
+     「rvsim 能力清单」这种名字会被砍成「rvsim 能…」，认不出来。 */
+  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;
+  word-break:break-all}
 
 /* winlayer 铺满整个桌面，但它只是窗口的容器：
    不给 pointer-events:none 的话，它会挡住下面所有桌面图标的点击
@@ -130,8 +156,8 @@ input{font:inherit;color:inherit;background:none;border:0;outline:0}
   background:rgba(45,212,191,.16);
   border:1px solid rgba(94,234,212,.6);
   box-shadow:0 0 0 1px rgba(0,0,0,.35),0 14px 36px -10px rgba(0,0,0,.55);
-  transition:left .1s var(--ease-decel),top .1s var(--ease-decel),
-             width .1s var(--ease-decel),height .1s var(--ease-decel),opacity .1s}
+  transition:left var(--dur-1) var(--ease-decel),top var(--dur-1) var(--ease-decel),
+             width var(--dur-1) var(--ease-decel),height var(--dur-1) var(--ease-decel),opacity var(--dur-1)}
 #snapGhost.on{opacity:1}
 
 /* 吸附布局选择器：悬停最大化按钮 450ms 弹出（Win11 行为） */
@@ -141,14 +167,14 @@ input{font:inherit;color:inherit;background:none;border:0;outline:0}
   -webkit-backdrop-filter:blur(30px) saturate(180%);
   backdrop-filter:blur(30px) saturate(180%);
   border:1px solid var(--stroke);border-radius:var(--r-flyout);
-  box-shadow:var(--elev-3);animation:popIn .12s var(--ease-decel);
+  box-shadow:var(--elev-3);animation:popIn var(--dur-1) var(--ease-decel);
   transform-origin:top left}
 #snapPicker.on{display:grid}
 .sl{position:relative;width:96px;height:64px;border-radius:var(--r-control);
   background:rgba(255,255,255,.03);border:1px solid var(--stroke);overflow:hidden}
 .sl-cell{position:absolute;border-radius:3px;
   background:rgba(255,255,255,.14);border:1px solid rgba(255,255,255,.22);
-  transition:background .1s,border-color .1s}
+  transition:background var(--dur-1),border-color var(--dur-1)}
 .sl-cell:hover{background:rgba(45,212,191,.42);border-color:rgba(94,234,212,.7)}
 
 /* 悬停提示：原生 title 会弹一个浅色系统气泡，在深色界面上非常扎眼 */
@@ -158,7 +184,7 @@ input{font:inherit;color:inherit;background:none;border:0;outline:0}
   -webkit-backdrop-filter:blur(20px);backdrop-filter:blur(20px);
   border:1px solid var(--stroke);box-shadow:var(--elev-1);
   font:400 12px/16px var(--font-ui);color:var(--t1);white-space:nowrap;
-  transition:opacity .12s var(--ease-decel)}
+  transition:opacity var(--dur-1) var(--ease-decel)}
 #tip.on{opacity:1}
 
 /* 托盘日期面板（点托盘弹出） */
@@ -167,7 +193,7 @@ input{font:inherit;color:inherit;background:none;border:0;outline:0}
   -webkit-backdrop-filter:blur(30px) saturate(180%);
   backdrop-filter:blur(30px) saturate(180%);
   border:1px solid var(--stroke);border-radius:var(--r-flyout);
-  box-shadow:var(--elev-3);animation:popIn .16s var(--ease-decel);
+  box-shadow:var(--elev-3);animation:popIn var(--dur-2) var(--ease-decel);
   transform-origin:top right}
 #trayPanel.on{display:block}
 .tp-time{font:600 26px/1.1 var(--font-display);color:var(--t1);letter-spacing:-.01em}
@@ -186,7 +212,7 @@ input{font:inherit;color:inherit;background:none;border:0;outline:0}
   -webkit-backdrop-filter:blur(30px) saturate(180%);
   backdrop-filter:blur(30px) saturate(180%);
   border:1px solid var(--stroke);border-radius:var(--r-flyout);
-  box-shadow:var(--elev-3);animation:popIn .12s var(--ease-decel);
+  box-shadow:var(--elev-3);animation:popIn var(--dur-1) var(--ease-decel);
   transform-origin:top left}
 #ctxMenu.on{display:block}
 .ctx-item{padding:7px 12px;border-radius:var(--r-control);
@@ -204,7 +230,15 @@ input{font:inherit;color:inherit;background:none;border:0;outline:0}
 
 /* ── 窗口 ───────────────────────────────────────────────────── */
 .win{position:absolute;display:flex;flex-direction:column;
-  border-radius:var(--r-window);overflow:hidden;
+  /* 最大化/还原过渡 167ms（Fluent 的「小元素进场」档）。
+     拖动和缩放必须关掉，否则窗口会追着鼠标慢慢飘。 */
+  transition:left var(--dur-2) var(--ease-decel),top var(--dur-2) var(--ease-decel),
+    width var(--dur-2) var(--ease-decel),height var(--dur-2) var(--ease-decel),
+    opacity var(--dur-2) var(--ease-decel),transform var(--dur-2) var(--ease-decel);
+  border-radius:var(--r-window);
+  /* 不写 overflow:hidden：那会把命中区一起裁成圆角，
+     窗口最角落的几个像素就点不到了。圆角交给 .win-bar / .win-body。 */
+  overflow:visible;
   /* 底色用高不透明度的半透明：窗口是每帧都在变的内容，
      backdrop-filter 会让浏览器每帧重算一次背景模糊 —— 实测吞吐从
      12-19 M/s 掉到 4.9 M/s。视觉上 .94 和 .86+blur 几乎看不出差别。 */
@@ -215,13 +249,13 @@ input{font:inherit;color:inherit;background:none;border:0;outline:0}
              0 2px 4px rgba(0,0,0,.14),
              0 8px 16px rgba(0,0,0,.16),
              0 16px 32px rgba(0,0,0,.18);
-  transition:box-shadow .167s var(--ease-decel),border-color .167s,
-             left .167s var(--ease-decel),top .167s var(--ease-decel),
-             width .167s var(--ease-decel),height .167s var(--ease-decel)}
-.win.dragging{transition:box-shadow .167s var(--ease-decel),border-color .167s}
+  transition:box-shadow var(--dur-2) var(--ease-decel),border-color var(--dur-2),
+             left var(--dur-2) var(--ease-decel),top var(--dur-2) var(--ease-decel),
+             width var(--dur-2) var(--ease-decel),height var(--dur-2) var(--ease-decel)}
+.win.dragging{transition:box-shadow var(--dur-2) var(--ease-decel),border-color var(--dur-2)}
 /* 关闭：淡出 + 轻微缩小（Win11 关闭动画的观感） */
 .win.closing{opacity:0;transform:scale(.97);
-  transition:opacity .12s var(--ease-accel),transform .12s var(--ease-accel)}
+  transition:opacity var(--dur-1) var(--ease-accel),transform var(--dur-1) var(--ease-accel)}
 .win.focused{border-color:rgba(94,234,212,.34);
   box-shadow:0 0 0 1px rgba(94,234,212,.16),
              0 2px 4px rgba(0,0,0,.16),
@@ -233,9 +267,10 @@ input{font:inherit;color:inherit;background:none;border:0;outline:0}
 .win.snap-t{border-top-left-radius:0;border-top-right-radius:0}
 /* 最小化：向 dock 方向缩小淡出 */
 .win.minimizing{opacity:0;transform:scale(.9) translateY(24px);
-  transition:opacity .167s var(--ease-accel),transform .167s var(--ease-accel)}
+  transition:opacity var(--dur-2) var(--ease-accel),transform var(--dur-2) var(--ease-accel)}
 
 .win-bar{flex:0 0 32px;height:32px;display:flex;align-items:center;
+  border-radius:calc(var(--r-window) - 1px) calc(var(--r-window) - 1px) 0 0;
   gap:8px;padding:0 0 0 12px;user-select:none;
   background:linear-gradient(180deg,rgba(255,255,255,.075),rgba(255,255,255,.035));
   border-bottom:1px solid rgba(255,255,255,.07)}
@@ -246,26 +281,39 @@ input{font:inherit;color:inherit;background:none;border:0;outline:0}
 .win.focused .win-title{color:var(--t1)}
 .win-ctl{margin-left:auto;display:flex;align-self:stretch}
 .win-ctl button{width:46px;height:100%;display:grid;place-items:center;
-  color:var(--t2);transition:background .1s,color .1s}
+  color:var(--t2);transition:background var(--dur-1),color var(--dur-1)}
 .win-ctl button svg{width:10px;height:10px}
 .win-ctl button:hover{background:rgba(255,255,255,.09);color:var(--t1)}
 .win-ctl button:active{background:rgba(255,255,255,.14)}
 .win-ctl button.close:hover{background:var(--danger-strong);color:#fff}
 .win-ctl button.close:active{background:#A4261A;color:#fff}
 
-.win-body{flex:1 1 auto;min-height:0;position:relative;overflow:hidden}
+.win-body{flex:1 1 auto;min-height:0;position:relative;overflow:hidden;
+  border-radius:0 0 calc(var(--r-window) - 1px) calc(var(--r-window) - 1px)}
 /* 宿主应用的内容长度是固定的，窗口小时要能滚，不能直接裁掉最后一行 */
 .host-win .win-body{overflow:auto}
 .host-win.solid{background:#12161D}
 
 /* 终端：字符网格由内核发布，这里用等宽真字体画 */
-.term-dom{padding:10px 12px;overflow:hidden;background:var(--s0);
+.term-dom{padding:10px 12px;overflow-y:auto;overflow-x:hidden;background:var(--s0);user-select:text;
   font-family:var(--font-mono);font-size:14px;line-height:20px;
   color:#D7DCE3;letter-spacing:0}
 /* 行盒高度交给 line-height，但空行必须显式给 min-height ——
    一个 textContent 为空的 div 在流式布局里高度是 0，
    整屏内容会往上塌几行，光标位置也跟着错位。 */
-.term-line{white-space:pre;line-height:inherit;min-height:var(--lh,20px);overflow:hidden}
+.term-line{white-space:pre;line-height:inherit;min-height:var(--lh,20px);overflow:hidden;
+  color:var(--t2)}
+/* 终端配色分层。全是白字的话，提示符、命令、输出、JSON 混成一片，
+   长输出根本没法扫读。色值取界面 token，不额外引入新颜色。 */
+.term-line .ta1{color:var(--acc)}            /* 提示符（内核标记） */
+.term-line .ta2{color:#E7ECF3}              /* 用户输入回显（内核标记） */
+.term-line .ta5{color:var(--err)}              /* 错误（内核标记） */
+.term-line .tc-p{color:var(--acc)}            /* 提示符 rvsh> */
+.term-line .tc-in{color:#E7ECF3}              /* 用户敲的命令 */
+.term-line .tc-json{color:#7DD3FC}            /* 结构化输出 */
+.term-line .tc-log{color:#A78BFA}             /* 内核日志 [S] / [U] */
+.term-line .tc-err{color:var(--err)}             /* 错误 */
+.term-line.hist{color:var(--t3)}              /* 历史行整体压暗，和实时区分开 */
 .term-dom .tcur{position:absolute;width:1ch;height:var(--lh,20px);background:var(--acc);
   opacity:.8;border-radius:1px;pointer-events:none;
   animation:tcur 1.06s steps(1) infinite}
@@ -305,22 +353,22 @@ input{font:inherit;color:inherit;background:none;border:0;outline:0}
 .dock-center{position:absolute;left:50%;transform:translateX(-50%);
   display:flex;align-items:center;gap:2px}
 .dock-btn{width:40px;height:40px;border-radius:var(--r-control);display:grid;place-items:center;
-  color:var(--t2);transition:background .12s,color .12s}
+  color:var(--t2);transition:background var(--dur-1),color var(--dur-1)}
 .dock-btn:hover{background:rgba(255,255,255,.08);color:var(--t1)}
 .dock-btn svg{width:17px;height:17px}
 .dock-apps{display:flex;gap:6px}
 .dock-app{position:relative;width:42px;height:40px;border-radius:var(--r-control);
-  display:grid;place-items:center;transition:background .12s}
+  display:grid;place-items:center;transition:background var(--dur-1)}
 .dock-app:hover{background:rgba(255,255,255,.10)}
 .dock-app:active{background:rgba(255,255,255,.05)}
 .dock-app svg{width:26px;height:26px;opacity:.66;
-  transition:opacity .167s var(--ease-decel),transform .167s var(--ease-decel)}
+  transition:opacity var(--dur-2) var(--ease-decel),transform var(--dur-2) var(--ease-decel)}
 .dock-app:hover svg{opacity:1;transform:scale(1.08)}
 .dock-app:active svg{transform:scale(.96)}
 .dock-app.active svg{opacity:1}
 .dock-app .ind{position:absolute;bottom:2px;left:50%;transform:translateX(-50%);
   width:5px;height:3px;border-radius:2px;background:transparent;
-  transition:width .16s var(--ease-decel),background .16s}
+  transition:width var(--dur-2) var(--ease-decel),background var(--dur-2)}
 .dock-app.active .ind{width:16px;background:var(--acc)}
 .dock-sep{width:1.5px;height:24px;margin:0 10px;background:rgba(255,255,255,.24);
   border-radius:1px}
@@ -338,8 +386,10 @@ input{font:inherit;color:inherit;background:none;border:0;outline:0}
 .tray-clock i{font-style:normal;color:var(--t3);font-size:11px}
 
 /* ── 开始菜单 ───────────────────────────────────────────────── */
-#startMenu{position:absolute;left:50%;bottom:54px;
-  transform:translateX(-50%);width:520px;height:auto;
+#startMenu{position:absolute;left:50%;bottom:60px;
+  /* 642 宽 / 距任务栏 12px：Win11 官方给的开始菜单尺寸是 642×724，
+     间距 12px。原来是 520 宽、间距 6px，窄了 122px，磁贴也挤。 */
+  transform:translateX(-50%);width:642px;height:auto;
   max-height:calc(100vh - 78px);
   padding:22px;z-index:60;display:flex;flex-direction:column;
   background:rgba(26,32,42,.97);
@@ -347,13 +397,13 @@ input{font:inherit;color:inherit;background:none;border:0;outline:0}
   backdrop-filter:blur(40px) saturate(180%);
   border:1px solid var(--stroke);border-radius:var(--r-flyout);box-shadow:var(--elev-3);
   font:400 14px/20px var(--font-ui);color:var(--t1);
-  animation:smIn .25s var(--ease-decel)}
+  animation:smIn var(--dur-3) var(--ease-decel)}
 @keyframes smIn{from{opacity:0;transform:translateX(-50%) translateY(10px) scale(.985)}
   to{opacity:1;transform:translateX(-50%) translateY(0) scale(1)}}
 /* 按 px 定位的浮层用这个：不带水平位移，弹出时不会先跳到左边 */
 @keyframes popIn{from{opacity:0;transform:translateY(-4px) scale(.97)}
   to{opacity:1;transform:none}}
-.sm-search{display:flex;align-items:center;gap:10px;height:32px;
+.sm-search{display:flex;align-items:center;gap:10px;height:36px;
   padding:0 12px;border-radius:var(--r-control);background:var(--s3);
   border:1px solid var(--stroke);color:var(--t3);flex:0 0 auto}
 .sm-search svg{width:14px;height:14px;flex:0 0 auto}
@@ -361,10 +411,10 @@ input{font:inherit;color:inherit;background:none;border:0;outline:0}
 .sm-search input::placeholder{color:var(--t3)}
 .sm-sec{margin:20px 0 10px;font:600 11.5px/16px var(--font-ui);
   color:var(--t2);letter-spacing:.02em;flex:0 0 auto}
-.sm-tiles{display:grid;grid-template-columns:repeat(4,1fr);gap:2px;flex:0 0 auto}
+.sm-tiles{display:grid;grid-template-columns:repeat(6,1fr);gap:2px;flex:0 0 auto}
 .sm-tile{display:flex;flex-direction:column;align-items:center;justify-content:center;
   gap:8px;aspect-ratio:1;padding:10px 6px;border-radius:var(--r-tile);
-  transition:background .12s}
+  transition:background var(--dur-1)}
 .sm-tile:hover{background:rgba(255,255,255,.07)}
 .sm-tile svg{width:34px;height:34px}
 .sm-tile span{font:400 11.5px/15px var(--font-ui);color:var(--t2);
@@ -373,7 +423,7 @@ input{font:inherit;color:inherit;background:none;border:0;outline:0}
   overflow:auto;min-height:0}
 .sm-ri{display:flex;align-items:center;gap:10px;height:36px;padding:0 10px;
   border-radius:var(--r-control);color:var(--t2);font-family:var(--font-mono);font-size:13px;
-  transition:background .1s,color .1s}
+  transition:background var(--dur-1),color var(--dur-1)}
 .sm-ri:hover{background:rgba(255,255,255,.07);color:var(--t1)}
 .sm-ri svg{width:13px;height:13px;opacity:.5;flex:0 0 auto}
 .sm-user{display:flex;align-items:center;gap:10px;height:54px;margin-top:14px;
@@ -393,7 +443,7 @@ input{font:inherit;color:inherit;background:none;border:0;outline:0}
   -webkit-backdrop-filter:blur(22px) saturate(160%);
   backdrop-filter:blur(22px) saturate(160%);
   border-left:1px solid var(--stroke);
-  transform:translateX(100%);transition:transform .2s var(--ease-decel);
+  transform:translateX(100%);transition:transform var(--dur-3) var(--ease-decel);
   font:400 12px/1.5 var(--font-ui);color:var(--t2)}
 body.drawer #drawer{transform:translateX(0)}
 .dw-head{flex:0 0 44px;display:flex;align-items:center;gap:8px;
@@ -409,7 +459,7 @@ body.drawer #drawer{transform:translateX(0)}
 .dw-row{display:flex;gap:6px}
 .dw-row button{flex:1;font-size:12px;color:var(--t2);background:var(--s2);
   border:1px solid var(--stroke);border-radius:6px;padding:7px 10px;
-  white-space:nowrap;transition:.13s}
+  white-space:nowrap;transition:var(--dur-2)}
 .dw-row button:hover{background:var(--s3);color:var(--t1)}
 .dw-row button:disabled{opacity:.34}
 .dw-row button.pri{background:var(--acc);border-color:var(--acc);
@@ -467,9 +517,9 @@ body.drawer #drawer{transform:translateX(0)}
 .seg button{padding:5px 11px;border-radius:4px;font-size:11.5px;color:var(--t2)}
 .seg button.on{background:var(--s4);color:var(--t1)}
 .sw{width:36px;height:20px;border-radius:10px;background:var(--s4);
-  position:relative;transition:background .16s}
+  position:relative;transition:background var(--dur-2)}
 .sw::after{content:"";position:absolute;top:3px;left:3px;width:14px;height:14px;
-  border-radius:50%;background:var(--t2);transition:.16s}
+  border-radius:50%;background:var(--t2);transition:var(--dur-2)}
 .sw.on{background:var(--acc)}
 .sw.on::after{left:19px;background:var(--on-acc)}
 .doc{padding:4px 2px;font:400 12.5px/1.75 var(--font-ui);color:var(--t2)}
@@ -536,6 +586,80 @@ body.drawer #drawer{transform:translateX(0)}
 .ed-st{flex:0 0 auto;padding:4px 10px;font:400 11px/15px var(--font-ui);
   color:var(--t3);border-top:1px solid var(--stroke)}
 
+/* ── 终端查找条 ── */
+.term-find{display:flex;align-items:center;gap:8px;padding:6px 10px;flex:0 0 auto;
+  background:var(--s2);border-bottom:1px solid var(--stroke)}
+.term-find input{flex:1 1 auto;min-width:0;background:var(--s1);border:1px solid var(--stroke);
+  border-radius:4px;padding:4px 8px;color:var(--t1);outline:none;
+  font:400 12.5px/18px var(--font-ui)}
+.term-find input:focus{border-color:var(--acc)}
+.term-find .tf-n{font:400 11.5px/16px var(--font-mono);color:var(--t3);flex:0 0 auto}
+.term-find button{width:22px;height:22px;border-radius:4px;color:var(--t2);
+  display:grid;place-items:center;flex:0 0 auto}
+.term-find button:hover{background:var(--s3);color:var(--t1)}
+/* 命中的行整行高亮：不改行内 DOM，避免和属性着色、选区打架 */
+.term-line.hit{background:rgba(250,204,21,.16)}
+
+/* ── 窗口切换器（Alt+`）─────────────────────────────────────
+   浏览器拿不到系统级的 Alt+Tab（那是 OS 的），所以用 Alt+`，
+   也就是 Windows 里「切换同一应用的窗口」那个键。 */
+#switcher{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%) scale(.98);
+  display:none;gap:10px;padding:14px;border-radius:12px;
+  background:rgba(26,32,42,.96);border:1px solid var(--stroke);
+  -webkit-backdrop-filter:blur(30px) saturate(180%);backdrop-filter:blur(30px) saturate(180%);
+  box-shadow:0 24px 60px rgba(0,0,0,.55);z-index:200;opacity:0;
+  transition:opacity var(--dur-1) var(--ease-decel),transform var(--dur-1) var(--ease-decel)}
+#switcher.on{display:flex;opacity:1;transform:translate(-50%,-50%) scale(1)}
+.sw-item{width:168px;height:112px;border-radius:8px;background:var(--s2);
+  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;
+  border:1px solid transparent;transition:background var(--dur-1),border-color var(--dur-1)}
+.sw-item svg{width:32px;height:32px}
+.sw-item span{font:400 12.5px/16px var(--font-ui);color:var(--t2);max-width:150px;
+  text-align:center;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sw-item.sel{background:rgba(45,212,191,.14);border-color:rgba(94,234,212,.5)}
+.sw-item.sel span{color:var(--t1)}
+
+/* ── 滚动条 ───────────────────────────────────────────────────
+   默认滚动条是浅色系统组件，放在深色面板上就是一块白胶布。
+   按 Win11 / VS Code 深色主题的规格自绘：10px 宽、轨道透明、
+   滑块半透明圆角 5px，再用 2px 透明边框把滑块视觉收窄到 6px；
+   悬停和按下分两档提亮，让人知道它可拖。
+   标准属性给 Firefox，-webkit- 给 Chrome/Edge。 */
+*{scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.18) transparent}
+::-webkit-scrollbar{width:12px;height:12px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:rgba(255,255,255,.18);border-radius:5px;
+  border:2px solid transparent;background-clip:padding-box}
+::-webkit-scrollbar-thumb:hover{background:rgba(255,255,255,.30);background-clip:padding-box}
+::-webkit-scrollbar-thumb:active{background:rgba(255,255,255,.40);background-clip:padding-box}
+::-webkit-scrollbar-corner{background:transparent}
+
+/* ── 缩放手柄 ─────────────────────────────────────────────────
+   八向。边 6px、角 12px（Win11 的命中区约 4-8px，角上放大一点更好抓）。
+   手柄层级低于窗控按钮：右上角那块归关闭按钮，符合真实系统的优先级。 */
+/* 最大化：圆角归零，否则四角会露出壁纸 */
+.win.max,.win.max .win-bar,.win.max .win-body{border-radius:0}
+
+/* 失焦：标题栏压暗、阴影减一层。三家都有失焦态，我们以前完全没有，
+   于是「哪个窗口是当前窗口」只能靠有没有强调色描边去猜。 */
+.win:not(.focused) .win-title{color:var(--t3)}
+.win:not(.focused){box-shadow:rgba(0,0,0,.18) 0 2px 6px,rgba(0,0,0,.22) 0 10px 24px}
+
+.win .rz{position:absolute;z-index:1}
+.win .rz-n{top:0;left:8px;right:8px;height:6px;cursor:ns-resize}
+.win .rz-s{bottom:0;left:8px;right:8px;height:6px;cursor:ns-resize}
+.win .rz-w{left:0;top:8px;bottom:8px;width:6px;cursor:ew-resize}
+.win .rz-e{right:0;top:8px;bottom:8px;width:6px;cursor:ew-resize}
+.win .rz-nw{top:0;left:0;width:16px;height:16px;cursor:nwse-resize}
+.win .rz-ne{top:0;right:0;width:16px;height:16px;cursor:nesw-resize}
+.win .rz-sw{bottom:0;left:0;width:16px;height:16px;cursor:nesw-resize}
+.win .rz-se{bottom:0;right:0;width:16px;height:16px;cursor:nwse-resize}
+.win .win-ctl{position:relative;z-index:2}
+.win.resizing,.win.resizing *{user-select:none}
+.win.dragging,.win.resizing{transition:none}
+/* 最小化：缩放淡出，等动画走完再 display:none */
+.win.minimizing{opacity:0;transform:scale(.9)}
+
 @media (prefers-reduced-motion:reduce){
   *{animation-duration:.01ms!important;animation-iteration-count:1!important;
     transition-duration:.01ms!important}
@@ -569,6 +693,7 @@ body.drawer #drawer{transform:translateX(0)}
   <div id="snapGhost"></div>
   <div id="snapPicker"></div>
   <div id="ctxMenu"></div>
+  <div id="switcher"></div>
   <div id="tip"></div>
   <div id="trayPanel"></div>
   <div id="winlayer"></div>
@@ -1192,11 +1317,17 @@ function drainCmd() {
 }
 
 function snapZonePx(px, py, W, H) {
-  if (px < 0 || py < 0 || px > W || py > H) return null;
+  /* 必须先夹到桌面范围内。拖到顶部/左上角时鼠标已经出了桌面边界，
+     坐标是负的——原来的 px < 0 就直接 return null，把吸附判没了，
+     用户看到的就是「拖到边上什么都不发生」。 */
+  px = Math.max(0, Math.min(W, px));
+  py = Math.max(0, Math.min(H, py));
   const L = px <= SNAP_EDGE, R = px >= W - SNAP_EDGE;
-  const T = py <= SNAP_EDGE;
+  const T = py <= SNAP_EDGE, B = py >= H - SNAP_EDGE;
   if (T && L) return "tl";
   if (T && R) return "tr";
+  if (B && L) return "bl";
+  if (B && R) return "br";
   if (T) return "top";
   if (L) return "left";
   if (R) return "right";
@@ -1407,6 +1538,12 @@ function setWinPos(i, x, y) {
 }
 function setWinRect(i, x, y, w, h) {
   if (!M) return;
+  /* 内核里这几个字段是 u32：传负数会变成 4294967295，窗口直接飞出桌面。
+     窗口本来也只能待在 800×600 的逻辑桌面里，这里统一夹一次。 */
+  x = Math.max(0, Math.min(800, Math.round(x)));
+  y = Math.max(0, Math.min(600, Math.round(y)));
+  w = Math.max(60, Math.min(800 - x, Math.round(w)));
+  h = Math.max(40, Math.min(600 - y, Math.round(h)));
   const b = guestOff(WIN_POS_PA);
   M.HEAPU32[b] = i;
   M.HEAPU32[b + 1] = x;
@@ -1447,8 +1584,77 @@ function winInit() {
                  : '<div class="win-body panel-dom"></div>');
     winLayer.appendChild(el);
     const body = el.querySelector(".win-body");
-    const we = { el, body, w: 0, h: 0, cx: 0, cy: 0, dragging: false, pending: false, px: 0, py: 0 };
+    const we = { el, body, w: 0, h: 0, cx: 0, cy: 0, dragging: false, resizing: false,
+                 pending: false, px: 0, py: 0 };
     winEls.push(we);
+
+    /* ── 八向缩放 ──
+       逻辑坐标是 800×600，屏幕上要过 deskTransform，所以拖动期间改的是
+       屏幕像素、松手才换算回逻辑坐标写进内核。最小尺寸按逻辑像素给：
+       终端要放得下 20 列 × 6 行，面板要放得下表头和两行。 */
+    const MIN = i === 0 ? [260, 150] : [150, 110];
+    let rzRaf = 0;
+    for (const d of ["n", "s", "w", "e", "nw", "ne", "sw", "se"]) {
+      const h = document.createElement("div");
+      h.className = "rz rz-" + d;
+      el.appendChild(h);
+      h.addEventListener("pointerdown", (ev) => {
+        if (!M) return;
+        ev.stopPropagation();
+        ev.preventDefault();
+        const r0 = el.getBoundingClientRect();
+        const osR0 = desk().getBoundingClientRect();
+        const L0 = deskTransform(osR0.width, osR0.height);
+        const st = { x: r0.left, y: r0.top, w: r0.width, h: r0.height };
+        const sx = ev.clientX, sy = ev.clientY;
+        we.resizing = true;
+        we.pending = false;
+        el.classList.add("resizing");
+        const minW = MIN[0] * L0.scale, minH = MIN[1] * L0.scale;
+        const move = (e2) => {
+          const dx = e2.clientX - sx, dy = e2.clientY - sy;
+          let x = st.x, y = st.y, w = st.w, h = st.h;
+          if (d.indexOf("e") >= 0) w = st.w + dx;
+          if (d.indexOf("s") >= 0) h = st.h + dy;
+          if (d.indexOf("w") >= 0) { w = st.w - dx; x = st.x + dx; }
+          if (d.indexOf("n") >= 0) { h = st.h - dy; y = st.y + dy; }
+          if (w < minW) { if (d.indexOf("w") >= 0) x = st.x + st.w - minW; w = minW; }
+          if (h < minH) { if (d.indexOf("n") >= 0) y = st.y + st.h - minH; h = minH; }
+          x = Math.max(0, x); y = Math.max(0, y);
+          w = Math.min(w, osR0.width - x); h = Math.min(h, osR0.height - y);
+          const st2 = el.style;
+          st2.left = x.toFixed(1) + "px"; st2.top = y.toFixed(1) + "px";
+          st2.width = w.toFixed(1) + "px"; st2.height = h.toFixed(1) + "px";
+          we.px = x; we.py = y;
+          /* 内容跟着窗口走。用 rAF 节流到每帧最多一次：
+             不节流的话 pointermove 一次就重排一次，比不重排还慢。 */
+          if (!rzRaf) rzRaf = requestAnimationFrame(() => {
+            rzRaf = 0;
+            if (i === 0) termLayout(el.querySelector(".term-dom"), false);
+            panelsRender();
+          });
+        };
+        const up = () => {
+          window.removeEventListener("pointermove", move);
+          window.removeEventListener("pointerup", up);
+          we.resizing = false;
+          el.classList.remove("resizing");
+          const osR1 = desk().getBoundingClientRect();
+          const L1 = deskTransform(osR1.width, osR1.height);
+          const nx = Math.max(0, Math.min(800, Math.round((parseFloat(el.style.left) - L1.ox) / L1.scale)));
+          const ny = Math.max(0, Math.min(600, Math.round((parseFloat(el.style.top) - L1.oy) / L1.scale)));
+          const nw = Math.max(60, Math.min(800 - nx, Math.round(parseFloat(el.style.width) / L1.scale)));
+          const nh = Math.max(40, Math.min(600 - ny, Math.round(parseFloat(el.style.height) / L1.scale)));
+          setWinRect(i, nx, ny, nw, nh);      /* 尺寸也回写内核，内核才是权威 */
+          we.pending = true;
+          we.pendingUntil = Date.now() + 600;
+          if (i === 0) termLayout(el.querySelector(".term-dom"), true);
+          panelsRender();
+        };
+        window.addEventListener("pointermove", move);
+        window.addEventListener("pointerup", up);
+      });
+    }
 
     /* ── 拖动：宿主自己搬，不等内核 ──
        旧路径是 pointermove 写鼠标寄存器 → 内核下一轮主循环读 → 改坐标 →
@@ -1466,6 +1672,10 @@ function winInit() {
       const r = el.getBoundingClientRect();
       const osR = desk().getBoundingClientRect();
       const offX = ev.clientX - r.left, offY = ev.clientY - r.top;
+      /* 拖动阈值：Win11 是 4px（SM_CXDRAG），GNOME 是 8px。
+         没有阈值的话手一抖窗口就动，双击标题栏也会先跳一下。 */
+      const startX = ev.clientX, startY = ev.clientY;
+      let moved = false;
       we.dragging = true;
       we.pending = false;
       hostDragActive = true;
@@ -1474,8 +1684,14 @@ function winInit() {
 
       const move = (e2) => {
         if (!we.dragging) return;
-        const x = Math.max(-r.width + 120, Math.min(osR.width - 90, e2.clientX - osR.left - offX));
-        const y = Math.max(0, Math.min(osR.height - 76, e2.clientY - osR.top - offY));
+        if (!moved) {
+          if (Math.abs(e2.clientX - startX) < 4 && Math.abs(e2.clientY - startY) < 4) return;
+          moved = true;
+        }
+        /* 只允许在桌面内移动：拖出屏幕会让逻辑坐标变负，而内核存的是 u32。
+           真实桌面里窗口也是被夹在屏幕内的。 */
+        const x = Math.max(0, Math.min(Math.max(0, osR.width - r.width), e2.clientX - osR.left - offX));
+        const y = Math.max(0, Math.min(Math.max(0, osR.height - r.height - 8), e2.clientY - osR.top - offY));
         el.style.left = x + "px";
         el.style.top = y + "px";
         we.px = x; we.py = y;
@@ -1675,17 +1891,21 @@ function monoCharRatio() {
   return monoRatio;
 }
 
-function termLayout(host, force) {
+function termLayout(host, force, wPx, hPx) {
   if (!host || !termCols || !termRows) return;
   const padX = 12, padY = 10;
-  const W = host.clientWidth - padX * 2;
-  const H = host.clientHeight - padY * 2;
+  /* 能传就传：读 clientWidth 会拿到「刚写完 style、还没重排」的旧宽度 */
+  const W = (wPx != null ? wPx : host.clientWidth) - padX * 2;
+  const H = (hPx != null ? hPx : host.clientHeight) - padY * 2;
   if (W <= 0 || H <= 0) return;
   const ratio = monoCharRatio();
   /* 字号上限 15px：再大就不是终端而是大字报了。
      宽度铺不满时右侧留白，真实终端在宽窗口里也是这样。 */
   let fs = (W / (termCols * ratio)) * termScale;
-  fs = Math.max(7.5, Math.min(15 * termScale, fs));
+  /* 上限 16px：对齐 Windows Terminal 的默认 12pt（≈16px）。
+     18px 时行高 20.7px，22 行 = 455px，超过可用的 450px，
+     终端一启动就多出一条 5px 的滚动缝。 */
+  fs = Math.max(7.5, Math.min(16 * termScale, fs));
   const cw = fs * ratio;
   if (cw * termCols > W + 0.5) fs = Math.max(7.5, W / (termCols * ratio));
   /* 行高：优先铺满高度，但压在 1.15–1.55 倍字号之间，避免字大行稀 */
@@ -1703,8 +1923,63 @@ function termLayout(host, force) {
   termPlaceCursor();
 }
 
+/* 按内核给的属性字节分段上色。
+   内核标了 1=提示符 / 2=输入回显 / 5=错误，其余（0）交给行首启发式。
+   以前全靠正则猜行首，猜得中是因为内核输出格式固定；现在提示符和
+   用户输入在同一行里，只有内核知道哪几个字符是提示符。 */
+function segHtml(cols, getCp, getAttr) {
+  /* 找到最后一个非空格的格子，尾部空白不渲染（否则每行都拖一条空格） */
+  let last = -1;
+  for (let x = cols - 1; x >= 0; x--) {
+    const cp = getCp(x);
+    if (cp && cp !== 32 && cp !== 0xFFFFFFFF) { last = x; break; }
+  }
+  if (last < 0) return "";
+
+  let plain = "", maxAttr = 0, cur = -1, buf = "";
+  const parts = [];
+  for (let x = 0; x <= last; x++) {
+    const cp = getCp(x);
+    if (cp === 0xFFFFFFFF) continue;            /* 宽字符右半格 */
+    const a = getAttr(x) || 0;
+    if (a > maxAttr) maxAttr = a;
+    const ch = (cp === 0 || cp === 32) ? " " : String.fromCodePoint(cp);
+    plain += ch;
+    if (a !== cur) {
+      if (buf) parts.push({ a: cur, t: buf });
+      cur = a; buf = "";
+    }
+    buf += ch;
+  }
+  if (buf) parts.push({ a: cur, t: buf });
+
+  /* 整行都是普通色：交给行首启发式认 JSON / 内核日志 */
+  if (maxAttr === 0) return termLineHtml(plain);
+  return parts.map((p) => {
+    const cls = p.a === 1 ? "ta1" : p.a === 2 ? "ta2" : p.a === 5 ? "ta5" : "";
+    return cls ? '<span class="' + cls + '">' + esc(p.t) + '</span>' : esc(p.t);
+  }).join("");
+}
+
+/* 一行终端文本 → 带颜色的 HTML。
+   纯前端启发式，不改内核协议：提示符、内核日志、JSON、错误各走一色。 */
+function termLineHtml(txt) {
+  if (!txt) return "";
+  const m = /^(rvsh>\s?)([\s\S]*)$/.exec(txt);
+  if (m) {
+    return '<span class="tc-p">' + esc(m[1]) + '</span>'
+         + (m[2] ? '<span class="tc-in">' + esc(m[2]) + '</span>' : "");
+  }
+  if (/^\s*\[[SU]\]/.test(txt)) return '<span class="tc-log">' + esc(txt) + '</span>';
+  if (/^\s*[{[]/.test(txt)) return '<span class="tc-json">' + esc(txt) + '</span>';
+  if (/错误|失败|not found|不存在|"ok":false/.test(txt)) return '<span class="tc-err">' + esc(txt) + '</span>';
+  return esc(txt);
+}
+
 /* ══ 终端网格渲染 ══ */
 let termEls = null, termRows = 0, termCols = 0, termSeq = [];
+let termHistCount = 0;      /* 当前渲染了多少历史行 */
+let termHistSynced = -1;    /* 上次读到的 scroll_count */
 let termCharW = 8.4, termLineH = 20;
 let termCurX = 0, termCurY = 0, termCurVis = 0;
 
@@ -1717,13 +1992,18 @@ function termRender() {
   const cols = A[tb + 1], rows = A[tb + 2];
   const cellsAddr = A[tb + 3] >>> 0, rowseqAddr = A[tb + 4] >>> 0;
   const cx = A[tb + 5], cy = A[tb + 6], cvis = A[tb + 7];
+  const scrollAddr = A[tb + 9] >>> 0, sHead = A[tb + 10], sCount = A[tb + 11], sLines = A[tb + 12];
   const host = winEls[0] && winEls[0].body;
   if (!host || !cols || !rows) return;
+
+  /* 用户是不是贴在底部。回看历史时不能强行拉回去。 */
+  const atBottom = host.scrollTop + host.clientHeight >= host.scrollHeight - 8;
 
   if (!termEls || termRows !== rows || termCols !== cols) {
     termRows = rows; termCols = cols;
     termSeq = new Array(rows).fill(-1);
     host.querySelectorAll(".term-line").forEach((n) => n.remove());
+    termHistCount = 0; termHistSynced = -1;
     termEls = [];
     for (let y = 0; y < rows; y++) {
       const d = document.createElement("div");
@@ -1735,19 +2015,53 @@ function termRender() {
     termLayout(host, true);
   }
 
+  /* ── 历史行 ──
+     内核的 scrollback 是环形缓冲，按 (head - count + i) 顺序读才是时间顺序。
+     count 变少（clear）就整段重建；变多就只追加差的那几行。 */
+  const attrAddr = A[tb + 13] >>> 0, scrollAttrAddr = A[tb + 14] >>> 0;
+  const B = M.HEAPU8;
+  const attrOff = attrAddr ? guestByte(attrAddr) : 0;
+  const scrollAttrOff = scrollAttrAddr ? guestByte(scrollAttrAddr) : 0;
+
+  if (scrollAddr && sLines && sCount !== termHistSynced) {
+    const offS = guestOff(scrollAddr);
+    if (sCount < termHistCount) {
+      host.querySelectorAll(".term-line.hist").forEach((n) => n.remove());
+      termHistCount = 0;
+    }
+    const want = Math.min(sCount, sLines);
+    const add = want - termHistCount;
+    for (let i = 0; i < add; i++) {
+      const ring = ((sHead - want + termHistCount + i) % sLines + sLines) % sLines;
+      const base = ring * cols;
+      const abase = scrollAttrOff ? scrollAttrOff + base : 0;
+      const d = document.createElement("div");
+      d.className = "term-line hist";
+      d.innerHTML = scrollAttrOff
+        ? segHtml(cols, (x) => A[offS + base + x], (x) => B[abase + x])
+        : termLineHtml("");
+      host.insertBefore(d, termEls[0]);
+      termHistCount++;
+    }
+    termHistSynced = sCount;
+  }
+
   const offC = guestOff(cellsAddr), offR = guestOff(rowseqAddr);
   for (let y = 0; y < rows; y++) {
     const rseq = A[offR + y];
     if (rseq === termSeq[y]) continue;
     termSeq[y] = rseq;
-    let txt = "";
-    for (let x = 0; x < cols; x++) {
-      const cp = A[offC + y * cols + x];
-      if (cp === 0xFFFFFFFF) continue;          /* 宽字符右半格 */
-      if (cp === 0 || cp === 32) { txt += " "; continue; }
-      txt += String.fromCodePoint(cp);
-    }
-    termEls[y].textContent = txt.replace(/\s+$/, "");
+    const rowBase = offC + y * cols;
+    const rowAttr = attrOff ? attrOff + y * cols : 0;
+    const html = rowAttr
+      ? segHtml(cols, (x) => A[rowBase + x], (x) => B[rowAttr + x])
+      : termLineHtml("");
+    if (termEls[y].innerHTML !== html) termEls[y].innerHTML = html;
+  }
+
+  /* 原来贴在底部就继续贴底：新输出不该把用户顶到上面去 */
+  if (atBottom && host.scrollTop + host.clientHeight < host.scrollHeight - 2) {
+    host.scrollTop = host.scrollHeight;
   }
 
   termCurX = cx; termCurY = cy; termCurVis = cvis;
@@ -1761,7 +2075,7 @@ function termPlaceCursor() {
   if (!cur) return;
   host.classList.toggle("nocursor", !termCurVis);
   cur.style.left = (12 + termCurX * termCharW) + "px";
-  cur.style.top = (10 + termCurY * termLineH) + "px";
+  cur.style.top = (10 + (termHistCount + termCurY) * termLineH) + "px";
   cur.style.width = termCharW.toFixed(2) + "px";
   cur.style.height = termLineH.toFixed(2) + "px";
 }
@@ -2252,9 +2566,24 @@ function winSync() {
     if (!we) continue;
 
     if (!visible || !ww || !wh) {
-      if (we.sig !== "hidden") { we.el.style.display = "none"; we.sig = "hidden"; }
+      if (we.sig !== "hidden") {
+        /* 从「可见」变「隐藏」时先播一遍缩放淡出，否则窗口是硬消失的。
+           定时器要记住：167ms 内窗口又被打开就得取消，不然会把刚显示的窗口藏起来。 */
+        if (we.sig && we.sig !== "hidden" && !we.hideTimer) {
+          we.el.classList.add("minimizing");
+          we.hideTimer = setTimeout(() => {
+            we.hideTimer = 0;
+            if (we.sig === "hidden") we.el.style.display = "none";
+            we.el.classList.remove("minimizing");
+          }, 167);
+        } else if (!we.hideTimer) {
+          we.el.style.display = "none";
+        }
+        we.sig = "hidden";
+      }
       continue;
     }
+    if (we.hideTimer) { clearTimeout(we.hideTimer); we.hideTimer = 0; we.el.classList.remove("minimizing"); }
     const left = (ox + x * scale).toFixed(1);
     const top = (oy + y * scale).toFixed(1);
     const wid = (ww * scale).toFixed(1);
@@ -2269,7 +2598,7 @@ function winSync() {
         we.pending = false;
       }
     }
-    const locked = we.dragging || we.pending;
+    const locked = we.dragging || we.resizing || we.pending;
     const sig = (locked ? "L" : left) + "," + (locked ? "L" : top) + "," + wid + "," + hei + "," + z + "," + focused;
     if (we.sig !== sig) {
       we.sig = sig;
@@ -2280,6 +2609,8 @@ function winSync() {
       s.height = hei + "px";
       s.zIndex = 10 + z;
       we.el.classList.toggle("focused", !!focused);
+      /* 最大化时圆角归零：Win11 和 GNOME 都是 0px，只有 macOS 的 zoom 保留圆角 */
+      we.el.classList.toggle("max", ww >= 800);
     }
 
     const t = winReadStr(titleAddr, 32);
@@ -2289,7 +2620,9 @@ function winSync() {
     const cw = Math.round(ww * scale), ch = Math.round(wh * scale);
     if (we.w !== cw || we.h !== ch) {
       we.w = cw; we.h = ch;
-      if (i === 0) termLayout(we.body, true);
+      /* 直接把这帧算出来的尺寸传进去，不让 termLayout 去读 clientWidth：
+         刚写完 style 的那一刻它读到的还是旧布局，字号会永远慢一拍。 */
+      if (i === 0) termLayout(we.body, true, cw - 2, ch - 32 - 2);
       else panelRowHeight(we.body, we.body.querySelectorAll("tbody tr").length);
     }
   }
@@ -2363,8 +2696,12 @@ function screenPointerBind() {
      否则点一下窗口的「关闭」，pointerup 冒泡到 #os 又给内核发了一次
      按下，内核按自己的坐标命中测试把它判成「最大化」——
      表现就是关个窗口却把它最大化了。 */
+  /* 这些区域由宿主自己的 DOM 处理交互，不转发给内核，也不阻止默认行为。
+     窗口（.win）必须算在内：窗口的拖动、缩放、选中文字都是 DOM 的事，
+     以前没排除它，于是点终端时这里 preventDefault 掉 pointerdown，
+     浏览器连 mousedown 都不派发了，终端里的字一个也选不中。 */
   const isHostUI = (t) => !!(t && t.closest
-    && t.closest("#dock,#drawer,#startMenu,.host-win,.win-ctl"));
+    && t.closest("#dock,#drawer,#startMenu,.host-win,.win"));
   let hostUiDown = false;
 
   cv.addEventListener("pointermove", (e) => {
@@ -2376,8 +2713,8 @@ function screenPointerBind() {
   cv.addEventListener("pointerdown", (e) => {
     if (!M) return;
     if (isHostUI(e.target)) { hostUiDown = true; return; }
-    const ime = $("ime");
-    if (ime) { e.preventDefault(); ime.focus(); }
+    /* 不再 preventDefault、不再抢焦点：
+       聚焦改到 pointerup（且只在没有拖选时），否则会把选区清掉。 */
     const [x, y] = toFb(e);
     /* 先补一次抬起，清掉内核可能残留的按下状态，再按下去 */
     pushMouse(x, y, 0);
@@ -2683,6 +3020,135 @@ function refreshPanels() {
   setTimeout(() => { quietOut = false; }, 1600);
 }
 
+/* ══ 终端：查找 / 粘贴 / 右键菜单 / 链接 ══
+   这些是 Windows Terminal 的默认能力，以前一个都没有：
+   复制靠手选、粘贴靠浏览器默认、查找不存在、链接不能点。 */
+function termPaste(txt) {
+  if (!M || !txt) return;
+  const lines = txt.replace(/\r\n/g, "\n").split("\n");
+  /* 多行粘贴警告：Windows Terminal 默认 multiLinePasteWarning=true，
+     因为往 shell 里粘多行很容易把半截命令直接执行掉。 */
+  if (lines.length > 1) {
+    const ok = window.confirm("要粘贴 " + lines.length + " 行内容吗？\n\n"
+      + txt.slice(0, 300) + (txt.length > 300 ? "…" : ""));
+    if (!ok) return;
+  }
+  for (const b of _enc.encode(txt)) M._rv_uart_write(b);
+  if (!ticking) startTicking();
+}
+async function termPasteClipboard() {
+  try {
+    const txt = await navigator.clipboard.readText();
+    termPaste(txt);
+  } catch (_) {
+    /* 没有剪贴板权限：退回让用户手动 Ctrl+V */
+  }
+}
+function termFind(q) {
+  const lines = [...document.querySelectorAll(".term-line")];
+  lines.forEach((l) => l.classList.remove("hit"));
+  const nEl = document.querySelector(".term-find .tf-n");
+  if (!q) { if (nEl) nEl.textContent = "0"; return; }
+  let n = 0, first = null;
+  for (const l of lines) {
+    if (l.textContent.includes(q)) {
+      l.classList.add("hit");
+      n++;
+      if (!first) first = l;
+    }
+  }
+  if (nEl) nEl.textContent = String(n);
+  if (first) first.scrollIntoView({ block: "center" });
+}
+function termFindOpen() {
+  const dom = document.querySelector(".term-dom");
+  if (!dom || !dom.parentElement) return;
+  if (dom.parentElement.querySelector(".term-find")) {
+    dom.parentElement.querySelector(".term-find input").focus();
+    return;
+  }
+  const bar = document.createElement("div");
+  bar.className = "term-find";
+  bar.innerHTML = '<input placeholder="在终端里查找…" /><span class="tf-n">0</span>'
+    + '<button title="关闭">×</button>';
+  dom.parentElement.insertBefore(bar, dom);
+  const inp = bar.querySelector("input");
+  inp.oninput = () => termFind(inp.value);
+  inp.onkeydown = (e) => {
+    if (e.key === "Escape") { bar.remove(); termFind(""); focusTerm(); e.preventDefault(); }
+  };
+  bar.querySelector("button").onclick = () => { bar.remove(); termFind(""); focusTerm(); };
+  inp.focus();
+}
+
+/* 终端右键菜单 */
+document.addEventListener("contextmenu", (e) => {
+  const dom = e.target && e.target.closest && e.target.closest(".term-dom");
+  if (!dom) return;
+  e.preventDefault();
+  e.stopPropagation();
+  const sel = String(window.getSelection());
+  showCtx([
+    { label: "复制", hint: "Ctrl+Shift+C", disabled: !sel,
+      action: () => { if (sel) navigator.clipboard.writeText(sel).catch(() => {}); } },
+    { label: "粘贴", hint: "Ctrl+Shift+V", action: () => termPasteClipboard() },
+    { label: "全选", hint: "Ctrl+Shift+A",
+      action: () => {
+        const r = document.createRange();
+        r.selectNodeContents(dom);
+        const s2 = window.getSelection();
+        s2.removeAllRanges(); s2.addRange(r);
+      } },
+    { sep: true },
+    { label: "查找…", hint: "Ctrl+Shift+F", action: () => termFindOpen() },
+    { label: "清屏", action: () => { if (M) window.rv.cmd("clear"); } },
+  ]);
+}, true);
+
+/* Ctrl+点击链接：Windows Terminal 是 Ctrl+点击，macOS 是 Cmd+点击 */
+document.addEventListener("click", (e) => {
+  if (!e.ctrlKey && !e.metaKey) return;
+  const line = e.target && e.target.closest && e.target.closest(".term-line");
+  if (!line) return;
+  const m = line.textContent.match(/https?:\/\/[^\s"'<>]+/);
+  if (!m) return;
+  e.preventDefault();
+  window.open(m[0], "_blank", "noopener,noreferrer");
+}, true);
+
+/* ══ 窗口切换器（Alt+`）══
+   浏览器拿不到系统级 Alt+Tab，所以用 Alt+`——Windows 里它就是
+   「切换同一应用的窗口」，语义对得上：按住 Alt 连按 ` 循环，松开应用。 */
+let swList = [], swIdx = 0, swOn = false;
+function swRender() {
+  const el = $("switcher");
+  if (!el) return;
+  el.innerHTML = swList.map((w, i) =>
+    '<div class="sw-item' + (i === swIdx ? " sel" : "") + '">'
+    + (WIN_ICONS[w.id] || "") + '<span>' + esc(w.title || ("窗口 " + w.id)) + "</span></div>").join("");
+}
+function swShow() {
+  const wins = window.rv.state.wins.filter((w) => w.visible);
+  if (!wins.length) return;
+  swList = wins;
+  swIdx = wins.length > 1 ? 1 : 0;     /* 默认选下一个，和 Alt+Tab 手感一致 */
+  swOn = true;
+  swRender();
+  $("switcher").classList.add("on");
+}
+function swStep(d) {
+  if (!swOn || !swList.length) return;
+  swIdx = (swIdx + d + swList.length) % swList.length;
+  swRender();
+}
+function swApply() {
+  if (!swOn) return;
+  swOn = false;
+  $("switcher").classList.remove("on");
+  const w = swList[swIdx];
+  if (w) window.rv.focusWin(w.id);
+}
+
 /* ══ 输入 ══ */
 const ime = $("ime");
 document.addEventListener("input", (e) => {
@@ -2711,9 +3177,20 @@ document.addEventListener("paste", (e) => {
    不要再送进 guest 终端 —— 否则 Tab 永远移不动焦点，Enter 会既开应用又敲回车。 */
 const UI_FOCUS = ".dicon,.dock-app,.dock-btn,.sm-tile,.sm-ri,.win-ctl,#startMenu";
 
+document.addEventListener("keyup", (e) => {
+  /* 松开 Alt 才应用，和 Alt+Tab 一致：按住循环，松手切过去 */
+  if (e.key === "Alt" && swOn) swApply();
+});
+
 document.addEventListener("keydown", (e) => {
   if (!loaded || !M) return;
   if (e.key === "F12") { toggleDrawer(); e.preventDefault(); return; }
+  /* Alt+` 窗口切换器。用 e.code 而不是 e.key：不同键盘布局下 ` 的字符不一样。 */
+  if (e.altKey && e.code === "Backquote") {
+    e.preventDefault();
+    if (swOn) swStep(e.shiftKey ? -1 : 1); else swShow();
+    return;
+  }
   if (e.key === "Escape") { closeStartMenu(); return; }
   const tag = e.target && e.target.tagName;
   if (e.target && e.target.id !== "ime" && (tag === "INPUT" || tag === "TEXTAREA")) return;
@@ -2757,7 +3234,37 @@ document.addEventListener("keydown", (e) => {
     }
   }
 
+  /* 终端快捷键。
+     注意 Chrome 自己占了一批组合键：Ctrl+Shift+A 是「搜索标签页」、
+     Ctrl+Shift+V 是「粘贴为纯文本」，网页根本收不到。
+     所以全选和查找改用 Ctrl+A / Ctrl+F（终端里这两个键没有别的用途）。 */
+  if (e.ctrlKey && !e.altKey && !e.metaKey) {
+    const k = e.key.toLowerCase();
+    if (k === "a" && !e.shiftKey) {
+      e.preventDefault();
+      const dom = document.querySelector(".term-dom");
+      if (dom) {
+        const r = document.createRange();
+        r.selectNodeContents(dom);
+        const s2 = window.getSelection();
+        s2.removeAllRanges(); s2.addRange(r);
+      }
+      return;
+    }
+    if (k === "f" && !e.shiftKey) { e.preventDefault(); termFindOpen(); return; }
+    if (k === "c" && e.shiftKey) {
+      e.preventDefault();
+      const sel = String(window.getSelection());
+      if (sel) navigator.clipboard.writeText(sel).catch(() => {});
+      return;
+    }
+    if (k === "v" && e.shiftKey) { e.preventDefault(); termPasteClipboard(); return; }
+  }
   if (e.ctrlKey && (e.key === "c" || e.key === "C")) {
+    /* 有选区时 Ctrl+C 是复制，没有选区才是中断——和 Windows Terminal 一致。
+       以前无条件发 0x03，用户想复制终端里的文字永远复制不到。 */
+    const sel = window.getSelection();
+    if (sel && String(sel).length > 0) return;   /* 交给浏览器复制 */
     M._rv_uart_write(3); e.preventDefault(); return;
   }
   if (e.key === "Enter") { M._rv_uart_write(13); e.preventDefault(); }
@@ -2770,10 +3277,28 @@ document.addEventListener("keydown", (e) => {
   if (!ticking) startTicking();
 });
 
-/* 点终端窗口时把焦点交给输入法入口 */
+/* 点终端窗口时把焦点交给输入法入口。
+   两个坑都要躲：
+   1) 不能在 pointerdown 就 focus —— 浏览器会立刻清掉正在拖出来的选区；
+   2) pointerup 的那一刻选区还没落定，直接读 getSelection() 会读到空，
+      于是被当成单击又 focus 一次，照样清掉。
+   所以：记下按下位置，抬起时位移超过 3px 就认定是拖选；并且延后一帧再判断。 */
+let termDownX = -1, termDownY = -1;
 document.addEventListener("pointerdown", (e) => {
+  if (!e.target.closest(".term-dom")) { termDownX = -1; return; }
+  termDownX = e.clientX; termDownY = e.clientY;
+}, true);
+document.addEventListener("pointerup", (e) => {
   if (!e.target.closest(".term-dom")) return;
-  setTimeout(focusTerm, 0);
+  const dragged = termDownX >= 0 &&
+    (Math.abs(e.clientX - termDownX) > 3 || Math.abs(e.clientY - termDownY) > 3);
+  termDownX = -1;
+  setTimeout(() => {
+    if (dragged) return;                        /* 拖选过，别抢焦点 */
+    const sel = window.getSelection();
+    if (sel && String(sel).length > 0) return;
+    focusTerm();
+  }, 0);
 }, true);
 
 /* ══ 调试面板按钮 ══ */
@@ -2862,10 +3387,12 @@ window.rv = {
         const el = document.querySelectorAll(".win")[i];
         return el ? el.className.split(" ").filter((c) => c.startsWith("snap-")) : [];
       }),
-      termFontSize: (() => {
+      /* 必须是 getter：写成 IIFE 的话只在对象字面量求值时算一次，
+         之后窗口怎么缩放都返回初始字号（实测永远是 18）。 */
+      get termFontSize() {
         const e = document.querySelector(".term-dom");
         return e ? parseFloat(getComputedStyle(e).fontSize) : null;
-      })(),
+      },
       wallStyle: ($("wall") ? $("wall").style.background.slice(0, 24) : ""),
       iconsVisible: disp("icons"),
       clock: $("clock") ? $("clock").textContent : null,
@@ -2906,6 +3433,12 @@ window.rv = {
   /* zone 除了 SNAP 里的 8 种，还接受 "restore"：还原到该窗口的默认尺寸。
      应用布局的同时把窗口提到最前 —— 真实系统里选完布局，那个窗口就是焦点窗口，
      否则用户点完布局发现窗口被别的窗口盖住了。 */
+  focusWin(idx) {
+    if (!M) return false;
+    if (idx < 0 || idx >= WIN_SLOTS) return false;
+    sendWinCmd(idx * 10 + 5);
+    return true;
+  },
   ui_snapTo(idx, zone) {
     if (zone === "restore") { if (M) sendWinCmd(idx * 10 + 6); return true; }
     if (!SNAP[zone]) return false;
