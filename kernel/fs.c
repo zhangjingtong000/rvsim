@@ -133,6 +133,18 @@ int fs_remove(const char *name)
     return 0;
 }
 
+/* 重命名 / 移动。RAMFS 是平铺命名空间，改名就是改字符串。
+   目标已存在时失败，不做静默覆盖——覆盖掉的那个文件没有回收站。 */
+int fs_rename(const char *from, const char *to)
+{
+    fs_file_t *f = fs_find(from);
+    if (!f || !to || !to[0]) return -1;
+    if (k_strlen(to) >= FS_NAME_MAX) return -2;
+    if (fs_find(to)) return -3;
+    k_strcpy_n(f->name, to, FS_NAME_MAX);
+    return 0;
+}
+
 /* 创建目录。已存在则返回 0（幂等）。 */
 int fs_mkdir(const char *name)
 {

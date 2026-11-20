@@ -117,6 +117,45 @@ int  fs_slot_of(const char *name);
 int  fs_read_slot(u32 slot, u8 *out, u32 len, u32 pos);
 extern u32 g_cur_uid;
 u32  fs_count(void);
+/* 重命名/移动。目标已存在返回 -3，名字过长 -2，源不存在 -1。 */
+int  fs_rename(const char *from, const char *to);
+
+/* ── 宿主 → 内核控制块 ──
+   Web 端要在图形界面里做「新建文件 / 删除 / 重命名 / 结束进程」，
+   只靠往 UART 敲字符做不到：多行内容、二进制、非 ASCII 都不好传，
+   而且敲字符会污染终端回显。这里给宿主一条结构化下行通道，
+   语义与 shell 命令一一对应，内核处理完把结果写回 rc。
+   0x83FFC000 起是空闲页（win_info 在 0x83FFE000，front 在 0x83FFF000）。 */
+#define HCMD_PA       0x83FFC000u
+#define HCMD_DATA_PA  0x83FFD000u
+#define HCMD_DATA_MAX 4096u
+#define HCMD_MAGIC    0x48434D44u      /* 'HCMD' */
+
+#define HCMD_WRITE    1u               /* p0=路径，数据在 HCMD_DATA_PA，len=长度 */
+#define HCMD_REMOVE   2u               /* p0=路径 */
+#define HCMD_RENAME   3u               /* p0=旧名，p1=新名 */
+#define HCMD_MKDIR    4u               /* p0=路径 */
+#define HCMD_KILL     5u               /* a0=pid */
+#define HCMD_SUSPEND  6u               /* a0=pid */
+#define HCMD_RESUME   7u               /* a0=pid */
+#define HCMD_READ     8u               /* p0=路径；内核把内容写进 HCMD_DATA_PA，len=实际长度 */
+
+typedef struct {
+    u32 magic;      /* 宿主写 HCMD_MAGIC；内核处理完清 0 */
+    u32 seq;        /* 宿主递增；内核据此判断有新命令 */
+    u32 op;
+    u32 a0;
+    u32 len;
+    u32 rc;         /* 0 成功，非 0 失败 */
+    char p0[64];
+    char p1[64];
+} host_cmd_t;
+
+extern volatile host_cmd_t *g_hcmd;
+/* 在 shell 主循环里轮询，处理全部命令 */
+void host_cmd_poll(void);
+/* 只取「终止正在运行的进程」这一条：跑飞的用户程序只有定时器中断能看见它 */
+int  host_cmd_take_kill(void);
 
 /* 计划类型：apply 时按这个分派 */
 #define PLAN_RUN     1
@@ -137,6 +176,8 @@ void *memcpy(void *d, const void *s, size_t n);
 
 /* 页表 */
 u32 *page_alloc(void);
+/* 归还一页到空闲链。只接受页池范围内、页对齐的地址。 */
+void page_free(void *p);
 u32 *vm_proc_pgtbl(void);
 u32 *page_alloc_n(u32 n);
 void vm_map_code(u32 *root, u32 va, u32 pa);

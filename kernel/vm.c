@@ -3,12 +3,34 @@
 /* 简单的物理页分配器：从内核末尾之后开始 */
 static u32 g_next_page = 0;
 
+/* 回收链：被 kill 的进程要把代码页、堆页、页表还回来。
+   没有这个链，反复 run/kill 几十次就会把内核页池（约 3 MB）耗尽，
+   之后任何一次 page_alloc 都会打印「物理页耗尽」然后关机。 */
+static u32 g_free_list = 0;
+
 extern u8 _kernel_end[];
+
+void page_free(void *p)
+{
+    u32 a = (u32)p;
+    u32 lo = ((u32)_kernel_end + 4095u) & ~4095u;
+    /* 只接受页池范围内、页对齐的地址：
+       内核自己的共享页（比如 g_kroot）不该被任何进程释放。 */
+    if (a < lo || a >= 0x80400000u || (a & 4095u)) return;
+    *(u32 *)a = g_free_list;
+    g_free_list = a;
+}
 
 u32 *page_alloc(void)
 {
     if (!g_next_page) {
         g_next_page = ((u32)_kernel_end + 4095u) & ~4095u;
+    }
+    if (g_free_list) {
+        u32 *q = (u32 *)g_free_list;
+        g_free_list = *(u32 *)q;
+        memset(q, 0, 4096);
+        return q;
     }
     /* 上限：用户区从 0x80400000 开始，内核页分配器不能越界进去，
        否则会把用户代码页当成内核自己的页分出去。 */
@@ -28,6 +50,7 @@ u32 *page_alloc(void)
 /* 连续 n 页（每进程的代码副本必须是连续的，才能按页平移映射） */
 u32 *page_alloc_n(u32 n)
 {
+    if (n == 1) return page_alloc();
     if (!g_next_page) g_next_page = ((u32)_kernel_end + 4095u) & ~4095u;
     if (g_next_page + n * 4096u > 0x80400000u) {
         extern void uart_puts(const char *);

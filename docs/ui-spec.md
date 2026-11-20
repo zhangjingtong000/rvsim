@@ -23,7 +23,7 @@
 | 字段 | 类型 | 含义 |
 |---|---|---|
 | `wins[3]` | `{id,title,focused,visible,x,y,z,w,h}` | 窗口。坐标是 800×600 逻辑桌面，不是像素 |
-| `procs[]` | `{pid,state,pc}` | 进程表，`state` ∈ READY/RUN/EXIT |
+| `procs[]` | `{pid,state,pc}` | 进程表，`state` ∈ READY/RUN/EXIT/UNUSED/SUSPEND |
 | `files[]` | `{name,size}` | RAMFS 文件 |
 | `term[22]` | `string[22]` | 终端字符网格，61 列 × 22 行 |
 | `rate` | `number` | 指令吞吐 M/s |
@@ -37,6 +37,9 @@
 `booted` `drawer` `startMenu` `trayPanel` `snapPicker` `snapGhost` `ctxMenu`
 `tip` `hostWins` `dockActive` `iconCount` `selectedIcons` `focusedWindow`
 `snapClasses` `termFontSize` `wallStyle` `iconsVisible` `clock` `rate`
+
+另有一个不属于「可见状态」但必须可读的字段：`rv.fsCwd` —— 文件浏览器的当前目录。
+它决定列表里出现哪些行，测不出来就等于这一层交互无法验证。
 
 ### 0.3 驱动接口：`window.rv.*`（模拟用户动作）
 
@@ -56,6 +59,14 @@
 | `ui_dblFile(name)` | 双击文件行 |
 | `type(s)` / `cmd(s)` | 向 UART 写原文 / 写一条命令并回车 |
 | `click(x,y)` | 往内核送一次点击（逻辑坐标） |
+| `fsWrite(name,text)` / `fsRead(name)` | 整文件写入 / 读出。返回 Promise<rc> / Promise<string\|null> |
+| `fsRemove(name)` / `fsRename(from,to)` / `fsMkdir(name)` | 删除 / 重命名 / 建目录 |
+| `fsChdir(path)` / `fsCwd` | 切换文件浏览器目录 / 读当前目录 |
+| `openFile(name)` | 按文件类型打开：目录进入、`.elf` 运行、文本进编辑器 |
+| `killProc(pid)` / `suspendProc(pid)` / `resumeProc(pid)` | 结束 / 挂起 / 恢复进程 |
+
+这七个接口和图形界面的按钮是**同一条通路**：宿主把命令写进内核的控制块，
+内核执行完把结果写回。AI 操控桌面走的就是这条通路，不是模拟鼠标。
 
 ### 0.4 DOM 契约（选择器、类名、`data-*`）
 
@@ -69,7 +80,10 @@
 - 浮层：`#ctxMenu.on .ctx-item`、`#tip.on`、`#trayPanel.on`、`#snapPicker .sl`/`.sl-cell`、
   `#snapGhost.on`、`#startMenu`、`#smTiles .sm-tile`、`#smRecent .sm-ri`、`#smSearch`、`.sm-power`
 - 宿主应用窗口：`.host-win`、`.host-win .win-title`
-- 表格：`.ftab tr[data-name][data-dir]`、`.about-grid div`、`.kv`
+- 表格：`.ftab tr[data-name][data-dir]`、`.ptab tr[data-pid][data-st]`、`.about-grid div`、`.kv`
+- 文件浏览器：`.fbar button[data-f=up|new|mkdir|rename|del|import]`、`.fpath`、
+  `.fscroll`、`tr.sel`（选中行）、`.fdlg`/`.fdlg-box`（窗口内输入框）
+- 文本编辑器：`.ed-wrap`、`.ed-bar`、`.ed-path`、`.ed-area`、`.ed-save`、`.ed-reload`、`.ed-st`
 - 调试抽屉：`#drawer` `#procs .prow` `#reg .rg` `#caps .cap` `#files .frow` `#events .ev`
 - 开机：`#boot`、`.boot-bar`、`#bootBar`、`.boot-status`
 - 设置项：`#setWall button[data-w]`、`#setIcons`、`#setFs button[data-f]`、`#setBoot`
@@ -85,6 +99,13 @@
 | `0x83FD0000` | `proc_row_t[5]`，20 B/行 | 内核 → 宿主 |
 | `0x83FD1000` | `file_row_t[16]`，40 B/行 | 内核 → 宿主 |
 | `0x83FD2000` | `sys_sync_t {magic"SYS1",…,nproc,nfile,nrun}` | 内核 → 宿主 |
+| `0x83FFC000` | `host_cmd_t {magic"HCMD",seq,op,a0,len,rc,p0[64],p1[64]}` | 宿主 → 内核 |
+| `0x83FFD000` | 命令数据页（≤ 4096 B），写文件的内容、读文件的结果都走这里 | 双向 |
+
+`host_cmd_t` 是图形界面的**系统调用入口**：`op` 1 写文件 / 2 删除 / 3 重命名 /
+4 建目录 / 5 结束进程 / 6 挂起 / 7 恢复 / 8 读文件。宿主写完把 `magic` 置成
+`'HCMD'`，内核每轮读一次、执行、把 `rc` 写回并清 `magic`。
+没有这条通路，图形界面就只能看不能改——之前正是如此。
 
 命令字 `+1` 偏移是硬约定：`idx=0, act=0`（关闭第一个窗口）打包出来是 `0`，
 不加偏移就会被内核当成「没有命令」，关闭第一个窗口会静默失败。
@@ -203,8 +224,8 @@
 | 7.1.5 | 光标 | 有光标元素且位置跟随 | `.tcur` 的 `left/top` | 随光标列/行变化 | ✓ |
 | 7.1.6 | 字号自适应 | 窗口变宽字号变大 | `rv.ui.termFontSize` | 最大化后变大 | ✓ |
 | 7.1.7 | 不折行 | 无横向溢出 | `scrollWidth` vs `clientWidth` | 相等 | ✓ |
-| 7.1.8 | Ctrl+C | 发中断 | `Control+c` | 终端出现 `^C` 或新提示符 | ✓ |
-| 7.1.9 | 粘贴 | 粘贴文本进终端 | `insertText` / `rv.type` | 终端出现粘贴内容 | ✓ |
+| 7.1.8 | Ctrl+C 放弃当前行 | 回显 `^C` 且行缓冲清空 | `Control+c` → `rv.state.term`，随后发一条命令 | 含 `^C`，且随后的命令**能执行**（行缓冲没残留） | ✓ |
+| 7.1.9 | 粘贴 | 粘贴后回车能执行 | `ClipboardEvent` + `Enter` | 终端出现粘贴内容，且回到提示符 | ✓ |
 
 ### 7.2 Monitor
 
@@ -221,7 +242,7 @@
 | 7.3.1 | 文件列表 | 5 行 | `.ftab tr[data-name]` | 数量 5 | ✓ |
 | 7.3.2 | 列齐全 | NAME / SIZE | 表头文本 | 两列都在 | ✓ |
 | 7.3.3 | 双击 .elf | 终端出现 `run hello.elf` 并真的跑起来 | `ui_dblFile("hello.elf")` → `rv.state.term` | 含 `run hello.elf`，且随后含 `exit(0)` | ✓ |
-| 7.3.4 | 双击 .txt | 终端出现 `cat readme.txt` 与文件内容 | `ui_dblFile("readme.txt")` | 含 `cat readme.txt` 且含文件首行 | ✓ |
+| 7.3.4 | 双击 .txt | 打开文本编辑器并载入内容 | `rv.openFile("readme.txt")` → `.ed-area` | 窗口标题含文件名，正文非空 | ✓ |
 
 ### 7.4 Settings
 
@@ -240,7 +261,7 @@
 | 7.5.1 | Guide 打开 | 窗口出现 | `rv.ui.hostWins` | 含 Guide 且可见 | ✓ |
 | 7.5.2 | Guide 可滚动 | 内容超出时 `overflow:auto` | `getComputedStyle` | `overflow-y` 为 `auto`/`scroll` | ✓ |
 | 7.6.1 | About 打开 | 窗口出现 | `rv.ui.hostWins` | 含 About 且可见 | ✓ |
-| 7.6.2 | About 规格 | 6 格信息 | `.about-grid div` | 数量 6 | ✓ |
+| 7.6.2 | About 规格 | 6 格信息且默认全部可见 | `.about-grid > div` 与 `.win-body` 的 `getBoundingClientRect` | 数量 6，且每格都在可视区内 | ✓ |
 | 7.6.3 | 关闭 | 点 ✕ 后消失 | `.host-win .close` click | `hostWins` 不含该项 | ✓ |
 
 ## 8. 调试抽屉
@@ -295,7 +316,30 @@
 
 ---
 
-## 13. 这轮从「测不出来」到「测得出来」的清单
+## 13. 文件与进程操作（图形界面）
+
+这一节回答的是「这到底是个能用的系统，还是个只读仪表盘」。
+在补上之前，图形界面只能看：文件能打开不能改，进程能看不能停。
+
+| # | 功能 | 验收标准 | 测试接口 | 判定方式 | 状态 |
+|---|---|---|---|---|---|
+| 13.1 | Files 工具栏 | 6 个图标按钮 | `.fbar button[data-f]` | `["up","new","mkdir","rename","del","import"]` | ✓ |
+| 13.2 | 新建文件 | 写进 RAMFS 且列表里能看到 | `rv.fsWrite` → `rv.state.files` + `tr[data-name]` | 内核与列表两处都出现 | ✓ |
+| 13.3 | 新建文件夹 | 出现目录行 | `rv.fsMkdir` → `tr[data-dir]` | 该行 `data-dir="1"` | ✓ |
+| 13.4 | 重命名 | 旧名消失、新名出现 | `rv.fsRename` → `rv.state.files` | 两处一致 | ✓ |
+| 13.5 | 删除 | 从内核与列表同时消失 | `rv.fsRemove` → `rv.state.files` | 两处都没有 | ✓ |
+| 13.6 | 目录导航 | 双击进入，路径栏与列表同步 | `rv.fsCwd`、`.fpath`、`tr[data-name]` | 路径等于该目录，列表只含直接子项 | ✓ |
+| 13.7 | 返回上一级 | ↑ 回到根 | `.fbar button[data-f="up"]` | `fsCwd === ""` 且能看见刚才的子目录 | ✓ |
+| 13.8 | 文件行右键 | 打开 / 重命名 / 删除 | `rv.ui.ctxMenu` | 三项且文案匹配 | ✓ |
+| 13.9 | 文本编辑器 | 双击 `.txt` 打开，保存写回 RAMFS | `.ed-area` + `.ed-save` → `rv.fsRead` | 读回内容等于写入内容 | ✓ |
+| 13.10 | 编辑器底色 | 背后文字不透上来 | `getComputedStyle(.ed-wrap).backgroundColor` | 无 alpha 通道（不透明） | ✓ |
+| 13.11 | 终止进程 | 行右键「终止进程」后进程消失 | `tr[data-pid]` 右键 → `rv.state.procs` | 该 pid 不在表里 | ✓ |
+| 13.12 | 挂起 / 恢复 | 挂起后状态 SUSPEND，恢复后能跑完 | `rv.suspendProc` / `rv.resumeProc` | 状态为 `SUSPEND`；恢复后进程全部 EXIT | ✓ |
+| 13.13 | 桌面右键新建 | 含「新建文本文件…」 | `rv.ui.ctxMenu` | 含该项 | ✓ |
+| 13.14 | 导入程序入口 | 能选本地 `.elf` 写进 RAMFS | `.fbar button[data-f="import"]` | 存在（点击打开文件选择器） | ✓ |
+| 13.15 | 终止运行中的进程 | 程序跑飞时能停下来并回到 shell | `rv.killProc` → `rv.state.term` | 终端回到 `rvsh>` | ✓ |
+
+## 14. 这轮从「测不出来」到「测得出来」的清单
 
 这几条是清单先行的直接产物：先登记接口，才发现问题不在实现细节而在设计。
 
@@ -309,6 +353,9 @@
 | 布局选择器选完，窗口被别的窗口盖住 | 应用布局没有聚焦 | 应用布局后下发聚焦命令 |
 | 执行 `run` 后开机横幅重印，刚敲的命令被顶出屏幕 | 进程退出重入 shell 时又打了一遍 MOTD | 横幅只在开机打一次 |
 | 双击标题栏最大化偶尔无效 | 窗口未置顶时点击落在别的窗口上 | 由「应用布局/吸附即聚焦」保证 |
+| 按一次 Ctrl+C，之后所有命令都失效 | 0x03 被当成普通字符塞进行缓冲，之后每条命令都拼在它后面 | 内核把 Ctrl+C 当「放弃当前行」处理 |
+| About 只显示 6 格里的 2 格 | 窗口固定 344px，内容 498px | 宿主窗口按内容定高 |
+| 文件能打开不能改，进程能看不能停 | 图形界面没有下行命令通道，只有 UART 一个入口 | 新增 `host_cmd_t` 控制块，图形界面与 AI 共用 |
 
 ---
 
@@ -316,9 +363,14 @@
 
 | 状态 | 数量 |
 |---|---|
-| ✓ 已实现且测过 | 88 |
+| ✓ 已实现且测过 | 103 |
 | ? 待验证 | 0 |
 | ✗ 未实现 | 0 |
 
-**测试文件**：`scripts/ui/e2e.js`，116 个用例，用例编号与本文档编号一一对应。
-最近一次执行：**116/116 通过**。
+**测试文件**：`scripts/ui/e2e.js`，131 个用例，用例编号与本文档编号一一对应。
+最近一次执行：**131/131 通过**；内核侧 riscv-tests 91/91、契约测试 18/18。
+
+**回归基线之外的纪律**：任何一条用例只要「只敲字不回车」，
+就会把 shell 的行缓冲留脏，后面所有命令都被拼在残留内容后面变成垃圾。
+所以发命令统一走 `shellCmd(p, cmd)`（先 Ctrl+C 再发），
+这也是真实用户遇到脏行时的做法。

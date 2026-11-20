@@ -289,6 +289,9 @@ input{font:inherit;color:inherit;background:none;border:0;outline:0}
 .ftab td.nm{color:var(--t1);font-family:var(--font-mono)}
 .ftab td.r,.ptab .r{text-align:right}
 .ftab td.dim{color:var(--t3)}
+.ftab tbody tr{cursor:default}
+.ftab tbody tr:hover td{background:rgba(255,255,255,.05)}
+.ftab tbody tr.sel td{background:rgba(45,212,191,.16)}
 .mono{font-family:var(--font-mono)}
 
 /* ── Dock ───────────────────────────────────────────────────── */
@@ -486,6 +489,51 @@ body.drawer #drawer{transform:translateX(0)}
 .about-grid .k{font:400 10.5px/1.4 var(--font-ui);color:var(--t3)}
 .about-grid .v{font:400 12px/1.5 var(--font-mono);color:var(--t1)}
 
+/* ── Files 工具栏 ─────────────────────────────────────────────
+   窗口只有 216px 宽，按钮做成纯图标；文字留给 tooltip 和右键菜单。 */
+.fbar{display:flex;gap:1px;align-items:center;padding:4px 5px;flex:0 0 auto;
+  border-bottom:1px solid var(--stroke)}
+.fbar button{width:23px;height:22px;display:grid;place-items:center;flex:0 0 auto;
+  border-radius:var(--r-control);color:var(--t2)}
+.fbar button:hover{background:rgba(255,255,255,.09);color:var(--t1)}
+.fbar button:disabled{color:var(--t-disabled);pointer-events:none}
+.fbar svg{width:13px;height:13px}
+.fbar .grow{flex:1 1 auto}
+.fpath{padding:2px 8px;flex:0 0 auto;font:400 11px/15px var(--font-mono);color:var(--t3);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;border-bottom:1px solid var(--stroke)}
+.fscroll{flex:1 1 auto;min-height:0;overflow:auto}
+
+/* 窗口内的小对话框：不用 window.prompt，那个浅色系统弹窗在深色桌面上很突兀 */
+.fdlg{position:absolute;inset:0;z-index:5;display:flex;align-items:center;justify-content:center;
+  background:rgba(8,10,14,.55)}
+.fdlg-box{width:190px;padding:10px;border-radius:var(--r-window);
+  background:rgba(32,38,47,.99);border:1px solid var(--stroke);box-shadow:var(--elev-2)}
+.fdlg-t{font:500 12px/16px var(--font-ui);color:var(--t1);margin-bottom:7px}
+.fdlg input{width:100%;height:26px;padding:0 7px;border-radius:var(--r-control);
+  background:var(--s3);border:1px solid var(--stroke);color:var(--t1);
+  font:400 12px/26px var(--font-mono)}
+.fdlg-b{display:flex;gap:6px;justify-content:flex-end;margin-top:9px}
+.fdlg-b button{height:24px;padding:0 11px;border-radius:var(--r-control);
+  font:400 12px/24px var(--font-ui);color:var(--t1);background:var(--s3);
+  border:1px solid var(--stroke)}
+.fdlg-b button.pri{background:var(--acc);border-color:transparent;color:var(--on-acc)}
+
+/* ── 文本编辑器 ── */
+.ed-wrap{display:flex;flex-direction:column;height:100%;background:var(--s0)}
+.ed-bar{display:flex;align-items:center;gap:6px;padding:6px 8px;flex:0 0 auto;
+  border-bottom:1px solid var(--stroke)}
+.ed-path{flex:1 1 auto;font:400 11px/16px var(--font-mono);color:var(--t3);
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ed-bar button{height:24px;padding:0 10px;border-radius:var(--r-control);
+  font:400 12px/24px var(--font-ui);color:var(--t1);background:var(--s3);
+  border:1px solid var(--stroke)}
+.ed-bar button.pri{background:var(--acc);border-color:transparent;color:var(--on-acc)}
+.ed-area{flex:1 1 auto;min-height:0;width:100%;resize:none;border:0;outline:none;
+  padding:9px 11px;background:transparent;color:var(--t1);
+  font:400 12.5px/19px var(--font-mono)}
+.ed-st{flex:0 0 auto;padding:4px 10px;font:400 11px/15px var(--font-ui);
+  color:var(--t3);border-top:1px solid var(--stroke)}
+
 @media (prefers-reduced-motion:reduce){
   *{animation-duration:.01ms!important;animation-iteration-count:1!important;
     transition-duration:.01ms!important}
@@ -648,7 +696,8 @@ const _enc = new TextEncoder();
 const _uartDec = new TextDecoder();
 
 const desk = () => document.getElementById("os");
-const guestOff = (pa) => (M._rv_ram_ptr() + (pa - 0x80000000)) >>> 2;
+const guestOff = (pa) => (M._rv_ram_ptr() + (pa - 0x80000000)) >>> 2;   /* 字索引，给 HEAPU32 */
+const guestByte = (pa) => M._rv_ram_ptr() + (pa - 0x80000000);          /* 字节偏移，给 HEAPU8 */
 
 /* ══ 启动画面 ══ */
 function setProgress(pct, text) {
@@ -823,14 +872,38 @@ function hostWinOpen(id) {
   const body = el.querySelector(".win-body");
   body.innerHTML = hostWinBody(id);
 
+  /* 内容比窗口高就把窗口长到内容高度。
+     About 原来固定 344px 高、内容 498px，6 格信息里只有 2 格在可视区，
+     用户会以为系统只报了 2 项——这不是「能滚动就行」，是默认视图不可信。 */
+  requestAnimationFrame(() => {
+    if (!el.isConnected) return;
+    const need = body.scrollHeight + 34;          /* 34 = 标题栏 32 + 边框 */
+    const maxH = window.innerHeight - 90;
+    const want = Math.round(Math.min(Math.max(size[1], need), maxH));
+    if (Math.abs(want - size[1]) > 2) {
+      el.style.height = want + "px";
+      const top = parseFloat(el.style.top) || 0;
+      if (top + want > window.innerHeight - 16) {
+        el.style.top = Math.max(16, window.innerHeight - want - 16) + "px";
+      }
+    }
+  });
+
+  wireHostWin(id, el, size, app);
+  if (id === "settings") bindSettings(body);
+}
+
+/* 宿主窗口的公共接线：关闭、最小化、聚焦、拖动。
+   编辑器和三个内置应用共用这一份，避免两套拖动逻辑各修一遍。 */
+function wireHostWin(id, el, size, app) {
   el.querySelector(".close").onclick = (e) => { e.stopPropagation(); hostWinClose(id); };
   el.querySelector(".min").onclick = (e) => {
     e.stopPropagation(); el.style.display = "none";
-    hostWins.get(id).min = true;
+    const w = hostWins.get(id);
+    if (w) w.min = true;
   };
   el.addEventListener("pointerdown", () => hostWinFocus(id), true);
 
-  /* 拖动：只认标题栏，且不和 #os 的 pointerdown 混 */
   const bar = el.querySelector(".win-bar");
   bar.addEventListener("pointerdown", (ev) => {
     if (ev.target.closest(".win-ctl")) return;
@@ -854,7 +927,6 @@ function hostWinOpen(id) {
 
   hostWins.set(id, { el, app, min: false });
   hostWinFocus(id);
-  if (id === "settings") bindSettings(body);
 }
 
 function hostWinFocus(id) {
@@ -1536,6 +1608,19 @@ function winInit() {
     showCtx([
       { label: "刷新", action: () => { iconsRender(); } },
       "-",
+      { label: "新建文本文件…", action: () => {
+          filesAsk("新建文本文件", "notes.txt").then((nm) => {
+            if (!nm) return;
+            window.rv.fsWrite((fsCwd ? fsCwd + "/" : "") + nm, "").then(refreshFiles).catch(refreshFiles);
+          });
+        } },
+      { label: "新建文件夹…", action: () => {
+          filesAsk("新建文件夹", "docs").then((nm) => {
+            if (!nm) return;
+            window.rv.fsMkdir((fsCwd ? fsCwd + "/" : "") + nm).then(refreshFiles).catch(refreshFiles);
+          });
+        } },
+      "-",
       { label: "显示设置", action: () => launch("settings") },
       { label: "关于本机", action: () => launch("about") },
     ], ev.clientX, ev.clientY);
@@ -1699,6 +1784,260 @@ function ensureTerm() {
   if (w && !w.visible) sendWinCmd(0 * 10 + 5);
 }
 
+/* ══ 文件操作（图形界面入口）══
+   内核里 fs_write / fs_remove / fs_rename / fs_mkdir 早就有，
+   但在此之前只有 shell 能用它们；图形界面只能看不能改。 */
+
+let fsCwd = "";        /* 当前目录，空串表示根 */
+
+/* 某个名字是不是当前目录的直接子项 */
+function fsEntryInCwd(name) {
+  if (!fsCwd) {
+    const t = name.startsWith("/") ? name.slice(1) : name;
+    return t.length > 0 && t.indexOf("/") < 0;
+  }
+  if (name === fsCwd) return false;
+  const pre = fsCwd + "/";
+  if (!name.startsWith(pre)) return false;
+  const rest = name.slice(pre.length);
+  return rest.length > 0 && rest.indexOf("/") < 0;
+}
+
+function fsIsDir(name) {
+  if (!M) return false;
+  const ram = M._rv_ram_ptr(), A = M.HEAPU32;
+  const base = (ram + (FILE_SYNC_PA - 0x80000000)) >>> 2;
+  for (let i = 0; i < 16; i++) {
+    const nm = readStrAt(ram + (FILE_SYNC_PA - 0x80000000) + i * 40, 24);
+    if (nm === name) return A[base + i * 10 + 7] === 1;
+  }
+  return false;
+}
+
+function joinPath(nm) { return (fsCwd ? fsCwd + "/" : "") + String(nm).replace(/^\/+/, ""); }
+function refreshFiles() { fileSig = ""; panelsRender(); }
+
+/* 窗口内的小输入框：不用 window.prompt（浅色系统弹窗在深色桌面上很突兀） */
+function filesAsk(title, value) {
+  return new Promise((resolve) => {
+    const body = (winEls[2] && winEls[2].body) || $("os");
+    if (!body) return resolve(null);
+    const old = body.querySelector(".fdlg");
+    if (old) old.remove();
+    const d = document.createElement("div");
+    d.className = "fdlg";
+    d.innerHTML = '<div class="fdlg-box"><div class="fdlg-t"></div>'
+      + '<input spellcheck="false" autocomplete="off"><div class="fdlg-b">'
+      + '<button data-r="0">取消</button><button class="pri" data-r="1">确定</button></div></div>';
+    d.querySelector(".fdlg-t").textContent = title;
+    const inp = d.querySelector("input");
+    inp.value = value || "";
+    body.appendChild(d);
+    inp.focus();
+    inp.select();
+    const done = (v) => { d.remove(); resolve(v); };
+    d.querySelector(".fdlg-b").onclick = (e) => {
+      const b = e.target.closest("button");
+      if (b) done(b.dataset.r === "1" ? inp.value.trim() : null);
+    };
+    inp.onkeydown = (e) => {
+      if (e.key === "Enter") { e.preventDefault(); done(inp.value.trim()); }
+      else if (e.key === "Escape") { e.preventDefault(); done(null); }
+      e.stopPropagation();
+    };
+  });
+}
+
+function filesDelete(name) {
+  filesAsk("删除 " + name + "？（输入 yes 确认）", "").then((v) => {
+    if (v !== "yes") return;
+    window.rv.fsRemove(name).then(refreshFiles).catch(refreshFiles);
+  });
+}
+
+function filesRename(name) {
+  const base = name.slice(name.lastIndexOf("/") + 1);
+  filesAsk("重命名 " + base, base).then((nm) => {
+    if (!nm || nm === base) return;
+    const parent = name.slice(0, name.lastIndexOf("/"));
+    window.rv.fsRename(name, (parent ? parent + "/" : "") + nm).then(refreshFiles).catch(refreshFiles);
+  });
+}
+
+/* 行右键菜单 */
+function fileCtx(name, isDir, x, y) {
+  showCtx([
+    { label: isDir ? "打开文件夹" : (/\.elf$/i.test(name) ? "运行程序" : "打开"),
+      action: () => openFileByName(name) },
+    { label: "重命名…", action: () => filesRename(name) },
+    "-",
+    { label: "删除", action: () => filesDelete(name) },
+  ], x, y);
+}
+
+/* 双击/「打开」的统一入口 */
+function openFileByName(name) {
+  if (!M) return;
+  if (fsIsDir(name)) { fsCwd = name; fileSig = ""; panelsRender(); return; }
+  if (/\.elf$/i.test(name)) { ensureTerm(); sendCmd("run " + name); return; }
+  openEditor(name);
+}
+
+/* 导入本地 .elf：写进 RAMFS 之后双击就能 run。
+   没有这一步，这台机器永远只能跑出厂那 4 个二进制。 */
+function importProgram() {
+  const inp = document.createElement("input");
+  inp.type = "file";
+  inp.accept = ".elf,.bin";
+  inp.onchange = () => {
+    const f = inp.files && inp.files[0];
+    if (!f) return;
+    const rd = new FileReader();
+    rd.onload = () => {
+      const buf = new Uint8Array(rd.result);
+      const nm = joinPath(f.name);
+      /* 走 UART 传二进制不现实，直接按字节写进宿主与内核约定的数据页，
+         再让内核把它当文件存下来。 */
+      const off = guestByte(HCMD_DATA_PA);
+      const n = Math.min(buf.length, HCMD_DATA_MAX);
+      M.HEAPU8.set(buf.subarray(0, n), off);
+      hostCmdRaw(1, nm, "", 0, n).then(refreshFiles).catch(refreshFiles);
+    };
+    rd.readAsArrayBuffer(f);
+  };
+  inp.click();
+}
+
+/* 已经自己把数据写进数据页时用这个：len 由调用方给 */
+function hostCmdRaw(op, p0, p1, a0, len) {
+  return new Promise((resolve, reject) => {
+    if (!M) return reject(new Error("未就绪"));
+    const baseW = guestOff(HCMD_PA), baseB = guestByte(HCMD_PA);
+    const A = M.HEAPU32, B = M.HEAPU8;
+    const put = (str, off) => {
+      B.fill(0, off, off + 64);
+      const b = _enc.encode(str || "");
+      for (let i = 0; i < Math.min(b.length, 63); i++) B[off + i] = b[i];
+    };
+    put(p0, baseB + HCMD_HDR);
+    put(p1, baseB + HCMD_HDR + 64);
+    const i = baseW;
+    A[i] = 0;
+    A[i + 1] = ++hcmdSeq;
+    A[i + 2] = op;
+    A[i + 3] = a0 >>> 0;
+    A[i + 4] = len >>> 0;
+    A[i + 5] = 0xFFFFFFFF;
+    A[i] = HCMD_MAGIC;
+    const t0 = Date.now();
+    const tick = () => {
+      if (!M) return reject(new Error("已卸载"));
+      if (A[i] !== HCMD_MAGIC) return resolve(A[i + 5] >>> 0);
+      if (Date.now() - t0 > 4000) return reject(new Error("超时"));
+      setTimeout(tick, 16);
+    };
+    setTimeout(tick, 16);
+  });
+}
+
+/* 工具栏：绑定一次，行数据重渲染不影响 */
+function bindFilesBar(fs) {
+  const bar = fs.querySelector(".fbar");
+  if (!bar || bar.dataset.bound) return;
+  bar.dataset.bound = "1";
+  bar.addEventListener("click", (ev) => {
+    const b = ev.target.closest("button[data-f]");
+    if (!b) return;
+    const act = b.dataset.f;
+    const sel = fs.querySelector("tr.sel");
+    const selName = sel && sel.dataset.name;
+    if (act === "up") {
+      if (!fsCwd) return;
+      const i = fsCwd.lastIndexOf("/");
+      fsCwd = i > 0 ? fsCwd.slice(0, i) : "";
+      fileSig = "";
+      panelsRender();
+    } else if (act === "new") {
+      filesAsk("新建文件", "untitled.txt").then((nm) => {
+        if (nm) window.rv.fsWrite(joinPath(nm), "").then(refreshFiles).catch(refreshFiles);
+      });
+    } else if (act === "mkdir") {
+      filesAsk("新建文件夹", "docs").then((nm) => {
+        if (nm) window.rv.fsMkdir(joinPath(nm)).then(refreshFiles).catch(refreshFiles);
+      });
+    } else if (act === "rename") {
+      if (selName) filesRename(selName);
+      else filesAsk("先点一行选中，再重命名", "");
+    } else if (act === "del") {
+      if (selName) filesDelete(selName);
+      else filesAsk("先点一行选中，再删除", "");
+    } else if (act === "import") {
+      importProgram();
+    }
+  });
+}
+
+/* ══ 文本编辑器（宿主窗口）══ */
+const EDIT_ICO = '<svg viewBox="0 0 16 16" fill="none" stroke="#A9B4C4" stroke-width="1.4"'
+  + ' stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 2.5h6l3 3v8h-9z"/>'
+  + '<path d="M9.5 2.5v3h3"/><path d="M5.5 8.5h5M5.5 11h3.5"/></svg>';
+
+function openEditor(path) {
+  const id = "editor:" + path;
+  if (hostWins.has(id)) { hostWinFocus(id); return; }
+  window.rv.fsRead(path).then((txt) => {
+    if (txt == null) { ensureTerm(); sendCmd("cat " + path); return; }
+    buildEditor(id, path, txt);
+  }).catch(() => { ensureTerm(); sendCmd("cat " + path); });
+}
+
+function buildEditor(id, path, text) {
+  const layer = $("winlayer");
+  if (!layer) return;
+  const n = hostWins.size;
+  const size = [430, 330];
+  const el = document.createElement("div");
+  el.className = "win host-win";
+  el.style.width = size[0] + "px";
+  el.style.height = size[1] + "px";
+  el.style.left = Math.round(150 + n * 26) + "px";
+  el.style.top = Math.round(108 + n * 22) + "px";
+  el.style.zIndex = ++hostZ;
+  el.innerHTML =
+    '<div class="win-bar"><span class="win-ico">' + EDIT_ICO + '</span>'
+    + '<span class="win-title">' + path + '</span>'
+    + '<span class="win-ctl">'
+    + '<button class="min" title="最小化"><svg viewBox="0 0 10 10"><path d="M2 5h6" stroke="currentColor" stroke-width="1.2"/></svg></button>'
+    + '<button class="close" title="关闭"><svg viewBox="0 0 10 10"><path d="M2.5 2.5l5 5M7.5 2.5l-5 5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg></button>'
+    + '</span></div><div class="win-body"></div>';
+  layer.appendChild(el);
+  const body = el.querySelector(".win-body");
+  body.innerHTML = '<div class="ed-wrap">'
+    + '<div class="ed-bar"><span class="ed-path"></span>'
+    + '<button class="pri ed-save">保存</button><button class="ed-reload">还原</button></div>'
+    + '<textarea class="ed-area" spellcheck="false"></textarea>'
+    + '<div class="ed-st">保存写回 RAMFS；刷新页面会丢</div></div>';
+  body.querySelector(".ed-path").textContent = path;
+  const ta = body.querySelector(".ed-area");
+  ta.value = text;
+  const st = body.querySelector(".ed-st");
+  const save = () => {
+    window.rv.fsWrite(path, ta.value).then((rc) => {
+      st.textContent = rc === 0 ? "已保存 " + ta.value.length + " 字节" : "保存失败（rc=" + rc + "）";
+      refreshFiles();
+    }).catch((e) => { st.textContent = "保存失败：" + e.message; });
+  };
+  body.querySelector(".ed-save").onclick = save;
+  body.querySelector(".ed-reload").onclick = () => {
+    window.rv.fsRead(path).then((t) => { ta.value = t == null ? "" : t; st.textContent = "已还原"; });
+  };
+  ta.addEventListener("keydown", (e) => {
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") { e.preventDefault(); save(); }
+  });
+  wireHostWin(id, el, size, { name: path });
+  ta.focus();
+}
+
 function panelsRender() {
   if (!M) return;
   const A = M.HEAPU32, ram = M._rv_ram_ptr();
@@ -1719,7 +2058,7 @@ function panelsRender() {
     for (let i = 0; i < 8; i++) {
       const b = base + i * 5;
       if (!A[b + 4]) continue;
-      const st = ["READY", "RUN", "EXIT", "—"][A[b + 1]] || "?";
+      const st = ["READY", "RUN", "EXIT", "—", "SUSPEND"][A[b + 1]] || "?";
       rows.push({ pid: A[b], st, pc: "0x" + (A[b + 2] >>> 0).toString(16) });
     }
     const sig = JSON.stringify(rows);
@@ -1728,44 +2067,97 @@ function panelsRender() {
       let h = '<table class="ptab"><colgroup><col style="width:44px"><col style="width:68px"><col></colgroup>'
         + '<thead><tr><th>PID</th><th>STATE</th><th>PC</th></tr></thead><tbody>';
       for (const r of rows)
-        h += '<tr' + (r.st === "RUN" ? ' class="run"' : '') + '><td>' + r.pid
+        h += '<tr data-pid="' + r.pid + '" data-st="' + r.st + '"'
+           + (r.st === "RUN" ? ' class="run"' : '') + '><td>' + r.pid
            + '</td><td>' + r.st + '</td><td>' + r.pc + '</td></tr>';
       h += '</tbody></table>';
       mon.innerHTML = h;
       panelRowHeight(mon, rows.length);
+    }
+    /* 行右键：任务管理器里「结束任务」的位置。
+       绑定放在签名比较之外，表格重渲染不需要重绑。 */
+    if (!mon.dataset.ctx) {
+      mon.dataset.ctx = "1";
+      mon.addEventListener("contextmenu", (ev) => {
+        const tr = ev.target.closest("tr[data-pid]");
+        if (!tr) return;
+        ev.preventDefault();
+        ev.stopPropagation();
+        const pid = +tr.dataset.pid, st = tr.dataset.st;
+        const items = [];
+        if (st === "SUSPEND") {
+          items.push({ label: "恢复", action: () => window.rv.resumeProc(pid) });
+        } else {
+          items.push({ label: "终止进程", action: () => window.rv.killProc(pid) });
+          if (st === "READY") items.push({ label: "挂起", action: () => window.rv.suspendProc(pid) });
+        }
+        items.push("-");
+        items.push({ label: "复制 PID " + pid, action: () => { try { navigator.clipboard.writeText(String(pid)); } catch (e) {} } });
+        showCtx(items, ev.clientX, ev.clientY);
+      });
     }
   }
 
   /* 文件表 */
   const fs = winEls[2] && winEls[2].body;
   if (fs) {
+    if (!fs.dataset.built) {
+      fs.dataset.built = "1";
+      const I = (d) => '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"'
+        + ' stroke-linecap="round" stroke-linejoin="round">' + d + '</svg>';
+      fs.innerHTML = '<div class="fbar">'
+        + '<button data-f="up" title="上一级">' + I('<path d="M8 12.5V4M4.2 7.4L8 3.6l3.8 3.8"/>') + '</button>'
+        + '<button data-f="new" title="新建文件">' + I('<path d="M3.5 2.5h6l3 3v8h-9z"/><path d="M9.5 2.5v3h3"/><path d="M8 8.6v3.2M6.4 10.2h3.2"/>') + '</button>'
+        + '<button data-f="mkdir" title="新建文件夹">' + I('<path d="M2.5 4.6h4l1.2 1.6h5.8v7.2h-11z"/><path d="M8 9.2v3M6.5 10.7h3"/>') + '</button>'
+        + '<button data-f="rename" title="重命名">' + I('<path d="M2.6 13.4l.9-2.9 7-7 2 2-7 7z"/><path d="M9.5 4.5l2 2"/>') + '</button>'
+        + '<button data-f="del" title="删除">' + I('<path d="M3.5 5h9"/><path d="M6.5 5V3.4h3V5"/><path d="M5 5l.6 8.6h4.8L11 5"/>') + '</button>'
+        + '<button data-f="import" title="导入程序（.elf / .bin）">' + I('<path d="M8 2.6v7"/><path d="M5 6.6L8 9.6l3-3"/><path d="M3 11.4v2.2h10v-2.2"/>') + '</button>'
+        + '</div><div class="fpath"></div><div class="fscroll"></div>';
+      bindFilesBar(fs);
+    }
     const base = (ram + (FILE_SYNC_PA - 0x80000000)) >>> 2;
-    const rows = [];
+    const all = [];
     for (let i = 0; i < 16; i++) {
       const name = readStrAt(ram + (FILE_SYNC_PA - 0x80000000) + i * 40, 24);
       if (!name) continue;
-      rows.push({ name, size: A[base + i * 10 + 6], dir: A[base + i * 10 + 7] === 1 });
+      all.push({ name, size: A[base + i * 10 + 6], dir: A[base + i * 10 + 7] === 1 });
     }
-    const sig = JSON.stringify(rows);
+    const rows = all.filter((r) => fsEntryInCwd(r.name));
+    const sig = fsCwd + "|" + JSON.stringify(rows);
     if (sig !== fileSig) {
       fileSig = sig;
-      let h = '<table class="ftab"><colgroup><col><col style="width:66px"></colgroup>'
+      const sc = fs.querySelector(".fscroll");
+      const pathEl = fs.querySelector(".fpath");
+      if (pathEl) pathEl.textContent = fsCwd || "/";
+      const upBtn = fs.querySelector('.fbar button[data-f="up"]');
+      if (upBtn) upBtn.disabled = !fsCwd;
+      let h = '<table class="ftab"><colgroup><col><col style="width:62px"></colgroup>'
         + '<thead><tr><th>NAME</th><th class="r">SIZE</th></tr></thead><tbody>';
-      for (const r of rows)
+      for (const r of rows) {
+        const shown = fsCwd ? r.name.slice(fsCwd.length + 1) : r.name;
         h += '<tr data-name="' + r.name + '" data-dir="' + (r.dir ? "1" : "0") + '">'
-           + '<td class="nm">' + (r.dir ? "▸ " : "") + r.name + '</td>'
+           + '<td class="nm">' + (r.dir ? "▸ " : "") + shown + '</td>'
            + '<td class="r ' + (r.dir ? "dim" : "mono") + '">' + (r.dir ? "—" : r.size) + '</td></tr>';
+      }
+      if (!rows.length) h += '<tr><td class="dim" colspan="2" style="padding:12px">空目录</td></tr>';
       h += '</tbody></table>';
-      fs.innerHTML = h;
-      panelRowHeight(fs, rows.length);
-      /* 直接绑到每一行。之前在 document / .win 上做委托实测都收不到事件，
-         绑在行上最直白也最可靠（表格重渲染时会重新绑）。 */
-      fs.querySelectorAll("tr[data-name]").forEach((tr) => {
-        if (tr.dataset.dir === "1") return;
-        tr.addEventListener("dblclick", () => {
-          const nm = tr.dataset.name;
-          ensureTerm();
-          sendCmd(/\.elf$/i.test(nm) ? "run " + nm : "cat " + nm);
+      sc.innerHTML = h;
+      const H = sc.clientHeight;
+      if (H > 0 && rows.length) {
+        sc.style.setProperty("--rh", Math.max(22, Math.min(34, (H - 26) / rows.length)).toFixed(1) + "px");
+      }
+      sc.querySelectorAll("tr[data-name]").forEach((tr) => {
+        tr.addEventListener("click", () => {
+          sc.querySelectorAll("tr.sel").forEach((x) => x.classList.remove("sel"));
+          tr.classList.add("sel");
+        });
+        tr.addEventListener("dblclick", () => openFileByName(tr.dataset.name));
+        tr.addEventListener("contextmenu", (ev) => {
+          ev.preventDefault();
+          ev.stopPropagation();
+          sc.querySelectorAll("tr.sel").forEach((x) => x.classList.remove("sel"));
+          tr.classList.add("sel");
+          fileCtx(tr.dataset.name, tr.dataset.dir === "1", ev.clientX, ev.clientY);
         });
       });
     }
@@ -2477,7 +2869,8 @@ window.rv = {
     const pb = (ram + (PROC_SYNC_PA - 0x80000000)) >>> 2;
     for (let i = 0; i < 5; i++) {
       if (!A[pb + i * 5 + 4]) continue;
-      procs.push({ pid: A[pb + i * 5], state: ["READY", "RUN", "EXIT"][A[pb + i * 5 + 1]],
+      procs.push({ pid: A[pb + i * 5],
+                   state: ["READY", "RUN", "EXIT", "UNUSED", "SUSPEND"][A[pb + i * 5 + 1]] || "?", 
                    pc: hx(A[pb + i * 5 + 2]) });
     }
     for (let i = 0; i < 16; i++) {
@@ -2500,10 +2893,80 @@ window.rv = {
     return true;
   },
   launch(id) { launch(id); return true; },
+
+  /* ── 文件与进程操作：图形界面与 AI 走同一套入口 ── */
+  fsWrite(name, text) { return hostCmd(1, name, "", 0, text == null ? "" : String(text)); },
+  fsRemove(name) { return hostCmd(2, name, "", 0, null); },
+  fsRename(from, to) { return hostCmd(3, from, to, 0, null); },
+  fsMkdir(name) { return hostCmd(4, name, "", 0, null); },
+  fsRead(name) {
+    return hostCmd(8, name, "", 0, null).then((rc) => {
+      if (rc !== 0) return null;
+      const i = guestOff(HCMD_PA);
+      const len = M.HEAPU32[i + 4];
+      const off = guestByte(HCMD_DATA_PA);
+      return _dec.decode(M.HEAPU8.subarray(off, off + len));
+    });
+  },
+  killProc(pid) { return hostCmd(5, "", "", pid, null); },
+  suspendProc(pid) { return hostCmd(6, "", "", pid, null); },
+  resumeProc(pid) { return hostCmd(7, "", "", pid, null); },
+  get fsCwd() { return fsCwd; },
+  fsChdir(path) { fsCwd = path || ""; fileSig = ""; panelsRender(); return fsCwd; },
+  openFile(name) { openFileByName(name); return true; },
   closeWin(i) { if (M) sendWinCmd(i * 10 + 0); },
   focusWin(i) { if (M) sendWinCmd(i * 10 + 5); },
   drawer(on) { toggleDrawer(on); },
 };
+
+/* ══ 宿主 → 内核控制块 ══
+   图形界面里的「新建 / 删除 / 重命名 / 结束进程」不能靠往 UART 敲字符：
+   多行内容传不了、会把命令回显进终端、还没法传二进制。
+   内核在 0x83FFC000 等一条结构化命令，数据走 0x83FFD000。
+   每个操作返回 Promise，内核写回 rc 后 resolve。 */
+const HCMD_PA = 0x83FFC000, HCMD_DATA_PA = 0x83FFD000;
+const HCMD_DATA_MAX = 4096, HCMD_MAGIC = 0x48434D44;
+const HCMD_HDR = 24;            /* magic seq op a0 len rc，各 4 字节 */
+const _dec = new TextDecoder("utf-8");
+let hcmdSeq = 0;
+
+function hostCmd(op, p0, p1, a0, data) {
+  return new Promise((resolve, reject) => {
+    if (!M) return reject(new Error("模拟器未就绪"));
+    const baseW = guestOff(HCMD_PA), baseB = guestByte(HCMD_PA);
+    const A = M.HEAPU32, B = M.HEAPU8;
+    const nameOff = baseB + HCMD_HDR;
+    const put = (str, off) => {
+      B.fill(0, off, off + 64);
+      const b = _enc.encode(str || "");
+      for (let i = 0; i < Math.min(b.length, 63); i++) B[off + i] = b[i];
+    };
+    put(p0, nameOff);
+    put(p1, nameOff + 64);
+    let len = 0;
+    if (data) {
+      const b = _enc.encode(data);
+      len = Math.min(b.length, HCMD_DATA_MAX);
+      B.set(b.subarray(0, len), guestByte(HCMD_DATA_PA));
+    }
+    const i = baseW;
+    A[i] = 0;                     /* 先摘掉 magic，避免内核读到写了一半的命令 */
+    A[i + 1] = ++hcmdSeq;
+    A[i + 2] = op;
+    A[i + 3] = a0 >>> 0;
+    A[i + 4] = len;
+    A[i + 5] = 0xFFFFFFFF;
+    A[i] = HCMD_MAGIC;
+    const t0 = Date.now();
+    const tick = () => {
+      if (!M) return reject(new Error("模拟器已卸载"));
+      if (A[i] !== HCMD_MAGIC) return resolve(A[i + 5] >>> 0);
+      if (Date.now() - t0 > 4000) return reject(new Error("内核没有响应"));
+      setTimeout(tick, 16);
+    };
+    setTimeout(tick, 16);
+  });
+}
 
 /* ══ 启动序列 ══ */
 function startRvsim() {

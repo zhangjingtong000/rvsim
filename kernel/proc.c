@@ -42,6 +42,64 @@ void front_sync(void)
     }
 }
 
+/* 回收一个进程占用的全部物理页。
+   用户 L1 里的每个有效 PTE 都指向本进程独占的页（代码页、缺页分配的堆页），
+   逐个还给 page_free。内核映射那一层是从 g_kroot 复制来的共享页，绝不能碰。
+   栈页不在这里回收：g_ustack[] 是开机一次性分配的固定数组，krestart 会直接复用，
+   还回去反而会被分给别的用途。 */
+void proc_reap(u32 pid)
+{
+    if (pid >= NPROC) return;
+    proc_t *p = &procs[pid];
+    if (p->pgtbl) {
+        u32 uvpn2 = (0x80400000u >> 22) & 0x3FFu;
+        u32 e = p->pgtbl[uvpn2];
+        if (e & 1u) {
+            u32 *ul1 = (u32 *)((e >> 10) << 12);
+            for (u32 i = 0; i < 1024; i++)
+                if (ul1[i] & 1u) page_free((void *)((ul1[i] >> 10) << 12));
+            page_free(ul1);
+        }
+        page_free(p->pgtbl);
+        p->pgtbl = 0;
+    }
+    p->code_pa = 0;
+    p->code_pages = 0;
+    p->stack_pa = 0;
+    memset(p, 0, sizeof(*p));
+    p->pid = pid;
+    p->state = PROC_UNUSED;
+    if (cur_proc == (int)pid) cur_proc = -1;
+    front_sync();
+}
+
+int proc_kill(u32 pid)
+{
+    if (pid >= NPROC) return -1;
+    if (procs[pid].state == PROC_RUN) return -2;
+    if (procs[pid].state == PROC_UNUSED) return -1;
+    proc_reap(pid);
+    return 0;
+}
+
+int proc_suspend(u32 pid)
+{
+    if (pid >= NPROC) return -1;
+    if (procs[pid].state != PROC_READY) return -1;
+    procs[pid].state = PROC_SUSPEND;
+    front_sync();
+    return 0;
+}
+
+int proc_resume(u32 pid)
+{
+    if (pid >= NPROC) return -1;
+    if (procs[pid].state != PROC_SUSPEND) return -1;
+    procs[pid].state = PROC_READY;
+    front_sync();
+    return 0;
+}
+
 proc_t *proc_schedule(void)
 {
     proc_t *ret = NULL;

@@ -370,6 +370,39 @@ extern int g_term_silent;
                 uart_dec(n2);
                 uart_puts(" 个进程到就绪状态\n");
             }
+            else if (ADV && (starts_with(g_line, "kill ") || starts_with(g_line, "suspend ")
+                          || starts_with(g_line, "resume "))) {
+                /* 进程操作。kill 结束并回收物理页；suspend 退出调度；
+                   resume 重新就绪并立刻切进用户态。
+                   正在运行的进程杀不掉——它占着 CPU，shell 根本收不到命令，
+                   那种情况由 Monitor 里的「终止」交给定时器中断处理。 */
+                extern int proc_kill(u32), proc_suspend(u32), proc_resume(u32);
+                extern int g_resume_flag;
+                int is_kill = g_line[0] == 'k';
+                int is_susp = g_line[0] == 's';
+                const char *q = g_line;
+                while (*q && *q != ' ') q++;
+                while (*q == ' ') q++;
+                u32 pid = 0; int has = 0;
+                while (*q >= '0' && *q <= '9') { pid = pid * 10u + (u32)(*q - '0'); q++; has = 1; }
+                if (!has) {
+                    uart_puts("{\"ok\":false,\"why\":\"用法: kill|suspend|resume <pid>\"}\n");
+                } else {
+                    int r = is_kill ? proc_kill(pid) : (is_susp ? proc_suspend(pid) : proc_resume(pid));
+                    if (r == 0) {
+                        uart_puts("{\"ok\":true,\"op\":\"");
+                        uart_puts(is_kill ? "kill" : (is_susp ? "suspend" : "resume"));
+                        uart_puts("\",\"pid\":");
+                        uart_dec((int)pid);
+                        uart_puts("}\n");
+                        if (!is_kill && !is_susp) g_resume_flag = 1;
+                    } else if (r == -2) {
+                        uart_puts("{\"ok\":false,\"why\":\"进程正在运行，请在 Monitor 里终止\"}\n");
+                    } else {
+                        uart_puts("{\"ok\":false,\"why\":\"进程不存在或状态不符\"}\n");
+                    }
+                }
+            }
             else if (ADV && streq(g_line, "tail")) {
                 extern void uart_tail_dump(void);
                 uart_tail_dump();
@@ -746,6 +779,16 @@ extern int g_term_silent;
         { extern int g_term_silent; g_term_silent = 0; }
         if (!was_quiet) prompt();
         g_input_at = 0;
+    } else if (ch == 3) {                    /* Ctrl+C：放弃当前行，回到提示符 */
+        /* 以前这里没有分支：3 既不等于 \r 也不满足 >= 0x20，直接落到
+           shell_done，行缓冲一个字都没清。按一次 Ctrl+C 之后，
+           用户敲的每条命令都会被拼在那个看不见的 0x03 后面，全部失效。 */
+        uart_puts("^C\n");
+        g_len = 0;
+        g_line[0] = 0;
+        g_input_at = 0;
+        { extern int g_term_silent; g_term_silent = 0; }
+        prompt();
     } else if (ch == 0x7F || ch == 0x08) {   /* 退格 */
         if (g_len > 0) { g_len--; uart_puts("\b \b"); }
     } else if (g_len < SHELL_BUF - 1 && (u8)ch >= 0x20 && g_input_at) {

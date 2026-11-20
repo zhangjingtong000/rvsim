@@ -366,6 +366,9 @@ static const cap_t g_caps[] = {
     {"ps",       "ps",                      "",                0, "进程表（JSON）：pc=用户态入口，nrun=被调度次数"},
     {"run",      "run <file>",              "<name>.bin（RAMFS 里的任意程序；裸名自动补 .bin）", 1, "装载指定程序并启动 3 个初始进程；fork 演示会额外创建子进程（共 4 个）"},
     {"reset",    "reset",                   "",                0, "把全部进程重置到就绪"},
+    {"kill",     "kill <pid>",              "pid 取 0..4",     1, "结束一个用户进程并回收它的代码页/堆页/页表；正在运行的进程要在 Monitor 里终止"},
+    {"suspend",  "suspend <pid>",           "pid 取 0..4",     1, "让一个就绪进程退出调度"},
+    {"resume",   "resume <pid>",            "pid 取 0..4",     1, "恢复被挂起的进程并立刻切进用户态"},
     {"mem",      "mem",                     "",                0, "物理内存大小与累计缺页次数（自启动起）"},
     {"uptime",   "uptime",                  "",                0, "读取虚拟时钟 mtime"},
     {"log",      "log [all] | log count [type] | log last <n> | log find <pid>", "spawn|exit|ecall|restore", 0, "事件流：全部（带摘要）/计数/最近 n 条/按进程过滤"},
@@ -557,6 +560,31 @@ u32 s_trap_handler(u32 cause, u32 epc, u32 tval, u32 *regs)
 {
     /* 定时器中断（S 模式 STI）：抢占当前进程 */
     if ((cause & 0x80000000u) && ((cause & 0x7FFFFFFFu) == 5)) {
+        /* 0) 宿主在 Monitor 里点了「终止」：跑飞的用户程序占着 CPU，
+              shell 永远收不到命令，只有定时器中断能在这里把它摘掉。 */
+        {
+            int kp = host_cmd_take_kill();
+            if (kp >= 0 && kp == cur_proc) {
+                u32 dead = (u32)cur_proc;
+                for (int i = 0; i < 32; i++) procs[dead].regs[i] = regs[i];
+                procs[dead].pc = epc;
+                procs[dead].state = PROC_EXIT;
+                kprintf("\n[S] proc %d 被宿主终止\n", (int)dead);
+                evt_emit(EVT_EXIT, dead, 0, 0, -9);
+                proc_t *nx = proc_schedule();
+                if (nx) {
+                    if (nx->pgtbl) proc_switch_satp(nx->pgtbl);
+                    proc_reap(dead);
+                    for (int i = 0; i < 32; i++) regs[i] = nx->regs[i];
+                    proc_set_timer(20000);
+                    return nx->pc;
+                }
+                proc_switch_satp(g_kroot);
+                proc_reap(dead);
+                shell_loop();          /* 不返回 */
+            }
+        }
+
         /* 1) 保存当前、切换进程 */
         if (cur_proc >= 0) {
             for (int i = 0; i < 32; i++) procs[cur_proc].regs[i] = regs[i];
@@ -885,6 +913,10 @@ int krestart(void)
     for (u32 k = 0; k < NPROC_INIT; k++) {
         procs[k].pc    = g_entry;
         procs[k].sp    = g_ustack[k] + 4096u - 16u;
+        /* 被 kill 过的槽位 stack_pa 被清成了 0，这里必须重新挂上：
+           进程表用它判断「这一格是否活跃」，不恢复的话 reset 之后
+           进程仍然显示为已结束。 */
+        procs[k].stack_pa = g_ustack[k];
         procs[k].state = PROC_READY;
         procs[k].brk   = 0;
         memset(procs[k].regs, 0, sizeof(procs[k].regs));
@@ -1325,6 +1357,94 @@ void panel_sync_publish(void)
     g_sys->nfile = nfile;
     g_sys->nrun = nrun;
     g_sys->boot_ms = 0;
+}
+
+/* ── 宿主下行命令 ──
+   图形界面里的「新建 / 删除 / 重命名 / 结束进程」必须有一条结构化通道：
+   往 UART 敲字符传不了多行内容和二进制，还会把命令回显到终端里。
+   这里宿主把参数写进 0x83FFC000 的控制块、数据写进 0x83FFD000，
+   再把 magic 置成 'HCMD'；内核每轮读一次、执行、把结果写回 rc、清 magic。 */
+volatile host_cmd_t *g_hcmd = (volatile host_cmd_t *)HCMD_PA;
+static u32 g_hcmd_seq = 0;
+static volatile int g_hcmd_kill = -1;   /* 定时器中断取走的 pid */
+int g_resume_flag = 0;                  /* shell 主循环看到就切进用户态 */
+
+static void hcmd_name(const char *src, char *out, int cap)
+{
+    int i = 0;
+    while (i < cap - 1 && src[i]) { out[i] = src[i]; i++; }
+    out[i] = 0;
+}
+
+void host_cmd_poll(void)
+{
+    volatile host_cmd_t *c = g_hcmd;
+    if (c->magic != HCMD_MAGIC || c->seq == g_hcmd_seq) return;
+    g_hcmd_seq = c->seq;
+
+    u32 rc = 0;
+    char a[64], b[64];
+    switch (c->op) {
+    case HCMD_WRITE:
+        hcmd_name(c->p0, a, sizeof(a));
+        {
+            u32 len = c->len; if (len > HCMD_DATA_MAX) len = HCMD_DATA_MAX;
+            rc = (fs_write(a, (const u8 *)HCMD_DATA_PA, len) < 0) ? 1u : 0u;
+        }
+        break;
+    case HCMD_REMOVE:
+        hcmd_name(c->p0, a, sizeof(a));
+        rc = (fs_remove(a) < 0) ? 1u : 0u;
+        break;
+    case HCMD_RENAME:
+        hcmd_name(c->p0, a, sizeof(a));
+        hcmd_name(c->p1, b, sizeof(b));
+        rc = (fs_rename(a, b) < 0) ? 1u : 0u;
+        break;
+    case HCMD_MKDIR:
+        hcmd_name(c->p0, a, sizeof(a));
+        rc = (fs_mkdir(a) < 0) ? 1u : 0u;
+        break;
+    case HCMD_KILL:
+        /* 正在跑的进程杀不掉（它的 satp 还挂着），交给定时器中断 */
+        if (proc_kill(c->a0) == -2) g_hcmd_kill = (int)c->a0;
+        rc = 0;
+        break;
+    case HCMD_READ:
+        hcmd_name(c->p0, a, sizeof(a));
+        {
+            int n = fs_read(a, (u8 *)HCMD_DATA_PA, HCMD_DATA_MAX);
+            c->len = (n < 0) ? 0u : (u32)n;
+            rc = (n < 0) ? 1u : 0u;
+        }
+        break;
+    case HCMD_SUSPEND:
+        rc = (proc_suspend(c->a0) == 0) ? 0u : 1u;
+        break;
+    case HCMD_RESUME:
+        if (proc_resume(c->a0) == 0) { g_resume_flag = 1; rc = 0; }
+        else rc = 1;
+        break;
+    default:
+        rc = 2;
+    }
+    c->rc = rc;
+    c->magic = 0;
+    panel_sync_publish();
+}
+
+int host_cmd_take_kill(void)
+{
+    volatile host_cmd_t *c = g_hcmd;
+    int pid = g_hcmd_kill;
+    g_hcmd_kill = -1;
+    if (pid < 0 && c->magic == HCMD_MAGIC && c->op == HCMD_KILL && c->seq != g_hcmd_seq) {
+        g_hcmd_seq = c->seq;
+        pid = (int)c->a0;
+        c->rc = 0;
+        c->magic = 0;
+    }
+    return pid;
 }
 
 /* 每轮把网格元信息发布给宿主（几十条指令，可以每轮做） */
@@ -1888,6 +2008,17 @@ void kernel_apply_run(const char *prog)
     enter_u_mode_with_regs(p);
 }
 
+/* 恢复一个挂起的进程：把它重新调度起来并切进用户态。
+   和 kernel_apply_run 的区别是「不重新装载镜像」——沿用保存下来的上下文。 */
+void kernel_schedule_existing(void)
+{
+    proc_t *p = proc_schedule();
+    if (!p) { kprintf("[S] 没有可运行的进程\n"); return; }
+    if (p->pgtbl) proc_switch_satp(p->pgtbl);
+    proc_set_timer(20000);
+    enter_u_mode_with_regs(p);
+}
+
 /* shell 主循环：轮询 UART 收字符；收到 run 就装载镜像、重置进程并调度。
    开机时由 s_main 直接调用；所有用户进程退出后由 trap 处理程序调用。
    enter_u_mode 不返回，所以一旦真正启动进程，本函数就被"挂起"在
@@ -1921,6 +2052,7 @@ void shell_loop(void)
            每轮只做「读输入 -> 处理窗口命令 -> 发布数据」三件事。 */
         desktop_mouse();
         win_cmd_poll();
+        host_cmd_poll();          /* 图形界面的文件/进程操作走这条通道 */
         term_sync_publish();
         panel_sync_publish();
 
@@ -1954,6 +2086,10 @@ void shell_loop(void)
             /* 不清空 g_exec_name：prog 正指向它，清空会让错误信息里的文件名变成空。
                下次 run 会覆盖。 */
             kernel_apply_run(prog);
+        }
+        if (g_resume_flag) {
+            g_resume_flag = 0;
+            kernel_schedule_existing();   /* 不返回 */
         }
     }
 }

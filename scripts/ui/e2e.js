@@ -13,6 +13,15 @@ function eq(a, b, msg) {
 }
 function ok(v, msg) { if (!v) throw new Error(msg || "断言失败"); }
 
+/* 干净地发一条命令：先 Ctrl+C 放弃可能残留的半行输入，再发。
+   任何一条「只敲字不回车」的用例都会把行缓冲留脏，之后所有命令
+   都会被拼在残留内容后面变成垃圾——真实用户也是这么救回来的。 */
+async function shellCmd(p, cmd) {
+  await p.evaluate(() => window.rv.type("\u0003"));
+  await sleep(150);
+  await p.evaluate((x) => window.rv.cmd(x), cmd);
+}
+
 // ══════════════════════════════════════════════════════════
 // 1. 启动
 // ══════════════════════════════════════════════════════════
@@ -706,18 +715,26 @@ test("7.1.7", "不横向折行", async (p) => {
   eq(m.sw, m.cw);
 });
 
-test("7.1.8", "Ctrl+C 发中断", async (p) => {
+test("7.1.8", "Ctrl+C 放弃当前行", async (p) => {
   await p.evaluate(() => window.rv.cmd("clear"));
   await sleep(700);
   await p.evaluate(() => document.querySelector(".term-dom").click());
   await sleep(200);
+  await p.keyboard.type("half-typed");
+  await sleep(300);
   await p.keyboard.press("Control+c");
-  await sleep(700);
-  const t = await p.evaluate(() => window.rv.state.term.join("\n"));
-  ok(t.includes("^C") || t.includes("rvsh>"), "Ctrl+C 没反应");
+  await sleep(600);
+  let t = await p.evaluate(() => window.rv.state.term.join("\n"));
+  ok(t.indexOf("^C") >= 0, "Ctrl+C 没有回显 ^C：" + t.slice(-140));
+  /* 关键：Ctrl+C 之后行缓冲必须是干净的。以前 0x03 被当成普通字符
+     塞进缓冲，之后每条命令都被拼在那个看不见的字符后面，全部失效。 */
+  await p.evaluate(() => window.rv.cmd("whoami"));
+  await sleep(900);
+  t = await p.evaluate(() => window.rv.state.term.join("\n"));
+  ok(t.indexOf('"user"') >= 0, "Ctrl+C 之后命令失效了（行缓冲没清）：" + t.slice(-220));
 });
 
-test("7.1.9", "粘贴文本进终端", async (p) => {
+test("7.1.9", "粘贴文本进终端并能执行", async (p) => {
   await p.evaluate(() => window.rv.cmd("clear"));
   await sleep(700);
   await p.evaluate(() => {
@@ -725,9 +742,12 @@ test("7.1.9", "粘贴文本进终端", async (p) => {
     dt.setData("text", "echo pasted");
     document.dispatchEvent(new ClipboardEvent("paste", { clipboardData: dt, bubbles: true }));
   });
-  await sleep(800);
+  await sleep(500);
+  await p.keyboard.press("Enter");          /* 用户粘贴完也要回车；不回车的用例会污染后续所有命令 */
+  await sleep(900);
   const t = await p.evaluate(() => window.rv.state.term.join("\n"));
   ok(t.includes("pasted"), "粘贴没生效：" + t.slice(-120));
+  ok(t.trimEnd().endsWith("rvsh>"), "回车后没有回到提示符，行缓冲可能还是脏的：" + t.slice(-120));
 });
 
 test("7.2.1", "Monitor 3 行", async (p) => {
@@ -766,16 +786,16 @@ test("7.3.3", "双击 .elf 触发 run", async (p) => {
   ok(t.includes("run hello.elf"), "没发出 run：" + t.slice(-160));
 });
 
-test("7.3.4", "双击 .txt 触发 cat", async (p) => {
-  await p.evaluate(() => window.rv.cmd("clear"));
-  await sleep(700);
-  await p.evaluate(() => {
-    const tr = [...document.querySelectorAll("tr[data-name]")].find((r) => r.dataset.name === "readme.txt");
-    if (tr) tr.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+test("7.3.4", "双击 .txt 打开编辑器并载入内容", async (p) => {
+  await p.evaluate(() => window.rv.openFile("readme.txt"));
+  await sleep(900);
+  const r = await p.evaluate(() => {
+    const w = [...document.querySelectorAll(".host-win")].find((x) => x.querySelector(".ed-area"));
+    return w ? { title: w.querySelector(".win-title").textContent, len: w.querySelector(".ed-area").value.length } : null;
   });
-  await sleep(1100);
-  const t = await p.evaluate(() => window.rv.state.term.join("\n"));
-  ok(t.includes("cat readme.txt"), "没发出 cat：" + t.slice(-160));
+  ok(r, "没有打开编辑器窗口");
+  ok(r.title.indexOf("readme.txt") >= 0, "标题不对：" + r.title);
+  ok(r.len > 0, "编辑器里没有内容");
 });
 
 test("7.4.1", "设置壁纸立即生效", async (p) => {
@@ -843,8 +863,23 @@ test("7.6.1", "About 能打开", async (p) => {
   ok((await p.evaluate(() => window.rv.ui.hostWins.map((h) => h.title))).includes("About"));
 });
 
-test("7.6.2", "About 六格信息", async (p) => {
-  eq(await p.evaluate(() => document.querySelectorAll(".about-grid div.k").length), 6);
+test("7.6.2", "About 六格默认全部可见", async (p) => {
+  await p.evaluate(() => window.rv.launch("about"));
+  await sleep(900);
+  const r = await p.evaluate(() => {
+    const w = [...document.querySelectorAll(".host-win")].find((x) => x.querySelector(".win-title").textContent.indexOf("About") >= 0);
+    if (!w) return null;
+    const body = w.querySelector(".win-body");
+    const br = body.getBoundingClientRect();
+    const cells = [...w.querySelectorAll(".about-grid > div")].map((d) => {
+      const q = d.getBoundingClientRect();
+      return q.top >= br.top - 1 && q.bottom <= br.bottom + 1;
+    });
+    return { n: cells.length, all: cells.every(Boolean), h: Math.round(w.getBoundingClientRect().height) };
+  });
+  ok(r, "About 没打开");
+  eq(r.n, 6, "格子数量");
+  ok(r.all, "有格子落在可视区外（窗口高 " + r.h + "）——「能滚动」不等于「默认看得见」");
 });
 
 test("7.6.3", "About 能关闭", async (p) => {
@@ -972,6 +1007,9 @@ test("10.2", "输入延迟 < 100ms", async (p) => {
     setTimeout(() => { clearInterval(iv); res(9999); }, 3000);
   }));
   ok(ms < 100, "延迟 " + Math.round(ms) + "ms");
+  /* 把刚才那个字符擦掉再回车，别把半行输入留给后面的用例 */
+  await p.evaluate(() => window.rv.type("\u007f\r"));
+  await sleep(400);
 });
 
 test("10.3", "启动到可交互 < 3s", async (p, st) => {
@@ -1099,6 +1137,167 @@ test("12.5", "反复开关 20 次状态一致", async (p) => {
 // ══════════════════════════════════════════════════════════
 // 运行器
 // ══════════════════════════════════════════════════════════
+// ══════════════════════════════════════════════════════════
+// 13. 文件与进程操作（图形界面）
+// ══════════════════════════════════════════════════════════
+test("13.1", "Files 工具栏 6 个按钮", async (p) => {
+  await p.evaluate(() => window.rv.launch("files"));
+  await sleep(600);
+  eq(await p.evaluate(() => [...document.querySelectorAll(".fbar button")].map((b) => b.dataset.f)),
+     ["up", "new", "mkdir", "rename", "del", "import"]);
+});
+
+test("13.2", "图形界面能新建文件", async (p) => {
+  eq(await p.evaluate(() => window.rv.fsWrite("gui-new.txt", "abc")), 0);
+  await sleep(500);
+  ok((await p.evaluate(() => window.rv.state.files.map((f) => f.name))).indexOf("gui-new.txt") >= 0, "内核里没有这个文件");
+  ok((await p.evaluate(() => [...document.querySelectorAll("tr[data-name]")].map((r) => r.dataset.name))).indexOf("gui-new.txt") >= 0,
+     "列表里看不到");
+});
+
+test("13.3", "图形界面能新建文件夹", async (p) => {
+  eq(await p.evaluate(() => window.rv.fsMkdir("/gui-dir")), 0);
+  await sleep(500);
+  const dir = await p.evaluate(() => {
+    const tr = [...document.querySelectorAll("tr[data-name]")].find((r) => r.dataset.name === "/gui-dir");
+    return tr ? tr.dataset.dir : null;
+  });
+  eq(dir, "1", "目录行没出现或没标成目录");
+});
+
+test("13.4", "图形界面能重命名", async (p) => {
+  eq(await p.evaluate(() => window.rv.fsRename("gui-new.txt", "gui-renamed.txt")), 0);
+  await sleep(500);
+  const names = await p.evaluate(() => window.rv.state.files.map((f) => f.name));
+  ok(names.indexOf("gui-renamed.txt") >= 0 && names.indexOf("gui-new.txt") < 0, JSON.stringify(names));
+});
+
+test("13.5", "图形界面能删除", async (p) => {
+  eq(await p.evaluate(() => window.rv.fsRemove("gui-renamed.txt")), 0);
+  await sleep(500);
+  ok((await p.evaluate(() => window.rv.state.files.map((f) => f.name))).indexOf("gui-renamed.txt") < 0, "还删不掉");
+});
+
+test("13.6", "双击目录进入并显示路径", async (p) => {
+  eq(await p.evaluate(() => window.rv.fsWrite("/gui-dir/inner.txt", "x")), 0);
+  await sleep(500);
+  await p.evaluate(() => {
+    const tr = [...document.querySelectorAll("tr[data-name]")].find((r) => r.dataset.name === "/gui-dir");
+    tr.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+  });
+  await sleep(700);
+  eq(await p.evaluate(() => window.rv.fsCwd), "/gui-dir", "没有切进目录");
+  eq(await p.evaluate(() => document.querySelector(".fpath").textContent), "/gui-dir");
+  eq(await p.evaluate(() => [...document.querySelectorAll("tr[data-name]")].map((r) => r.dataset.name)), ["/gui-dir/inner.txt"]);
+});
+
+test("13.7", "返回上一级", async (p) => {
+  await p.evaluate(() => document.querySelector('.fbar button[data-f="up"]').click());
+  await sleep(600);
+  eq(await p.evaluate(() => window.rv.fsCwd), "");
+  ok((await p.evaluate(() => [...document.querySelectorAll("tr[data-name]")].map((r) => r.dataset.name))).indexOf("/gui-dir") >= 0,
+     "回到根之后看不到 /gui-dir");
+});
+
+test("13.8", "文件行右键三项", async (p) => {
+  const items = await p.evaluate(() => {
+    const tr = [...document.querySelectorAll("tr[data-name]")].find((r) => r.dataset.name === "/gui-dir");
+    const q = tr.getBoundingClientRect();
+    tr.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, clientX: q.x + 20, clientY: q.y + 8 }));
+    const v = window.rv.ui.ctxMenu;
+    document.getElementById("ctxMenu").classList.remove("on");
+    return v;
+  });
+  eq(items, ["打开文件夹", "重命名…", "删除"]);
+});
+
+test("13.9", "编辑器保存写回 RAMFS", async (p) => {
+  await p.evaluate(() => window.rv.openFile("readme.txt"));
+  await sleep(900);
+  await p.evaluate(() => {
+    document.querySelector(".ed-area").value = "gui edit line\n";
+    document.querySelector(".ed-save").click();
+  });
+  await sleep(900);
+  eq(await p.evaluate(() => window.rv.fsRead("readme.txt")), "gui edit line\n");
+});
+
+test("13.10", "编辑器底色不透明", async (p) => {
+  const v = await p.evaluate(() => {
+    const w = [...document.querySelectorAll(".host-win")].find((x) => x.querySelector(".ed-wrap"));
+    return w ? getComputedStyle(w.querySelector(".ed-wrap")).backgroundColor : null;
+  });
+  ok(v, "编辑器窗口不见了");
+  ok(!/rgba\(.*,\s*0(\.\d+)?\)$/.test(v) && v !== "transparent",
+     "编辑器底色是透明的（" + v + "），背后文字会透上来");
+});
+
+test("13.11", "Monitor 行右键能终止进程", async (p) => {
+  await shellCmd(p, "reset");
+  await sleep(900);
+  const before = await p.evaluate(() => window.rv.state.procs);
+  const ready = before.find((x) => x.state === "READY");
+  ok(ready, "reset 之后没有就绪进程（命令行缓冲可能被上一条用例弄脏了）：" + JSON.stringify(before));
+  const pid = ready.pid;
+  const items = await p.evaluate((id) => {
+    const tr = document.querySelector('tr[data-pid="' + id + '"]');
+    const q = tr.getBoundingClientRect();
+    tr.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, clientX: q.x + 20, clientY: q.y + 8 }));
+    const v = window.rv.ui.ctxMenu;
+    return v;
+  }, pid);
+  ok(items && items.indexOf("终止进程") >= 0, "行右键没有「终止进程」：" + JSON.stringify(items));
+  await p.evaluate(() => {
+    [...document.querySelectorAll("#ctxMenu .ctx-item")].forEach((e) => { if (e.textContent === "终止进程") e.click(); });
+  });
+  await sleep(900);
+  ok((await p.evaluate(() => window.rv.state.procs.map((x) => x.pid))).indexOf(pid) < 0, "进程 " + pid + " 还在");
+});
+
+test("13.12", "挂起后状态为 SUSPEND，恢复后能跑完", async (p) => {
+  const snap = await p.evaluate(() => window.rv.state.procs);
+  const ready = snap.find((x) => x.state === "READY");
+  ok(ready, "没有就绪进程可挂起：" + JSON.stringify(snap));
+  const pid = ready.pid;
+  eq(await p.evaluate((id) => window.rv.suspendProc(id), pid), 0, "挂起 " + pid + " 失败（" + JSON.stringify(snap) + "）");
+  await sleep(700);
+  eq(await p.evaluate((id) => (window.rv.state.procs.find((x) => x.pid === id) || {}).state, pid), "SUSPEND");
+  eq(await p.evaluate((id) => window.rv.resumeProc(id), pid), 0);
+  await sleep(1800);
+  const st = await p.evaluate(() => window.rv.state.procs.map((x) => x.state));
+  ok(st.length === 0 || st.every((x) => x === "EXIT"), "恢复后没有跑完：" + JSON.stringify(st));
+  await shellCmd(p, "reset");
+  await sleep(800);
+});
+
+test("13.13", "桌面右键能新建文本文件", async (p) => {
+  const items = await p.evaluate(() => {
+    const os = document.getElementById("os");
+    os.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, clientX: 40, clientY: 700 }));
+    const v = window.rv.ui.ctxMenu;
+    document.getElementById("ctxMenu").classList.remove("on");
+    return v;
+  });
+  ok(items && items.indexOf("新建文本文件…") >= 0, JSON.stringify(items));
+});
+
+test("13.14", "导入程序入口存在", async (p) => {
+  eq(await p.evaluate(() => document.querySelectorAll('.fbar button[data-f="import"]').length), 1);
+});
+
+test("13.15", "终止正在运行的进程后回到 shell", async (p) => {
+  await shellCmd(p, "run hello.elf");
+  await sleep(150);
+  const pid = await p.evaluate(() => {
+    const r = window.rv.state.procs.find((x) => x.state === "RUN");
+    return r ? r.pid : null;
+  });
+  if (pid === null) return;      /* 程序已经跑完，这一轮没东西可终止 */
+  eq(await p.evaluate((id) => window.rv.killProc(id), pid), 0);
+  await sleep(1500);
+  ok((await p.evaluate(() => window.rv.state.term.join("|"))).indexOf("rvsh>") >= 0, "终止后没有回到提示符");
+});
+
 (async () => {
   const grep = process.argv.includes("--grep")
     ? process.argv[process.argv.indexOf("--grep") + 1] : null;

@@ -8,6 +8,8 @@
 #define PROC_READY 0
 #define PROC_RUN   1
 #define PROC_EXIT  2
+#define PROC_UNUSED 3   /* 槽位空闲：被 kill 回收过，或开机就未使用 */
+#define PROC_SUSPEND 4  /* 被宿主挂起：不参与调度 */
 
 typedef struct {
     u32 pid;
@@ -31,6 +33,13 @@ extern proc_t  procs[NPROC];
 extern int     cur_proc;
 
 void proc_init(void);
+/* 结束一个进程并回收它的代码页/堆页/页表。
+   返回 0 成功，-1 槽位本来就空，-2 进程正在运行（只能由定时器中断结束）。 */
+int  proc_kill(u32 pid);
+/* 回收已经死掉的进程（调用者必须已经切走 satp）。 */
+void proc_reap(u32 pid);
+int  proc_suspend(u32 pid);
+int  proc_resume(u32 pid);
 void proc_create(u32 pid, u32 entry, u32 stack_pa);
 /* 时间片轮转：返回下一个可运行进程 */
 proc_t *proc_schedule(void);
