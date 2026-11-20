@@ -1882,7 +1882,9 @@ function filesRename(name) {
   filesAsk("重命名 " + base, base).then((nm) => {
     if (!nm || nm === base) return;
     window.rv.fsRename(name, (parent ? parent + "/" : "") + nm).then((rc) => {
-      if (rc !== 0) filesToast("重命名失败：名字太长或已存在");
+      if (rc === 2) filesToast("重命名失败：名字不合法或太长（上限 23 字节）");
+      else if (rc === 3) filesToast("重命名失败：已经有同名文件");
+      else if (rc !== 0) filesToast("重命名失败");
       refreshFiles();
     }).catch((e) => filesToast("重命名失败：" + e.message));
   });
@@ -1993,14 +1995,16 @@ function bindFilesBar(fs) {
     } else if (act === "new") {
       filesAsk("新建文件", "untitled.txt").then((nm) => {
         if (nm) window.rv.fsWrite(joinPath(nm), "").then((rc) => {
-      if (rc !== 0) filesToast("新建失败：名字太长或空间不足");
+      if (rc === 2) filesToast("新建失败：文件槽已满（最多 16 个）");
+      else if (rc !== 0) filesToast("新建失败：名字不合法或太长（上限 23 字节）");
       refreshFiles();
     }).catch((e) => filesToast("新建失败：" + e.message));
       });
     } else if (act === "mkdir") {
       filesAsk("新建文件夹", "docs").then((nm) => {
         if (nm) window.rv.fsMkdir(joinPath(nm)).then((rc) => {
-      if (rc !== 0) filesToast("新建文件夹失败：名字太长或空间不足");
+      if (rc === 2) filesToast("新建失败：文件槽已满（最多 16 个）");
+      else if (rc !== 0) filesToast("新建失败：名字不合法或太长（上限 23 字节）");
       refreshFiles();
     }).catch((e) => filesToast("新建文件夹失败：" + e.message));
       });
@@ -2062,7 +2066,9 @@ function buildEditor(id, path, text) {
   const st = body.querySelector(".ed-st");
   const save = () => {
     window.rv.fsWrite(path, ta.value).then((rc) => {
-      st.textContent = rc === 0 ? "已保存 " + ta.value.length + " 字节" : "保存失败（rc=" + rc + "）";
+      st.textContent = rc === 0
+        ? "已保存 " + _enc.encode(ta.value).length + " 字节"
+        : "保存失败（rc=" + rc + "）";
       refreshFiles();
     }).catch((e) => { st.textContent = "保存失败：" + e.message; });
   };

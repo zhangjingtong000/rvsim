@@ -1404,7 +1404,9 @@ void host_cmd_poll(void)
         hcmd_name(c->p0, a, sizeof(a));
         {
             u32 len = c->len; if (len > HCMD_DATA_MAX) len = HCMD_DATA_MAX;
-            rc = (fs_write(a, (const u8 *)HCMD_DATA_PA, len) < 0) ? 1u : 0u;
+            int n = fs_write(a, (const u8 *)HCMD_DATA_PA, len);
+            /* 1 = 名字不合法/太长，2 = 文件槽用尽。宿主据此给不同提示。 */
+            rc = (n >= 0) ? 0u : (n == -2 ? 2u : 1u);
         }
         break;
     case HCMD_REMOVE:
@@ -1414,11 +1416,18 @@ void host_cmd_poll(void)
     case HCMD_RENAME:
         hcmd_name(c->p0, a, sizeof(a));
         hcmd_name(c->p1, b, sizeof(b));
-        rc = (fs_rename(a, b) < 0) ? 1u : 0u;
+        {
+            int n = fs_rename(a, b);
+            /* 1 = 其它失败，2 = 名字太长/不合法，3 = 已有同名 */
+            rc = (n >= 0) ? 0u : (n == -2 ? 2u : (n == -3 ? 3u : 1u));
+        }
         break;
     case HCMD_MKDIR:
         hcmd_name(c->p0, a, sizeof(a));
-        rc = (fs_mkdir(a) < 0) ? 1u : 0u;
+        {
+            int n = fs_mkdir(a);
+            rc = (n >= 0) ? 0u : (n == -2 ? 2u : (n == -3 ? 3u : 1u));
+        }
         break;
     case HCMD_KILL: {
         /* 正在跑的进程杀不掉（它的 satp 还挂着），交给定时器中断。

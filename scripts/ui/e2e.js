@@ -1345,7 +1345,7 @@ test("13.19", "目录改名会迁移子项", async (p) => {
 });
 
 test("13.20", "文件与目录不能互相顶替", async (p) => {
-  eq(await p.evaluate(() => window.rv.fsMkdir("readme.txt")), 1, "对已存在的文件建目录应该报冲突");
+  eq(await p.evaluate(() => window.rv.fsMkdir("readme.txt")), 3, "对已存在的文件建目录应该报冲突（3 = 同名文件）");
   eq(await p.evaluate(() => window.rv.fsWrite("mvdir2", "BBB")), 1, "往目录里写文件应该失败");
 });
 

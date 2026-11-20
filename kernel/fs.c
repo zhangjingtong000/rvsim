@@ -66,9 +66,25 @@ static int fs_norm(const char *in, char *out, int cap)
     int n = 0;
     if (!in) { out[0] = 0; return 0; }
     while (*in == '/') in++;
-    while (in[n]) n++;
-    if (n >= cap) { out[0] = 0; return -1; }   /* 太长必须报错，不能截断后当成功 */
-    k_strcpy_n(out, in, cap);
+    while (*in) {
+        const char *seg = in;
+        int sl = 0;
+        while (in[sl] && in[sl] != '/') sl++;
+        if (sl == 1 && seg[0] == '.') {
+            /* "." 段：跳过。允许它只会让 "./z.txt" 和 "z.txt" 变成两个名字 */
+        } else if (sl == 2 && seg[0] == '.' && seg[1] == '.') {
+            return -1;                       /* ".."：平铺命名空间没有上级 */
+        } else {
+            if (n && n < cap - 1) out[n++] = '/';
+            for (int i = 0; i < sl; i++) {
+                if (n >= cap - 1) { out[0] = 0; return -1; }  /* 太长必须报错，不能截断 */
+                out[n++] = seg[i];
+            }
+        }
+        in += sl;
+        while (*in == '/') in++;
+    }
+    out[n] = 0;
     return 0;
 }
 
@@ -134,7 +150,7 @@ int fs_write(const char *name, const u8 *data, u32 len)
         for (u32 i = 0; i < FS_MAX_FILES; i++) {
             if (!g_files[i].used) { f = &g_files[i]; break; }
         }
-        if (!f) return -1;                    /* 槽位用尽 */
+        if (!f) return -2;                    /* 槽位用尽（与「名字不合法」区分开） */
         f->used = 1;
         f->is_dir = 0;
         f->owner = (u8)g_cur_uid;
@@ -231,7 +247,7 @@ int fs_mkdir(const char *name)
     if (!key[0]) return -1;
     {
         fs_file_t *e = fs_find(key);
-        if (e) return e->is_dir ? 0 : -2;     /* 同名文件存在：报冲突，别假装成功 */
+        if (e) return e->is_dir ? 0 : -3;     /* 同名文件存在：报冲突，别假装成功 */
     }
     if (fs_ensure_parents(key) < 0) return -1;
 
@@ -246,7 +262,7 @@ int fs_mkdir(const char *name)
             return 0;
         }
     }
-    return -1;
+    return -2;                                    /* 槽位用尽 */
 }
 
 /* 能否写：root 无条件；其他用户要求 mode=1 */
