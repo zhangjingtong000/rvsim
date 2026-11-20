@@ -967,7 +967,7 @@ static void fs_seed(void)
 #define WIN_FS_W 216
 #define WIN_FS_H 198
 
-#define TASKBAR_H  30
+#define TASKBAR_H  0     /* dock 由宿主画，不占逻辑桌面 */
 
 
 /* 把秒数画成 HH:MM:SS，只重画这一小块（8 字符 ~1.6k 指令） */
@@ -1229,6 +1229,7 @@ static void win_apply_action(int idx, int act)
             if (g_wins[i].visible) { g_focus = i; break; }
     } else {                             /* 最大化 / 还原 */
         win_raise(idx);
+        g_focus = idx;                   /* 点窗控按钮也意味着要看这个窗口 */
         if (!w->maximized) {
             w->rx = w->x; w->ry = w->y; w->rw = w->w; w->rh = w->h;
             w->x = 0; w->y = 0;
