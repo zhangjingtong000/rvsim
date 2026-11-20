@@ -73,25 +73,6 @@ static int cjk_lookup(u32 cp)
     return -1;
 }
 
-/* 画一个 16x16 汉字（占两格宽） */
-static void cjk_draw(u32 *buf, u32 stride, u32 x, u32 y, u32 cp, u32 fg, u32 bg, int draw_bg)
-{
-    int idx = cjk_lookup(cp);
-    if (idx < 0) return;
-    for (u32 j = 0; j < 16; j++) {
-        u32 *row = buf + (y + j) * stride + x;
-        u32 hi = g_cjk_bits[idx][j * 2];
-        u32 lo = g_cjk_bits[idx][j * 2 + 1];
-        for (u32 i = 0; i < 8; i++) {
-            int on = (hi & (0x80u >> i)) != 0;
-            row[i] = on ? fg : (draw_bg ? bg : row[i]);
-        }
-        for (u32 i = 0; i < 8; i++) {
-            int on = (lo & (0x80u >> i)) != 0;
-            row[8 + i] = on ? fg : (draw_bg ? bg : row[8 + i]);
-        }
-    }
-}
 
 /* 换行 + 滚屏。长行自动折行也必须走这里——
    否则 cy 会一直涨到 TERM_ROWS 然后卡死，所有字符挤在最后一行反复覆盖。 */

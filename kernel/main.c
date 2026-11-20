@@ -895,7 +895,6 @@ int krestart(void)
     }
     for (u32 k = NPROC_INIT; k < NPROC; k++) procs[k].state = PROC_EXIT;
     cur_proc = -1;
-    front_sync();
     return (int)NPROC_INIT;
 }
 
@@ -1053,7 +1052,6 @@ static void win_info_sync(void)
 }
 
 
-static int  g_menu_open = 0;
 static int  g_dragging = 0;
 /* 按下/抬起配对状态：整屏重绘（0.4-0.7 秒）期间鼠标抬起事件会丢，
    下一次按下的抬起就被当成拖动终点，窗口被拖到别处。
@@ -1104,32 +1102,6 @@ static void win_paint_chrome(int idx)
 /* 只重画任务栏那三个 chip（很便宜），让高亮跟焦点联动 */
 
 /* 菜单点击：返回 1 表示点击被菜单消费 */
-static int menu_click(u32 mx_, u32 my_)
-{
-    u32 x = 8, y = 600 - TASKBAR_H - 168, w = 208, h = 166;
-    if (mx_ < x || mx_ >= x + w || my_ < y || my_ >= y + h) {
-        return 0;      /* 点在菜单外：让调用方关掉菜单 */
-    }
-    int item = -1;
-    for (int i = 0; i < 4; i++) {
-        u32 iy = y + 28 + i * 30;
-        if (my_ >= iy && my_ < iy + 28) { item = i; break; }
-    }
-    if (item >= 0 && item < 3) {
-        extern void desktop_redraw(void);
-        g_menu_open = 0;
-        g_focus = item;
-        desktop_redraw();
-    } else if (item == 3) {          /* About：把版本信息打到终端里 */
-        extern void desktop_redraw(void);
-        g_menu_open = 0;
-        desktop_redraw();
-        uart_puts("rvsim 0.9  RV32IMA  M/S/U  Sv32\n");
-        uart_puts("800x600 desktop, all pixels rasterised by the guest\n");
-        uart_puts("type help for the command list\n");
-    }
-    return 1;
-}
 
 static void taskbar_chips(void)
 {
@@ -1453,35 +1425,9 @@ void desktop_mouse(void)
        4 像素阈值永远达不到 —— 拖动完全失效。 */
     if (btn && !g_dragging && !g_btn_down) {
         g_btn_down = 1;
-        /* 菜单开着时优先给菜单 */
-        if (g_menu_open) {
-            if (menu_click(mx, my)) return;
-            g_menu_open = 0;
-            { extern void desktop_redraw(void); desktop_redraw(); }
-            return;
-        }
-        /* 任务栏左侧 rvsh 按钮：开关开始菜单 */
-        if (my >= 600 - TASKBAR_H && mx >= 8 && mx < 80) {
-            g_menu_open = 1;
-            { extern void desktop_redraw(void); desktop_redraw(); }
-            return;
-        }
-        /* 任务栏中间三个 chip：点哪个就聚焦哪个窗口（被关掉的先恢复） */
-        if (my >= 600 - TASKBAR_H) {
-            struct { u32 x, w; int idx; } ch[3] = {
-                { 88, 76, 0 }, { 170, 70, 1 }, { 246, 56, 2 }
-            };
-            for (int k = 0; k < 3; k++) {
-                if (mx >= ch[k].x && mx < ch[k].x + ch[k].w) {
-                    extern void desktop_redraw(void);
-                    g_wins[ch[k].idx].visible = 1;
-                    g_focus = ch[k].idx;
-                    desktop_redraw();
-                    return;
-                }
-            }
-            return;
-        }
+        /* 任务栏和开始菜单现在都由宿主用 HTML 画，内核这边不再有
+           「点任务栏哪个像素」的逻辑；TASKBAR_H 也已经是 0，
+           原来那两段分支的判定条件永远不成立，纯属死代码。 */
         int i = win_hit(mx, my);
         if (i < 0) return;
         /* 先看是不是点在窗控点上 */
@@ -1596,11 +1542,6 @@ void desktop_redraw(void)
     win_info_sync();
 }
 
-/* 轻量刷新：只同步窗口元数据（位置/焦点/z 序）。 */
-void desktop_refresh(void)
-{
-    win_info_sync();
-}
 
 static void desktop_draw(void)
 {
@@ -1738,7 +1679,6 @@ int snap_restore(u32 id)
             kload_prog(g_snaps[i].prog);
 
             cur_proc = -1;
-            front_sync();
             evt_emit(EVT_RESTORE, (u32)-1, id, g_snaps[i].evt_seq, 1);
             return 1;
         }
