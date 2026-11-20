@@ -2109,8 +2109,8 @@ function panelsRender() {
            + '</td><td>' + r.st + '</td><td>' + r.pc + '</td></tr>';
       h += '</tbody></table>';
       mon.innerHTML = h;
-      panelRowHeight(mon, rows.length);
     }
+    panelRowHeight(mon, rows.length);
     /* 行右键：任务管理器里「结束任务」的位置。
        绑定放在签名比较之外，表格重渲染不需要重绑。 */
     if (!mon.dataset.ctx) {
@@ -2179,10 +2179,6 @@ function panelsRender() {
       if (!rows.length) h += '<tr><td class="dim" colspan="2" style="padding:12px">空目录</td></tr>';
       h += '</tbody></table>';
       sc.innerHTML = h;
-      const H = sc.clientHeight;
-      if (H > 0 && rows.length) {
-        sc.style.setProperty("--rh", Math.max(22, Math.min(34, (H - 26) / rows.length)).toFixed(1) + "px");
-      }
       sc.querySelectorAll("tr[data-name]").forEach((tr) => {
         tr.addEventListener("click", () => {
           sc.querySelectorAll("tr.sel").forEach((x) => x.classList.remove("sel"));
@@ -2198,16 +2194,25 @@ function panelsRender() {
         });
       });
     }
+    /* 行高每帧校正一次（内部有变化才写的短路），窗口拉大拉小都跟得上 */
+    panelRowHeight(fs.querySelector(".fscroll"), rows.length, 22, 34, 26);
   }
 }
 
 /* 面板行高：行数少就把行拉高，避免窗口下半截一片空。
    上限 40px —— 再高就不像列表而像画廊了。 */
-function panelRowHeight(el, n) {
+function panelRowHeight(el, n, lo, hi, pad) {
+  if (!el) return;
   const H = el.clientHeight;
   if (H <= 0 || !n) return;
-  const rh = Math.max(32, Math.min(40, (H - 32) / n));
-  el.style.setProperty("--rh", rh.toFixed(1) + "px");
+  const a = lo == null ? 32 : lo, b = hi == null ? 40 : hi;
+  const p = pad == null ? 32 : pad;
+  const v = Math.max(a, Math.min(b, (H - p) / n)).toFixed(1) + "px";
+  /* 每帧都渲染面板，值没变就不写 style——否则每帧一次样式重算。
+     但也不能只在数据变化时写：窗口最大化之后行高得跟着长。 */
+  if (el.dataset.rh === v) return;
+  el.dataset.rh = v;
+  el.style.setProperty("--rh", v);
 }
 
 /* ══ 窗口同步：位置 / 尺寸 / 标题 / 焦点 / Dock 指示 ══
