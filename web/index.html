@@ -124,6 +124,23 @@ input{font:inherit;color:inherit;background:none;border:0;outline:0}
 #winlayer{position:absolute;inset:0;z-index:5;pointer-events:none}
 #winlayer > .win{pointer-events:auto}
 
+/* 吸附预览：Win11 拖到边缘时会先亮出一块半透明占位 */
+#snapGhost{position:absolute;z-index:4;pointer-events:none;opacity:0;
+  border-radius:var(--r-window);
+  background:rgba(45,212,191,.16);
+  border:1px solid rgba(94,234,212,.6);
+  box-shadow:0 0 0 1px rgba(0,0,0,.35),0 14px 36px -10px rgba(0,0,0,.55);
+  transition:left .1s var(--ease-decel),top .1s var(--ease-decel),
+             width .1s var(--ease-decel),height .1s var(--ease-decel),opacity .1s}
+#snapGhost.on{opacity:1}
+
+/* 键盘焦点环：Win11 是贴边的 2px 白环，内缩 -2px 避免被 overflow 裁掉 */
+:focus-visible{outline:2px solid #FFFFFF;outline-offset:2px}
+.dicon:focus-visible,.dock-app:focus-visible,.dock-btn:focus-visible,
+.sm-tile:focus-visible,.sm-ri:focus-visible,.win-ctl button:focus-visible{
+  outline:2px solid #FFFFFF;outline-offset:-2px}
+#startBtn:focus-visible,#dbgBtn:focus-visible{outline-offset:-2px}
+
 /* ── 窗口 ───────────────────────────────────────────────────── */
 .win{position:absolute;display:flex;flex-direction:column;
   border-radius:var(--r-window);overflow:hidden;background:var(--s0);
@@ -131,7 +148,10 @@ input{font:inherit;color:inherit;background:none;border:0;outline:0}
   box-shadow:0 1px 0 rgba(255,255,255,.05) inset,
              0 16px 40px -10px rgba(0,0,0,.62),
              0 2px 6px rgba(0,0,0,.35);
-  transition:box-shadow .16s var(--ease-decel),border-color .16s}
+  transition:box-shadow .16s var(--ease-decel),border-color .16s,
+             left .2s var(--ease-decel),top .2s var(--ease-decel),
+             width .2s var(--ease-decel),height .2s var(--ease-decel)}
+.win.dragging{transition:box-shadow .16s var(--ease-decel),border-color .16s}
 .win.focused{border-color:rgba(94,234,212,.32);
   box-shadow:0 1px 0 rgba(255,255,255,.07) inset,
              0 26px 60px -12px rgba(0,0,0,.75),
@@ -414,6 +434,7 @@ body.drawer #drawer{transform:translateX(0)}
 <div id="os">
   <div id="wall"></div>
   <div id="icons"></div>
+  <div id="snapGhost"></div>
   <div id="winlayer"></div>
 
   <div id="dock">
@@ -609,6 +630,16 @@ const SVG_DEFS = '<svg width="0" height="0" style="position:absolute" aria-hidde
   + '<linearGradient id="gAbt" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#7C2D12"/><stop offset="1" stop-color="#C2410C"/></linearGradient>'
   + '</defs></svg>';
 
+/* 让 div 也能用键盘操作：tab 能到、Enter/Space 触发。
+   无障碍要求所有功能可键盘完成，而 .dicon/.dock-app/.sm-tile 都是 div。 */
+function makeFocusable(el, onActivate) {
+  el.tabIndex = 0;
+  el.setAttribute("role", "button");
+  el.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onActivate(); }
+  });
+}
+
 function iconsRender() {
   const box = $("icons");
   if (!box || box.dataset.built) return;
@@ -624,6 +655,7 @@ function iconsRender() {
       d.classList.add("sel");
     };
     d.ondblclick = () => { launch(app.id); };
+    makeFocusable(d, () => launch(app.id));
     box.appendChild(d);
   }
 }
@@ -639,6 +671,7 @@ function dockRender() {
     d.title = app.name;
     d.innerHTML = '<svg viewBox="0 0 44 44">' + app.ico + '</svg><span class="ind"></span>';
     d.onclick = () => launch(app.id);
+    makeFocusable(d, () => launch(app.id));
     box.appendChild(d);
   }
 }
@@ -876,6 +909,7 @@ function openStartMenu() {
     t.dataset.name = app.name.toLowerCase();
     t.innerHTML = '<svg viewBox="0 0 44 44">' + app.ico + '</svg><span>' + app.name + '</span>';
     t.onclick = () => launch(app.id);
+    makeFocusable(t, () => launch(app.id));
     tiles.appendChild(t);
   }
 
@@ -888,6 +922,7 @@ function openStartMenu() {
       + 'stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 4.5L6.5 8l-3 3.5M8.5 11.5h4"/></svg>'
       + '<span>' + it + '</span>';
     r.onclick = () => { sendCmd(it); closeStartMenu(); focusTerm(); };
+    makeFocusable(r, () => { sendCmd(it); closeStartMenu(); focusTerm(); });
     rec.appendChild(r);
   }
 
@@ -917,6 +952,72 @@ function openStartMenu() {
 const WIN_SLOTS = 3;
 const winEls = [];
 let winLayer = null;
+
+/* ── 吸附区域（逻辑坐标 800x600）──
+   Win11 的 Snap Layouts：拖到左右边缘 → 半屏，拖到顶部 → 最大化，
+   拖到四角 → 1/4 屏。边缘触发距离 26 逻辑像素（约屏幕宽 3%）。 */
+const SNAP = {
+  top:   [0, 0, 800, 600],
+  tl:    [0, 0, 400, 300], tr: [400, 0, 400, 300],
+  bl:    [0, 300, 400, 300], br: [400, 300, 400, 300],
+  left:  [0, 0, 400, 600], right: [400, 0, 400, 600],
+};
+const SNAP_EDGE = 26;
+
+/* 吸附判定用屏幕像素，不是逻辑坐标：鼠标走到窗口最左缘时，
+   换算出来的逻辑坐标是负的（桌面等比居中，四周有留白），
+   拿它跟 0 比永远不成立。底部不吸附 —— Win11 底部是任务栏。 */
+function snapZonePx(px, py, W, H) {
+  if (px < 0 || py < 0 || px > W || py > H) return null;
+  const L = px <= SNAP_EDGE, R = px >= W - SNAP_EDGE;
+  const T = py <= SNAP_EDGE;
+  if (T && L) return "tl";
+  if (T && R) return "tr";
+  if (T) return "top";
+  if (L) return "left";
+  if (R) return "right";
+  return null;
+}
+
+function snapShow(zone, L) {
+  const g = $("snapGhost");
+  if (!g) return;
+  if (!zone) { g.classList.remove("on"); return; }
+  const [x, y, w, h] = SNAP[zone];
+  g.style.left = (L.ox + x * L.scale).toFixed(1) + "px";
+  g.style.top = (L.oy + y * L.scale).toFixed(1) + "px";
+  g.style.width = (w * L.scale).toFixed(1) + "px";
+  g.style.height = (h * L.scale).toFixed(1) + "px";
+  g.classList.add("on");
+}
+function snapHide() {
+  const g = $("snapGhost");
+  if (g) g.classList.remove("on");
+}
+
+/* 窗口位置回写：只挪位置 / 位置+尺寸（吸附） */
+function setWinPos(i, x, y) {
+  if (!M) return;
+  const b = guestOff(WIN_POS_PA);
+  M.HEAPU32[b] = i;
+  M.HEAPU32[b + 1] = Math.max(0, Math.min(800, x));
+  M.HEAPU32[b + 2] = Math.max(0, Math.min(600, y));
+  M.HEAPU32[b + 3] = 0;
+  M.HEAPU32[b + 4] = 0;
+  posSeq = (posSeq + 1) & 0x7fffffff; if (!posSeq) posSeq = 1;
+  M.HEAPU32[b + 5] = posSeq;
+}
+function setWinRect(i, x, y, w, h) {
+  if (!M) return;
+  const b = guestOff(WIN_POS_PA);
+  M.HEAPU32[b] = i;
+  M.HEAPU32[b + 1] = x;
+  M.HEAPU32[b + 2] = y;
+  M.HEAPU32[b + 3] = w;
+  M.HEAPU32[b + 4] = h;
+  posSeq = (posSeq + 1) & 0x7fffffff; if (!posSeq) posSeq = 1;
+  M.HEAPU32[b + 5] = posSeq;
+}
 
 /* 标题栏图标：16px 下 44px 的彩色图标会糊成一团色块，
    所以单独一套线条版 */
@@ -969,6 +1070,7 @@ function winInit() {
       const offX = ev.clientX - r.left, offY = ev.clientY - r.top;
       we.dragging = true;
       we.pending = false;
+      hostDragActive = true;
       el.classList.add("dragging");
       we.px = r.left; we.py = r.top;
 
@@ -979,28 +1081,44 @@ function winInit() {
         el.style.left = x + "px";
         el.style.top = y + "px";
         we.px = x; we.py = y;
+        /* 拖到屏幕边缘就亮吸附预览（Win11 的 Snap Layouts） */
+        const L = deskTransform(osR.width, osR.height);
+        we.zone = snapZonePx(e2.clientX - osR.left, e2.clientY - osR.top, osR.width, osR.height);
+        snapShow(we.zone, L);
       };
       const up = () => {
         window.removeEventListener("pointermove", move);
         window.removeEventListener("pointerup", up);
         we.dragging = false;
-        we.pending = true;
-        we.pendingUntil = Date.now() + 600;
+        hostDragActive = false;
         el.classList.remove("dragging");
+        snapHide();
         if (!M) return;
         const L = deskTransform(osR.width, osR.height);
-        const lx = Math.round((we.px - L.ox) / L.scale);
-        const ly = Math.round((we.py - L.oy) / L.scale);
-        const b = guestOff(WIN_POS_PA);
-        M.HEAPU32[b] = i;
-        M.HEAPU32[b + 1] = Math.max(0, Math.min(800, lx));
-        M.HEAPU32[b + 2] = Math.max(0, Math.min(600, ly));
-        posSeq = (posSeq + 1) & 0x7fffffff;
-        if (!posSeq) posSeq = 1;
-        M.HEAPU32[b + 3] = posSeq;
+        if (we.zone) {
+          /* 吸附：位置和尺寸一起交给内核，去掉 dragging 让 .win 的 transition 接管 */
+          const [sx, sy, sw, sh] = SNAP[we.zone];
+          setWinRect(i, sx, sy, sw, sh);
+          we.pending = false;
+          we.el.style.left = (L.ox + sx * L.scale) + "px";
+          we.el.style.top = (L.oy + sy * L.scale) + "px";
+          we.el.style.width = (sw * L.scale) + "px";
+          we.el.style.height = (sh * L.scale) + "px";
+        } else {
+          we.pending = true;
+          we.pendingUntil = Date.now() + 600;
+          setWinPos(i, Math.round((we.px - L.ox) / L.scale), Math.round((we.py - L.oy) / L.scale));
+        }
+        we.zone = null;
       };
       window.addEventListener("pointermove", move);
       window.addEventListener("pointerup", up);
+    });
+
+    /* 双击标题栏最大化/还原（Win11 标准行为） */
+    bar.addEventListener("dblclick", (ev) => {
+      if (ev.target.closest(".win-ctl")) return;
+      if (M) M.HEAPU32[guestOff(WIN_CMD_PA)] = i * 10 + 2;
     });
 
     /* 窗控按钮：直接下发命令字，不让前端重算命中坐标
@@ -1337,6 +1455,10 @@ function dockClock() {
    写 1 的话只有第一次能被读到，之后所有移动和点击都被内核当成重复事件丢掉，
    表现就是窗口拖不动、按钮点不动。 */
 let evSeq = 0;
+/* 宿主正在自己拖窗口。这个期间 pointermove 仍会冒泡到 #os，
+   不挡住的话内核也会按同一批坐标拖同一个窗口，两边互相覆盖。 */
+let hostDragActive = false;
+
 function pushMouse(x, y, btn) {
   if (!M) return;
   const wk = (a, v) => M._rv_mem_write32(a, v);
@@ -1369,7 +1491,7 @@ function screenPointerBind() {
   let hostUiDown = false;
 
   cv.addEventListener("pointermove", (e) => {
-    if (!M || hostUiDown) return;
+    if (!M || hostUiDown || hostDragActive) return;
     const [x, y] = toFb(e);
     pushMouse(x, y, e.buttons ? 1 : 0);
   }, { passive: true });
@@ -1708,12 +1830,17 @@ document.addEventListener("paste", (e) => {
   if (!ticking) startTicking();
 });
 
+/* 这些是宿主的可聚焦控件：键盘焦点在它们身上时，按键交给浏览器/控件自己处理，
+   不要再送进 guest 终端 —— 否则 Tab 永远移不动焦点，Enter 会既开应用又敲回车。 */
+const UI_FOCUS = ".dicon,.dock-app,.dock-btn,.sm-tile,.sm-ri,.win-ctl,#startMenu";
+
 document.addEventListener("keydown", (e) => {
   if (!loaded || !M) return;
   if (e.key === "F12") { toggleDrawer(); e.preventDefault(); return; }
   if (e.key === "Escape") { closeStartMenu(); return; }
   const tag = e.target && e.target.tagName;
   if (e.target && e.target.id !== "ime" && (tag === "INPUT" || tag === "TEXTAREA")) return;
+  if (e.target && e.target.closest && e.target.closest(UI_FOCUS)) return;
 
   if (e.ctrlKey && (e.key === "c" || e.key === "C")) {
     M._rv_uart_write(3); e.preventDefault(); return;

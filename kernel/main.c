@@ -1255,7 +1255,7 @@ static void win_apply_action(int idx, int act)
 #define WIN_POS_PA  0x83FFE210u
 
 typedef struct {
-    u32 idx, x, y, seq;
+    u32 idx, x, y, w, h, seq;   /* w/h 为 0 表示只挪位置、不改尺寸（吸附时两者都给） */
 } win_pos_t;
 
 #define WIN_POS ((volatile win_pos_t *)WIN_POS_PA)
@@ -1378,8 +1378,17 @@ static void win_cmd_poll(void)
         g_last_pos_seq = pseq;
         u32 i = WIN_POS->idx;
         if (i < 3) {
-            g_wins[i].x = WIN_POS->x;
-            g_wins[i].y = WIN_POS->y;
+            win_t *pw = &g_wins[i];
+            pw->x = WIN_POS->x;
+            pw->y = WIN_POS->y;
+            /* 带了尺寸就是吸附（左半/右半/四角），没带就只是挪位置 */
+            if (WIN_POS->w && WIN_POS->h) {
+                pw->w = WIN_POS->w;
+                pw->h = WIN_POS->h;
+                pw->maximized = 0;
+                pw->rx = pw->x; pw->ry = pw->y;
+                pw->rw = pw->w; pw->rh = pw->h;
+            }
             win_info_sync();
         }
     }
