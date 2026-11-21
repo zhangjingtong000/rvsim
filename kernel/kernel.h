@@ -185,6 +185,9 @@ void *memcpy(void *d, const void *s, size_t n);
 u32 *page_alloc(void);
 /* 归还一页到空闲链。只接受页池范围内、页对齐的地址。 */
 void page_free(void *p);
+void page_free_n(void *p, u32 n);
+u32 vm_pool_used(void);
+u32 vm_pool_free_count(void);
 u32 *vm_proc_pgtbl(void);
 u32 *page_alloc_n(u32 n);
 void vm_map_code(u32 *root, u32 va, u32 pa);

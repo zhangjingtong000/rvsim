@@ -1273,6 +1273,14 @@ test("13.11", "Monitor 行右键能终止进程", async (p) => {
 });
 
 test("13.12", "挂起后状态为 SUSPEND，恢复后能跑完", async (p) => {
+  /* reset 重置的是「当前装载的程序」（g_loaded_prog），不是固定回 hello.elf。
+     前面的用例可能跑过 spin.elf（死循环），直接 reset 会得到 3 个永远不 exit
+     的进程，这条用例就必然失败。先把当前程序换成 hello.elf 再 reset。 */
+  await shellCmd(p, "run hello.elf");
+  await sleep(1200);
+  await shellCmd(p, "reset");
+  await sleep(800);
+
   const snap = await p.evaluate(() => window.rv.state.procs);
   const ready = snap.find((x) => x.state === "READY");
   ok(ready, "没有就绪进程可挂起：" + JSON.stringify(snap));

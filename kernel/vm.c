@@ -47,7 +47,33 @@ u32 *page_alloc(void)
     return p;
 }
 
+/* 页池统计：压测时用来看有没有泄漏。
+   已分配 = 从内核末尾到 g_next_page 的页数；
+   可复用 = 回收链上的页数。两者加起来是「用过」的总量，
+   反复 run/reset 后如果 已分配 持续上涨，就是漏了。 */
+u32 vm_pool_used(void)
+{
+    u32 lo = ((u32)_kernel_end + 4095u) & ~4095u;
+    if (!g_next_page) return 0;
+    return (g_next_page - lo) / 4096u;
+}
+
+u32 vm_pool_free_count(void)
+{
+    u32 n = 0, a = g_free_list;
+    while (a) { n++; a = *(u32 *)a; }
+    return n;
+}
+
 /* 连续 n 页（每进程的代码副本必须是连续的，才能按页平移映射） */
+/* 连续 n 页一起还回去。page_free 只处理一页，而代码页/栈页都是
+   page_alloc_n 一次分配的连续块，逐页 free 会漏掉后面 n-1 页。 */
+void page_free_n(void *p, u32 n)
+{
+    for (u32 i = 0; i < n; i++)
+        page_free((u8 *)p + i * 4096u);
+}
+
 u32 *page_alloc_n(u32 n)
 {
     if (n == 1) return page_alloc();

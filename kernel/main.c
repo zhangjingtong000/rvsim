@@ -585,12 +585,22 @@ u32 s_trap_handler(u32 cause, u32 epc, u32 tval, u32 *regs)
                 }
                 proc_switch_satp(g_kroot);
                 g_reap_pending = (int)dead;   /* 交给 shell 主循环回收 */
+                /* 必须先回包再进 shell_loop：shell_loop 不返回，
+                   漏掉这一句宿主会一直等到 4 秒超时，报「内核没有响应」——
+                   明明终止已经成功了。 */
+                host_cmd_finish(0);
                 shell_loop();          /* 不返回 */
             } else if (kp >= 0) {
-                /* 要终止的不是当前进程：直接回收。以前这里把请求丢掉还回 rc=0，
-                   宿主以为成功了，其实那一行根本没被终止。 */
-                u32 rc = (proc_kill((u32)kp) == 0) ? 0u : 1u;
-                host_cmd_finish(rc);
+                /* 要终止的不是当前进程：只标 EXIT，回收交给 shell 主循环。
+                   proc_reap 会遍历页表 + 刷前端，在中断上下文里做时间不可控；
+                   proc.c 顶部的注释早就写明了这一点，这里却一直是同步回收。 */
+                if (kp < NPROC && procs[kp].state != PROC_EXIT) {
+                    procs[kp].state = PROC_EXIT;
+                    g_reap_pending = (int)kp;
+                    host_cmd_finish(0);
+                } else {
+                    host_cmd_finish(1);
+                }
                 panel_sync_procs();
             }
         }
@@ -854,7 +864,9 @@ int kprog_valid(const char *name)
 
 /* 按名字选择要加载的用户程序（hello / fork）。len 返回镜像长度。 */
 
-static char g_loaded_prog[8] = "hello";
+/* 16 字节：足够放下 "fdtest.elf" 这类名字。原来是 8 字节只存 7 个字符，
+   "hello.elf" 被截成 "hello.e"，快照恢复时 kload_prog 必然失败。 */
+static char g_loaded_prog[16] = "hello";
 
 /* 从 RAMFS 装载程序到用户代码区。
    名字可以直接给文件名（如 hello.bin），也接受裸名（hello -> hello.bin），
@@ -927,7 +939,7 @@ int kload_prog(const char *name)
     }
 
     /* 记住装的是哪个程序：快照靠它回滚代码区 */
-    { int k = 0; while (key[k] && k < 7) { g_loaded_prog[k] = key[k]; k++; } g_loaded_prog[k] = 0; }
+    { int k = 0; while (key[k] && k < 15) { g_loaded_prog[k] = key[k]; k++; } g_loaded_prog[k] = 0; }
 
     return len;
 }
@@ -935,11 +947,30 @@ int kload_prog(const char *name)
 /* 给一个进程建立独立的代码/数据物理页并映射。
    此前所有进程共享 0x80400000 那一块物理页，一个进程写自己的 .data，
    别的进程就能看到——那不算「独立的地址空间」。 */
-static void proc_setup_image(int i)
+/* 返回 0 成功，-1 失败（程序超过 4 页）。
+   以前超过 4 页就静默截断，程序能跑但行为随机（缺的代码页拿到零页，
+   执行 0x00000000 非法指令），而且没有任何提示。 */
+static int proc_setup_image(int i)
 {
     u32 npages = (g_img_end > 0x80400000u)
                ? ((g_img_end - 0x80400000u + 4095u) / 4096u) : 1u;
-    if (npages > 4) npages = 4;
+    if (npages > 4) {
+        uart_puts("{\"fatal\":\"prog_too_big\",\"pages\":");
+        uart_dec((int)npages);
+        uart_puts(",\"max\":4}\n");
+        return -1;
+    }
+
+    /* 先回收上一份镜像。run/reset 每次都调到这里，
+       原来旧 code_pa 既不 free 也不 unmap，每跑一次泄漏 npages 页，
+       几十次之后页池（约 3 MB）就耗尽了。 */
+    if (procs[i].code_pa && procs[i].code_pages) {
+        page_free_n((void *)procs[i].code_pa, procs[i].code_pages);
+        /* 必须清零：krestart 会再调进来，不清的话第二次会释放同一批页，
+           free list 成环，之后 page_alloc 拿到的页互相指向，内核直接卡死。 */
+        procs[i].code_pa = 0;
+        procs[i].code_pages = 0;
+    }
 
     u32 *pa = page_alloc_n(npages);
     procs[i].code_pa    = (u32)pa;
@@ -951,6 +982,7 @@ static void proc_setup_image(int i)
     if (!procs[i].pgtbl) procs[i].pgtbl = vm_proc_pgtbl();
     for (u32 p = 0; p < npages; p++)
         vm_map_code(procs[i].pgtbl, 0x80400000u + p * 4096u, (u32)pa + p * 4096u);
+    return 0;
 }
 
 int krestart(void)
@@ -963,13 +995,20 @@ int krestart(void)
            进程表用它判断「这一格是否活跃」，不恢复的话 reset 之后
            进程仍然显示为已结束。 */
         procs[k].stack_pa = g_ustack[k];
-        procs[k].state = PROC_READY;
+        /* 先标 EXIT，装好镜像再标 READY。
+           反过来是 bug：proc_setup_image 会 page_free_n 释放旧代码页，
+           在这之后、vm_map_code 重新映射之前，如果定时器中断切进来，
+           调度器看到 READY 就会让这个进程去执行已经释放（甚至已被
+           别的进程 memset 成 0）的代码页——表现就是满屏
+           [S-trap] cause=2（非法指令），进程被踢成 EXIT。 */
+        procs[k].state = PROC_EXIT;
         procs[k].brk   = 0;
         memset(procs[k].regs, 0, sizeof(procs[k].regs));
         for (int fd = 0; fd < 4; fd++) { procs[k].fd_slot[fd] = -1; procs[k].fd_pos[fd] = 0; }
         procs[k].regs[1]  = procs[k].sp;
         procs[k].regs[10] = k;
-        proc_setup_image((int)k);
+        if (proc_setup_image((int)k) < 0) return -1;
+        procs[k].state = PROC_READY;   /* 镜像装好、页表映射更新完，才允许调度 */
     }
     for (u32 k = NPROC_INIT; k < NPROC; k++) procs[k].state = PROC_EXIT;
     cur_proc = -1;
@@ -1805,7 +1844,10 @@ void kmain(void)
         memset((void *)g_ustack[i], 0, 4096);
         proc_create(i, g_entry, g_ustack[i]);
         /* 先建立私有代码页，再记事件——否则 spawn 里记下的 code_pa 还是 0 */
-        proc_setup_image((int)i);
+        if (proc_setup_image((int)i) < 0) {
+            kprintf("[S] 初始程序超过 4 页，无法装载\n");
+            for (;;) { }
+        }
         evt_emit(EVT_SPAWN, i, g_entry, procs[i].code_pa, 0);
     }
 
@@ -1839,7 +1881,7 @@ typedef struct {
     proc_t snap[NPROC];
     /* 代码区靠程序名复原。栈不保存：进程在入口重新执行时会自己初始化栈，
        保存旧栈内容既无意义也读不到（进程页表下访问各进程栈页会缺页）。 */
-    char   prog[8];
+    char   prog[16];
 } snap_t;
 
 static snap_t g_snaps[SNAP_SLOTS];
@@ -1859,7 +1901,7 @@ u32 snap_take(void)
             /* 记录代码区状态：回滚时按这个名字重新装载 */
             {
                 int k = 0;
-                while (g_loaded_prog[k] && k < 7) { g_snaps[i].prog[k] = g_loaded_prog[k]; k++; }
+                while (g_loaded_prog[k] && k < 15) { g_snaps[i].prog[k] = g_loaded_prog[k]; k++; }
                 g_snaps[i].prog[k] = 0;
             }
 
@@ -1887,7 +1929,14 @@ int snap_restore(u32 id)
             /* 恢复内存前必须切回内核页表：调用方可能正跑在某个进程页表里，
                直接写公共用户区会落到错误映射上。 */
             /* 代码区复原：按快照记录的程序名重新装载 */
-            kload_prog(g_snaps[i].prog);
+            /* 原来返回值被丢弃：装载失败也照样「恢复成功」。
+               现在失败就报错返回，不假装成功。 */
+            if (kload_prog(g_snaps[i].prog) < 0) {
+                uart_puts("{\"ok\":false,\"why\":\"快照的程序已不在 RAMFS\",\"prog\":\"");
+                uart_puts(g_snaps[i].prog);
+                uart_puts("\"}\n");
+                return 0;
+            }
 
             cur_proc = -1;
             evt_emit(EVT_RESTORE, (u32)-1, id, g_snaps[i].evt_seq, 1);

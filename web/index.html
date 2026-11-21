@@ -2451,7 +2451,7 @@ function importProgram() {
 
 /* 已经自己把数据写进数据页时用这个：len 由调用方给 */
 function hostCmdRaw(op, p0, p1, a0, len) {
-  return new Promise((resolve, reject) => {
+  const run = () => new Promise((resolve, reject) => {
     if (!M) return reject(new Error("未就绪"));
     const baseW = guestOff(HCMD_PA), baseB = guestByte(HCMD_PA);
     const A = M.HEAPU32, B = M.HEAPU8;
@@ -2479,6 +2479,9 @@ function hostCmdRaw(op, p0, p1, a0, len) {
     };
     setTimeout(tick, 16);
   });
+  const p = hcmdChain.then(run, run);
+  hcmdChain = p.catch(() => {});   /* 一条失败不能卡死后面的 */
+  return p;
 }
 
 /* 工具栏：绑定一次，行数据重渲染不影响 */
@@ -3738,8 +3741,15 @@ const HCMD_DATA_MAX = 4096, HCMD_MAGIC = 0x48434D44;
 const HCMD_HDR = 24;            /* magic seq op a0 len rc，各 4 字节 */
 let hcmdSeq = 0;
 
+/* 宿主下行命令必须串行。内核只有一块共享邮箱（0x83FFC000），两个命令
+   同时在飞时，后一个会覆盖前一个的 magic/seq/op，前一个被内核丢掉——
+   但它的 Promise 照样 resolve，拿到的还是后一个命令的 rc。
+   文件管理器快速连点、或者 fsRead 和 fsWrite 撞上时，UI 会报告一个
+   根本没执行的操作「成功」。所有命令共用这一条链。 */
+let hcmdChain = Promise.resolve();
+
 function hostCmd(op, p0, p1, a0, data) {
-  return new Promise((resolve, reject) => {
+  const run = () => new Promise((resolve, reject) => {
     if (!M) return reject(new Error("模拟器未就绪"));
     const baseW = guestOff(HCMD_PA), baseB = guestByte(HCMD_PA);
     const A = M.HEAPU32, B = M.HEAPU8;
@@ -3777,6 +3787,9 @@ function hostCmd(op, p0, p1, a0, data) {
     };
     setTimeout(tick, 16);
   });
+  const p = hcmdChain.then(run, run);
+  hcmdChain = p.catch(() => {});   /* 一条失败不能卡死后面的 */
+  return p;
 }
 
 /* ══ 启动序列 ══ */

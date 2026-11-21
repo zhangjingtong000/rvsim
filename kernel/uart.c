@@ -150,10 +150,14 @@ void uart_hex(u32 v)
 void uart_dec(int v)
 {
     if (v == 0) { uart_putc('0'); return; }
-    if (v < 0) { uart_putc('-'); v = -v; }
+    /* 用无符号做绝对值：v == INT_MIN 时 -v 是有符号溢出（UB），
+       之后 v % 10 是负数，输出乱码。 */
+    unsigned u;
+    if (v < 0) { uart_putc('-'); u = 0u - (unsigned)v; }
+    else u = (unsigned)v;
     char buf[16];
     int n = 0;
-    while (v) { buf[n++] = '0' + (v % 10); v /= 10; }
+    while (u) { buf[n++] = (char)('0' + (u % 10u)); u /= 10u; }
     while (n--) uart_putc(buf[n]);
 }
 

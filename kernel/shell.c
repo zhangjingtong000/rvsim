@@ -774,6 +774,12 @@ extern int g_term_silent;
                 uart_puts("缺页次数 = ");
                 uart_dec((int)g_pf_count);
                 uart_putc('\n');
+                /* 页池占用：反复 run/reset 后这里持续上涨就是泄漏 */
+                uart_puts("页池: 已分配 ");
+                uart_dec((int)vm_pool_used());
+                uart_puts(" 页 / 可复用 ");
+                uart_dec((int)vm_pool_free_count());
+                uart_puts(" 页\n");
             }
             else {
                 /* 结构化失败 + 可操作建议：让模型能自己纠正，
