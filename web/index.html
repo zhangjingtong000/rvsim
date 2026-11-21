@@ -1027,7 +1027,10 @@ function applyTheme(t) {
   try { localStorage.setItem("rvsim.theme", v); } catch (_) {}
   const seg = document.getElementById("setTheme");
   if (seg) for (const b of seg.children) b.classList.toggle("on", b.dataset.t === v);
-  /* 换主题后壁纸遮罩、终端字号都可能要重算 */
+  /* 换主题后壁纸要跟着换（极光有深浅两版），终端尺寸也可能变 */
+  let wi = 0;
+  try { wi = +(localStorage.getItem("rvsim.wall") || 0); } catch (_) {}
+  applyWallpaper(wi, false);
   if (window.rv && window.rv.ready) requestAnimationFrame(() => termLayout(winEls[0] && winEls[0].body, true));
 }
 function initTheme() {
@@ -1272,12 +1275,21 @@ function applyWallpaper(i, persist) {
   const w = $("wall");
   if (!w) return;
   if (persist) { try { localStorage.setItem("rvsim.wall", String(i)); } catch (e) {} }
+  const isLight = document.documentElement.dataset.theme === "light";
   w.style.background = i === 0
-    ? "radial-gradient(1150px 760px at 16% 6%, rgba(45,212,191,.17), transparent 62%),"
-      + "radial-gradient(1000px 720px at 84% 92%, rgba(59,130,246,.21), transparent 64%),"
-      + "radial-gradient(900px 620px at 55% 108%, rgba(45,212,191,.09), transparent 66%),"
-      + "radial-gradient(700px 500px at 62% 38%, rgba(124,58,237,.11), transparent 70%),"
-      + "linear-gradient(155deg,#101D30 0%,#0B1220 46%,#080B12 100%)"
+    ? (isLight
+      /* 浅色版「极光」：底色提到 #F7F9FC 一带，光斑压到 .10 以下，
+         否则在浅色桌面上会糊成一片脏色 */
+      ? "radial-gradient(1150px 760px at 16% 6%, rgba(13,148,136,.10), transparent 62%),"
+        + "radial-gradient(1000px 720px at 84% 92%, rgba(37,99,235,.12), transparent 64%),"
+        + "radial-gradient(900px 620px at 55% 108%, rgba(13,148,136,.06), transparent 66%),"
+        + "radial-gradient(700px 500px at 62% 38%, rgba(124,58,237,.06), transparent 70%),"
+        + "linear-gradient(155deg,#F9FBFD 0%,#EFF3F8 46%,#E6ECF4 100%)"
+      : "radial-gradient(1150px 760px at 16% 6%, rgba(45,212,191,.17), transparent 62%),"
+        + "radial-gradient(1000px 720px at 84% 92%, rgba(59,130,246,.21), transparent 64%),"
+        + "radial-gradient(900px 620px at 55% 108%, rgba(45,212,191,.09), transparent 66%),"
+        + "radial-gradient(700px 500px at 62% 38%, rgba(124,58,237,.11), transparent 70%),"
+        + "linear-gradient(155deg,#101D30 0%,#0B1220 46%,#080B12 100%)")
     : WALLS[i];
   if (persist) { try { localStorage.setItem("rvsim.wall", String(i)); } catch (e) {} }
 }
