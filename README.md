@@ -35,12 +35,22 @@
 | **QEMU 语义对照** | 与 QEMU 比对计算结果 | ✅ | 四个 CRC 值完全一致 |
 | Gate 7b WASM 可视化 | 浏览器调试界面 | ✅ | 90 KB wasm，Node + 浏览器双验证 |
 
-**riscv-tests：91/91；能力契约：18/18；图形界面 e2e：142/142。**
+**riscv-tests：91/91（82 个官方用例 + 9 个自写定向）；能力契约：18/18；界面 e2e：153/153。**
+
+**CI**：`.github/workflows/ci.yml` 分两个 job（内核 / 界面），跑的就是上面这些命令；
+本地等价物是 `./scripts/ci.sh
+
+# 缺环境（没有 playwright）时想跳过，必须显式说明；默认跳过即失败
+./scripts/ci.sh --allow-skip`。这份工作流**没有在真实 GitHub runner 上跑过**
+（本机没有 runner），命令序列和本地一致、YAML 语法已校验——第一次推送后请看 Actions 页面。
 
 91 项只覆盖模拟器指令。能力层（manifest/assert/plan/snapshot）由
 `tests/contract.js` 覆盖；桌面外壳（窗口 / 终端 / 文件 / 进程 / 菜单 /
-键盘）由 `scripts/ui/e2e.js` 的 142 个用例覆盖。三套都在
-`./tests/run_tests.sh all` 里，CI 也跑这一条。
+键盘）由 `scripts/ui/e2e.js` 的 153 个用例覆盖。
+
+前两套（riscv-tests + 能力契约）在 `./tests/run_tests.sh all` 里；
+界面 e2e 单独跑（需要 node + playwright + 浏览器），由 `./scripts/ci.sh`
+串起来。**不要以为 `run_tests.sh` 绿了就全绿了**。
 
 ### 桌面外壳（2026-11 新增）
 
@@ -76,7 +86,7 @@ ANSI 16 色（我们不解析转义序列，改成了内核语义属性上色）
 | 迷你内核 | **6,320 行**（`kernel/`，含事件日志、能力清单、快照、计划、图形界面下行通道） |
 | 桌面外壳 | **3,680 行**（`web/index.html`，单文件 HTML/CSS/JS） |
 | 规格文档 | `docs/ui-spec.md` 490 行 / **150 项功能**；`docs/ui-benchmark.md` 379 行 |
-| 测试 | riscv-tests **91** + 能力契约 **18** + 界面 e2e **142** |
+| 测试 | riscv-tests **91** + 能力契约 **18** + 界面 e2e **153** |
 | 解释速度 | **约 25.8 MIPS**（CoreMark 12.58 亿条 / 48.7 秒；轻负载微基准可达 32） |
 | WASM 体积 | 90 KB |
 | 内核镜像 | 112,836 字节（`web/images/kernel.elf`） |
@@ -94,7 +104,7 @@ web/            桌面外壳：index.html（结构+样式+逻辑）、WASM 运�
                 images/kernel.elf
 dts/            自写设备树
 tests/          riscv-tests + 能力契约 + 批量跑分器
-scripts/ui/     界面 e2e（142 用例）与性能/尺寸测量脚本
+scripts/ui/     界面 e2e（153 用例）与性能/尺寸测量脚本
 docs/           ui-spec.md（功能与接口契约）、ui-benchmark.md（对标表）、
                 需求/设计/调研
 ```
@@ -136,6 +146,16 @@ docs/           ui-spec.md（功能与接口契约）、ui-benchmark.md（对标
 | 100 轮「跑飞→全终止」压测后 | 132 fps | 9.3 ms |
 
 RAIL 的帧预算是 16.66ms、应用实际可用 10ms，上面的 p99 都在预算内。
+
+> 上表是机器空闲时测的。同一台机器上跑着别的重负载时，模拟器速率会从 14M
+> 掉到 6M、帧率从 132 掉到 88——那是宿主资源竞争，不是代码退化。
+> 测性能前先确认机器空闲。
+
+**页池压测**：100 轮「`run spin.elf` → 逐个终止」，累计缺页 **164** 次
+（300 次进程启动，平均每次 0.55 页，来自栈页和数据页的按需分配）；
+进程零残留、文件数不变、无 pageerror，压完还能正常 `run hello.elf`。
+缺页数由内核在系统状态页发布（`sys_sync_t.pf_count`），宿主从
+`rv.state.mem.faults` 读——不再靠抓终端文本。
 
 **终端的 scrollback 是 2000 行（内核），DOM 里最多挂 800 行**。
 实测 584 行时 DOM 有 3817 个节点、帧率 117fps；清空历史行回到 136fps——

@@ -1,0 +1,96 @@
+name: CI
+
+# 三套回归：riscv-tests（82 官方 + 9 定向）、能力契约、界面 e2e。
+# 本地等价命令：./scripts/ci.sh（内核）+ scripts/ui/ci-e2e.ps1（Windows 侧界面）。
+#
+# 注意：这份工作流没有在真实 GitHub runner 上跑过——本机没有 runner，
+# 只能保证命令序列和 scripts/ci.sh 一致、YAML 语法正确。
+# 第一次推送后请看一眼 Actions 页面，把实际踩到的坑补回来。
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  kernel:
+    name: 内核（构建 + 指令测试 + 能力契约）
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安装 RISC-V 工具链
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            gcc-riscv64-unknown-elf make python3 curl git
+
+      - name: 拉第三方依赖（capstone / riscv-tests / dtb 工具）
+        run: ./scripts/fetch_deps.sh all
+
+      - name: 构建
+        run: make -j"$(nproc)"
+
+      - name: 构建定向测试
+        run: make directed
+
+      - name: 内核回归
+        run: ./tests/run_tests.sh all
+
+      - name: 确认内核镜像已同步到 web/images
+        run: |
+          test -f web/images/kernel.elf
+          cmp build/kernel.elf web/images/kernel.elf
+
+  ui:
+    name: 界面 e2e
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: 安装 RISC-V 工具链（e2e 需要 kernel.elf）
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            gcc-riscv64-unknown-elf make python3 curl git
+
+      - name: 拉第三方依赖
+        run: ./scripts/fetch_deps.sh all
+
+      - name: 构建
+        run: make -j"$(nproc)"
+
+      - name: 安装 Playwright 与 chromium
+        run: |
+          npm init -y >/dev/null 2>&1 || true
+          npm i -D playwright
+          npx playwright install --with-deps chromium
+
+      - name: 跑界面 e2e
+        env:
+          # e2e.js 会自动探测 chromium，这里显式给一下更稳
+          CHROME: ""
+        run: |
+          python3 -m http.server 8799 --directory web &
+          sleep 2
+          curl -fsS -o /dev/null http://127.0.0.1:8799/index.html
+          node scripts/ui/e2e.js
+
+      - name: 失败时保留日志
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-logs
+          path: |
+            *.log
+          if-no-files-found: ignore

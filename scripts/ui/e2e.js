@@ -1,5 +1,24 @@
 // rvsim UI 端到端总测 —— 用例编号与 docs/ui-spec.md 一一对应
 // 用法：node scripts/ui/e2e.js [--grep 3.]
+const fs = require("fs");
+
+/* 找一个可用的浏览器可执行文件。返回 undefined 时 Playwright 会用
+   自己下载的 chromium。 */
+function CHROME_PATH() {
+  if (process.env.CHROME) return process.env.CHROME;
+  const cands = [
+    "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
+    "C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe",
+    "/usr/bin/google-chrome",
+    "/usr/bin/chromium",
+    "/usr/bin/chromium-browser",
+  ];
+  for (const c of cands) {
+    try { if (fs.existsSync(c)) return c; } catch (_) {}
+  }
+  return undefined;
+}
+
 const { chromium } = require("playwright");
 
 const URL = process.env.RVSIM_URL || "http://127.0.0.1:8799/index.html";
@@ -1704,7 +1723,10 @@ test("15.3", "主题选择会持久化", async (p) => {
   const list = grep ? tests.filter((t) => (t.id + " " + t.name).includes(grep)) : tests;
 
   const browser = await chromium.launch({
-    executablePath: process.env.CHROME || "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
+    /* 浏览器路径：优先 CHROME 环境变量，其次本机 Chrome，
+       都没有就让 Playwright 用自己装的 chromium（Linux/CI 走这条）。
+       原来写死 Windows 路径，换机器或 CI 里直接起不来。 */
+    executablePath: CHROME_PATH(),
     args: ["--no-sandbox"],
   });
   const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });

@@ -2612,6 +2612,8 @@ function panelsRender() {
     sysInfo.nproc = A[sb + 4];
     sysInfo.nfile = A[sb + 5];
     sysInfo.nrun = A[sb + 6];
+    /* 追加字段：累计缺页次数。压测要它来判断页池有没有泄漏。 */
+    sysInfo.pf = A[sb + 8];
   }
 
   /* 进程表 */
@@ -3675,6 +3677,7 @@ window.rv = {
       if (name) files.push({ name, size: A[(ram + (FILE_SYNC_PA - 0x80000000)) / 4 + i * 10 + 6] });
     }
     return {
+      mem: { faults: (() => { const sb = (ram + (SYS_SYNC_PA - 0x80000000)) >>> 2; return A[sb] === 0x53595331 ? A[sb + 8] : 0; })() },
       ready: true, wins, procs, files,
       term: termEls ? termEls.map((e) => e.textContent) : [],
       rate: curRate, cycles: M._rv_cycles() >>> 0, pc: hx(M._rv_pc()),

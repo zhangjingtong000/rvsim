@@ -1378,6 +1378,8 @@ typedef struct {
     u32 nfile;
     u32 nrun;
     u32 boot_ms;    /* 内核认为的启动时刻（宿主用来算 uptime） */
+    /* 追加在末尾：前面字段的偏移不能动，宿主按固定下标读 */
+    u32 pf_count;   /* 累计缺页次数（自启动起） */
 } sys_sync_t;
 
 static proc_row_t *g_proc_rows = (proc_row_t *)PROC_SYNC_PA;
@@ -1425,6 +1427,7 @@ void panel_sync_publish(void)
     g_sys->uptime_s = 0;
     g_sys->nfile = nfile;
     g_sys->boot_ms = 0;
+    g_sys->pf_count = g_pf_count;
 }
 
 /* ── 宿主下行命令 ──
