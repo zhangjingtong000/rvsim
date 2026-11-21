@@ -875,7 +875,7 @@ void shell_start(void)
     uart_puts("  help      list all commands     ps     process table\n");
     uart_puts("  ls        files in RAMFS        mem    memory / faults\n");
     uart_puts("  run <f>   run a user program    log    recent events\n");
-    uart_puts("  fork      spawn a child         snap   snapshot machine\n");
+    uart_puts("  fork      spawn a child         snapshot  snapshot machine\n");
     uart_puts("  cat <f>   show file content     rm     delete a file\n");
     uart_puts("  mkdir <d> create a directory    chmod  permissions\n");
     uart_puts("  write <f> create a file         tail   recent output\n");

@@ -63,12 +63,22 @@ u32 elf_load(const u8 *img, u32 len, u32 *entry_out, u32 *img_end_out)
         const elf32_phdr_t *ph = (const elf32_phdr_t *)(img + off);
         if (ph->p_type != PT_LOAD) continue;
         if (ph->p_filesz > ph->p_memsz) return 0;
-        if (ph->p_offset + ph->p_filesz > len) return 0;
+        /* 用减法判上界：p_offset + p_filesz 在 u32 里会回绕，
+           一个 p_offset=0xFFFFFFF0 的段能绕过原来的加法检查。 */
+        if (ph->p_offset > len || ph->p_filesz > len - ph->p_offset) return 0;
 
         /* 链接脚本会把段起始对齐到 0x803ff000（页对齐），
            真正的入口仍在 0x80400000。这里放宽到 0x80300000，
            但映射阶段只给 >= 0x80400000 的部分加 U 位。 */
         if (ph->p_vaddr < 0x80300000u || ph->p_vaddr >= 0x80800000u) return 0;
+
+        /* p_memsz 必须有上界。原来的代码直接
+              for (k = 0; k < p_memsz; k++) *(u8*)(seg_va + k) = 0;
+           一个 p_memsz = 0xFFFFFFFF 的 ELF 就是 4GB 的写循环，
+           会把整个 RAM 和内核自己踩烂。网页的「导入 .elf」正好能把
+           任意文件喂进这条路径，所以这不是理论问题。
+           用户区一共 4 页（0x80400000..0x80800000），按 256KB 封顶足够。 */
+        if (ph->p_memsz > 0x40000u) return 0;
 
         /* 链接脚本把段起始对齐到 0x803ff000，但那一页不属于用户映射。
            只写 >= 0x80400000 的部分：用户程序从入口开始执行，
@@ -76,6 +86,8 @@ u32 elf_load(const u8 *img, u32 len, u32 *entry_out, u32 *img_end_out)
            那页的映射与 0x80400000 不连续，跨页写入会落到错误物理页。 */
         u32 seg_va  = ph->p_vaddr;
         u32 seg_end = ph->p_vaddr + ph->p_memsz;
+        if (seg_end < ph->p_vaddr) return 0;      /* 加法回绕 */
+        if (seg_end > 0x80800000u) return 0;      /* 越出用户区 */
         u32 from = seg_va  < 0x80400000u ? 0x80400000u : seg_va;
 
         if (from < seg_end) {

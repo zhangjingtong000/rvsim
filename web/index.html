@@ -147,8 +147,8 @@ input{font:inherit;color:inherit;background:none;border:0;outline:0}
 .dicon.sel{background:rgba(45,212,191,.16);box-shadow:inset 0 0 0 1px rgba(94,234,212,.45)}
 .dicon svg{width:44px;height:44px;flex:0 0 auto;
   filter:drop-shadow(0 3px 7px var(--sh-3))}
-.dicon span{font:400 12px/16px var(--font-ui);color:#EDF1F6;text-align:center;
-  max-width:76px;overflow:hidden;text-shadow:0 1px 3px rgba(0,0,0,.8);
+.dicon span{font:400 12px/16px var(--font-ui);color:var(--t1);text-align:center;
+  max-width:76px;overflow:hidden;text-shadow:0 1px 3px var(--sh-3);
   /* 两行再省略：Win11 的桌面图标标签是两行。单行的话
      「rvsim 能力清单」这种名字会被砍成「rvsim 能…」，认不出来。 */
   display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;
@@ -232,10 +232,10 @@ input{font:inherit;color:inherit;background:none;border:0;outline:0}
 .ctx-sep{height:1px;margin:4px 8px;background:var(--stroke)}
 
 /* 键盘焦点环：Win11 是贴边的 2px 白环，内缩 -2px 避免被 overflow 裁掉 */
-:focus-visible{outline:2px solid #FFFFFF;outline-offset:2px}
+:focus-visible{outline:2px solid var(--acc);outline-offset:2px}
 .dicon:focus-visible,.dock-app:focus-visible,.dock-btn:focus-visible,
 .sm-tile:focus-visible,.sm-ri:focus-visible,.win-ctl button:focus-visible{
-  outline:2px solid #FFFFFF;outline-offset:-2px}
+  outline:2px solid var(--acc);outline-offset:-2px}
 #startBtn:focus-visible,#dbgBtn:focus-visible{outline-offset:-2px}
 
 /* ── 窗口 ───────────────────────────────────────────────────── */
@@ -282,7 +282,7 @@ input{font:inherit;color:inherit;background:none;border:0;outline:0}
 .win-bar{flex:0 0 32px;height:32px;display:flex;align-items:center;
   border-radius:calc(var(--r-window) - 1px) calc(var(--r-window) - 1px) 0 0;
   gap:8px;padding:0 0 0 12px;user-select:none;
-  background:linear-gradient(180deg,rgba(255,255,255,.075),rgba(255,255,255,.035));
+  background:var(--titlebar-bg);
   border-bottom:1px solid var(--stroke)}
 .win-ico{width:16px;height:16px;flex:0 0 auto;opacity:.72}
 .win.focused .win-ico{opacity:.95}
@@ -294,7 +294,7 @@ input{font:inherit;color:inherit;background:none;border:0;outline:0}
   color:var(--t2);transition:background var(--dur-1),color var(--dur-1)}
 .win-ctl button svg{width:10px;height:10px}
 .win-ctl button:hover{background:var(--stroke);color:var(--t1)}
-.win-ctl button:active{background:rgba(255,255,255,.14)}
+.win-ctl button:active{background:var(--active)}
 .win-ctl button.close:hover{background:var(--danger-strong);color:#fff}
 .win-ctl button.close:active{background:#A4261A;color:#fff}
 
@@ -335,7 +335,14 @@ input{font:inherit;color:inherit;background:none;border:0;outline:0}
 .term-dom.nocursor .tcur{display:none}
 
 /* 面板：进程表 / 文件表 */
-.panel-dom{overflow:auto;background:var(--s0);padding:0 0 6px}
+/* 面板（进程表 / 文件表）必须自己限制高度。
+   原来 .panel-dom 是 overflow:auto + display:block，里面的 .fscroll
+   带 flex:1 却因为没有 flex 容器而失效，被内容撑到 407px，父容器只有 245px——
+   于是整个 body 在滚，而 .fscroll 的 clientHeight == scrollHeight，
+   看起来「没有滚动条、后面的文件永远看不到」。 */
+.panel-dom{overflow:hidden;background:var(--s0);padding:0 0 6px;
+  display:flex;flex-direction:column}
+.pscroll,.fscroll{flex:1 1 auto;min-height:0;overflow:auto}
 .ptab,.ftab{width:100%;border-collapse:collapse;
   font:400 14px/1 var(--font-mono);table-layout:fixed}
 .ptab th,.ftab th{position:sticky;top:0;z-index:1;
@@ -373,7 +380,7 @@ input{font:inherit;color:inherit;background:none;border:0;outline:0}
 .dock-apps{display:flex;gap:6px}
 .dock-app{position:relative;width:42px;height:40px;border-radius:var(--r-control);
   display:grid;place-items:center;transition:background var(--dur-1)}
-.dock-app:hover{background:rgba(255,255,255,.10)}
+.dock-app:hover{background:var(--hover)}
 .dock-app:active{background:var(--active)}
 .dock-app svg{width:26px;height:26px;opacity:.66;
   transition:opacity var(--dur-2) var(--ease-decel),transform var(--dur-2) var(--ease-decel)}
@@ -384,7 +391,7 @@ input{font:inherit;color:inherit;background:none;border:0;outline:0}
   width:5px;height:3px;border-radius:2px;background:transparent;
   transition:width var(--dur-2) var(--ease-decel),background var(--dur-2)}
 .dock-app.active .ind{width:16px;background:var(--acc)}
-.dock-sep{width:1.5px;height:24px;margin:0 10px;background:rgba(255,255,255,.24);
+.dock-sep{width:1.5px;height:24px;margin:0 10px;background:var(--stroke-strong);
   border-radius:1px}
 
 .dock-tray{margin-left:auto;display:flex;align-items:center;gap:10px;padding-right:4px}
@@ -661,6 +668,8 @@ body.drawer #drawer{transform:translateX(0)}
   --overlay:rgba(255,255,255,.97); --overlay-2:rgba(255,255,255,.99);
   --sh-1:rgba(0,0,0,.07); --sh-2:rgba(0,0,0,.10); --sh-3:rgba(0,0,0,.16);
   --s4:#D1D5DB; --on-acc:#FFFFFF;
+  --titlebar-bg:linear-gradient(180deg,rgba(0,0,0,.035),rgba(0,0,0,.015));
+  --sb-thumb:rgba(0,0,0,.22); --sb-thumb-h:rgba(0,0,0,.34); --sb-thumb-a:rgba(0,0,0,.45);
   --ok:#0F7B0F; --warn:#9D5D00; --err:#C42B1C;
 }
 /* 浅色下终端换成浅底深字（对应 macOS Terminal 的 Basic 方案） */
@@ -676,19 +685,23 @@ body.drawer #drawer{transform:translateX(0)}
 [data-theme="light"] .term-line.wrap{box-shadow:inset 2px 0 0 rgba(0,0,0,.16)}
 /* 浅色下壁纸的遮罩不要压得太暗 */
 [data-theme="light"] #wall::after{background:linear-gradient(180deg,rgba(255,255,255,.10),rgba(255,255,255,.28))}
+[data-theme="light"] .dicon span{text-shadow:0 1px 2px rgba(255,255,255,.95)}
 /* ── 滚动条 ───────────────────────────────────────────────────
    默认滚动条是浅色系统组件，放在深色面板上就是一块白胶布。
    按 Win11 / VS Code 深色主题的规格自绘：10px 宽、轨道透明、
    滑块半透明圆角 5px，再用 2px 透明边框把滑块视觉收窄到 6px；
    悬停和按下分两档提亮，让人知道它可拖。
    标准属性给 Firefox，-webkit- 给 Chrome/Edge。 */
+/* scrollbar-color 不认 var()（实测回退成 auto），只能用字面值；
+   浅色主题在下面单独覆盖。::-webkit-scrollbar-* 那几条用 var 是好的。 */
 *{scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.18) transparent}
+[data-theme="light"] *{scrollbar-color:rgba(0,0,0,.22) transparent}
 ::-webkit-scrollbar{width:12px;height:12px}
 ::-webkit-scrollbar-track{background:transparent}
-::-webkit-scrollbar-thumb{background:rgba(255,255,255,.18);border-radius:5px;
+::-webkit-scrollbar-thumb{background:var(--sb-thumb);border-radius:5px;
   border:2px solid transparent;background-clip:padding-box}
-::-webkit-scrollbar-thumb:hover{background:rgba(255,255,255,.30);background-clip:padding-box}
-::-webkit-scrollbar-thumb:active{background:rgba(255,255,255,.40);background-clip:padding-box}
+::-webkit-scrollbar-thumb:hover{background:var(--sb-thumb-h);background-clip:padding-box}
+::-webkit-scrollbar-thumb:active{background:var(--sb-thumb-a);background-clip:padding-box}
 ::-webkit-scrollbar-corner{background:transparent}
 
 /* ── 缩放手柄 ─────────────────────────────────────────────────
@@ -1135,7 +1148,7 @@ function wireHostWin(id, el, size, app) {
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", up);
   });
-  el.addEventListener("pointerdown", (ev) => { if (ev.target.closest(".win-bar")) return; });
+  el.addEventListener("pointerdown", () => { hostWinFocus(id); }, true);
 
   hostWins.set(id, { el, app, min: false });
   hostWinFocus(id);
@@ -1543,9 +1556,19 @@ function snapPickerHide() {
 }
 
 /* ── 右键菜单 ── */
+/* 有些调用点忘了传坐标（终端里右键就是），cx/cy 变成 undefined，
+   left/top 算出 NaN，菜单会跑到屏幕左上角。这里用最近一次 contextmenu
+   的位置兜底，调用点传不传都对。 */
+let lastCtxX = 0, lastCtxY = 0;
+document.addEventListener("contextmenu", (e) => {
+  lastCtxX = e.clientX; lastCtxY = e.clientY;
+}, true);
+
 function showCtx(items, cx, cy) {
   const m = $("ctxMenu");
   if (!m) return;
+  if (cx == null || !isFinite(cx)) cx = lastCtxX;
+  if (cy == null || !isFinite(cy)) cy = lastCtxY;
   m.innerHTML = "";
   for (const it of items) {
     if (it === "-") {
@@ -1682,12 +1705,21 @@ function winInit() {
       + '<button class="close" data-act="0" title="关闭"><svg viewBox="0 0 10 10"><path d="M2.5 2.5l5 5M7.5 2.5l-5 5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg></button>'
       + '</span></div>'
       + (i === 0 ? '<div class="win-body term-dom"><div class="tcur"></div></div>'
-                 : '<div class="win-body panel-dom"></div>');
+                 : (i === 2
+                    ? '<div class="win-body panel-dom files-body"></div>'
+                    : '<div class="win-body panel-dom"></div>'));
     winLayer.appendChild(el);
     const body = el.querySelector(".win-body");
     const we = { el, body, w: 0, h: 0, cx: 0, cy: 0, dragging: false, resizing: false,
                  pending: false, px: 0, py: 0 };
     winEls.push(we);
+
+    /* 点窗口任何地方都该把它提到最前，不只是标题栏。
+       放在捕获阶段、且不 preventDefault —— 终端的拖选、
+       按钮的点击都还要正常走。 */
+    el.addEventListener("pointerdown", () => {
+      if (M) sendWinCmd(i * 10 + 5);
+    }, true);
 
     /* ── 八向缩放 ──
        逻辑坐标是 800×600，屏幕上要过 deskTransform，所以拖动期间改的是
@@ -2603,7 +2635,7 @@ function panelsRender() {
            + (r.st === "RUN" ? ' class="run"' : '') + '><td>' + r.pid
            + '</td><td>' + r.st + '</td><td>' + r.pc + '</td></tr>';
       h += '</tbody></table>';
-      mon.innerHTML = h;
+      mon.innerHTML = '<div class="pscroll">' + h + '</div>';
     }
     panelRowHeight(mon, rows.length);
     /* 行右键：任务管理器里「结束任务」的位置。

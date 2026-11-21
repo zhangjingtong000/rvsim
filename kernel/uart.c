@@ -36,12 +36,20 @@ void redirect_end(void)
     u32 n = g_redir_len;
     g_redir_name = 0;
 
+#ifdef STANDALONE
+    /* CoreMark 不带文件系统，重定向直接报告未写入 */
+    uart_puts("{\"redirect\":\"");
+    uart_puts(name);
+    uart_puts("\",\"bytes\":0,\"ok\":false,\"why\":\"standalone\"}\n");
+    (void)n;
+#else
     int w = fs_write(name, (const u8 *)g_redir_buf, n);
     uart_puts("{\"redirect\":\"");
     uart_puts(name);
     uart_puts("\",\"bytes\":");
     uart_dec(w < 0 ? 0 : (int)n);
     uart_puts(w < 0 ? ",\"ok\":false}\n" : "}\n");
+#endif
 }
 
 /* 静默模式：调试面板的查询命令只走 UART，不写窗口网格，
@@ -58,8 +66,11 @@ void uart_putc(char c)
     if (g_redir_name && g_redir_len < sizeof(g_redir_buf) - 1)
         g_redir_buf[g_redir_len++] = c;
 
-    /* 同时写进窗口的文本网格：屏幕上的终端就是真实输出 */
+#ifndef STANDALONE
+    /* 同时写进窗口的文本网格：屏幕上的终端就是真实输出。
+       STANDALONE（CoreMark 基准）只链 uart.c，不带 fb.c/fs.c。 */
     if (!g_term_silent) term_grid_putc(c);
+#endif
 
     g_uart_tail[g_uart_head] = c;
     g_uart_head = (g_uart_head + 1u) % UART_TAIL_CAP;

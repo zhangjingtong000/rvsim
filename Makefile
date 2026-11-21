@@ -2,6 +2,10 @@
 CC       ?= gcc
 CROSS    ?= riscv64-unknown-elf-
 CFLAGS   ?= -O2 -g -Wall -Wextra -std=c11
+# 默认目标必须是 all。第一个目标是 capstone 头文件，直接敲 make 只会检查它，
+# 不会构建模拟器和内核镜像。
+.DEFAULT_GOAL := all
+
 KCFLAGS  := -march=rv32ima_zicsr_zifencei -mabi=ilp32 -mcmodel=medany -nostdlib -nostartfiles \
             -ffreestanding -fno-builtin -O2 -Wall -Wextra
 SRCDIR    = src
@@ -42,7 +46,17 @@ CS_CFLAGS     = -DCAPSTONE_HAS_RISCV -DCAPSTONE_USE_SYS_DYN_MEM=1 \
 KSRCS = kernel/main.c kernel/vm.c kernel/uart.c kernel/proc.c kernel/shell.c kernel/fs.c kernel/elf.c kernel/fb.c
 KASMS = kernel/start.S kernel/s_entry.S kernel/user_prog.S
 
-all: $(TARGET) $(OBJDIR)/kernel.elf
+# 桌面外壳启动时无条件拉 images/kernel.elf。以前这一步靠手动 cp，
+# 而 *.elf 在 .gitignore 里——干净克隆后页面显示「就绪」但终端永远没提示符。
+# 现在内核镜像由 make 自动产出并同步过去。
+WEB_KERNEL = web/images/kernel.elf
+
+all: $(TARGET) $(OBJDIR)/kernel.elf $(WEB_KERNEL)
+
+$(WEB_KERNEL): $(OBJDIR)/kernel.elf
+	@mkdir -p $(dir $@)
+	@cp $< $@
+	@echo "  同步 $< -> $@"
 
 $(TARGET): $(OBJS) $(CAPSTONE_HDR) $(CAPSTONE_OBJS)
 	@mkdir -p $(OBJDIR)
@@ -52,9 +66,13 @@ $(OBJDIR)/capstone/%.o: $(CAPSTONE_DIR)/%.c
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) $(CS_CFLAGS) -c -o $@ $<
 
+# 头文件依赖：改 cpu.h/bus.h 的结构体必须触发重编，
+# 否则会拿到 ABI 不一致的 .o（表现为随机崩溃，极难查）。
+# 头文件依赖只加在模拟器自己的源文件上。加到全局 CFLAGS 会波及 capstone，
+# 而 capstone 的 arch 头文件（tricore.h 等）不能单独编译（clean 后必挂）。
 $(OBJDIR)/%.o: $(SRCDIR)/%.c
 	@mkdir -p $(OBJDIR)
-	$(CC) $(CFLAGS) -I$(SRCDIR)/include $(CS_CFLAGS) -c -o $@ $<
+	$(CC) -MMD -MP $(CFLAGS) -I$(SRCDIR)/include $(CS_CFLAGS) -c -o $@ $<
 
 # 用户程序：链接到 0x80400000，转成裸二进制
 $(OBJDIR)/fork_prog.bin: kernel/user/fork.S
@@ -79,14 +97,22 @@ $(OBJDIR)/spin_prog.elf: kernel/user/spin.S
 	$(CROSS)gcc -march=rv32ima_zicsr_zifencei -mabi=ilp32 -mcmodel=medany -nostdlib -nostartfiles \
 		-Ttext=0x80400000 -o $(OBJDIR)/spin_prog.elf kernel/user/spin.S
 
-$(OBJDIR)/user_prog.bin: $(OBJDIR)/user_prog.elf
+# user_prog.elf 必须有自己的规则：user_prog.bin 依赖它，
+# 而 user_prog.S 里 .incbin 的是 .elf。原来只在 .bin 的 recipe 里临时编译，
+# 干净树上 make 会直接 "No rule to make target 'build/user_prog.elf'"。
+$(OBJDIR)/user_prog.elf: kernel/user/hello.S
 	@mkdir -p $(OBJDIR)
 	$(CROSS)gcc -march=rv32ima_zicsr_zifencei -mabi=ilp32 -mcmodel=medany -nostdlib -nostartfiles \
-		-Ttext=0x80400000 -o $(OBJDIR)/user_prog.elf kernel/user/hello.S
-	$(CROSS)objcopy -O binary $(OBJDIR)/user_prog.elf $@
+		-Ttext=0x80400000 -o $@ kernel/user/hello.S
+
+$(OBJDIR)/user_prog.bin: $(OBJDIR)/user_prog.elf
+	$(CROSS)objcopy -O binary $< $@
 
 # 内核
-$(OBJDIR)/kernel.elf: $(KSRCS) $(KASMS) $(OBJDIR)/user_prog.bin $(OBJDIR)/fork_prog.bin $(OBJDIR)/badptr_prog.bin $(OBJDIR)/spin_prog.elf kernel/linker.ld
+# fdtest_prog.elf 必须进依赖：kernel/user_prog.S 里 .incbin 了它，
+# 漏掉的话干净树和 -j 并行构建都会挂（偶尔能过，极难查）。
+$(OBJDIR)/kernel.elf: $(KSRCS) $(KASMS) $(OBJDIR)/user_prog.bin $(OBJDIR)/fork_prog.bin \
+    $(OBJDIR)/badptr_prog.bin $(OBJDIR)/fdtest_prog.elf $(OBJDIR)/spin_prog.elf kernel/linker.ld
 	@mkdir -p $(OBJDIR)
 	$(CROSS)gcc $(KCFLAGS) -T kernel/linker.ld -o $@ \
 		$(KASMS) $(KSRCS) -lgcc
@@ -135,3 +161,5 @@ $(DTS_DTBS): %.dtb: %.dts
 dts: $(DTS_DTBS)
 
 .PHONY: directed dts
+
+-include $(wildcard $(OBJDIR)/*.d)

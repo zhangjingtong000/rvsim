@@ -615,10 +615,19 @@ u32 s_trap_handler(u32 cause, u32 epc, u32 tval, u32 *regs)
         return g_retpc;
     }
 
-    /* 缺页异常：按需分配 */
+    /* 缺页异常：按需分配。
+       注意 cur_proc 必须验界——原来直接 procs[cur_proc]，cur_proc 为 -1 时
+       会写到 procs[-1]（落在别的内核数据里）。
+       曾经这里还想「内核缺页就 panic」，但 trap 上下文里做输出/停机
+       会把内核卡死在 m_trap_entry 里（实测 run hello.elf 直接不出结果），
+       所以只做边界保护，不改变原有的按需分页行为。 */
     if (cause == 13 || cause == 15) {
-        u32 *pt = (cur_proc >= 0 && procs[cur_proc].pgtbl)
-                  ? procs[cur_proc].pgtbl : g_kroot;
+        if (cur_proc < 0 || cur_proc >= NPROC) {
+            /* 没有当前进程时不该有用户缺页：直接复位 */
+            *(volatile u32 *)SYSCON_BASE = 0x5555u;
+            for (;;) { }
+        }
+        u32 *pt = procs[cur_proc].pgtbl ? procs[cur_proc].pgtbl : g_kroot;
         if (vm_page_fault_on(pt, tval, cause == 15))
             return epc;          /* 重试出错的指令 */
         procs[cur_proc].state = PROC_EXIT;
@@ -889,6 +898,33 @@ int kload_prog(const char *name)
     g_entry = entry;
     g_img_end = img_end;
     g_seg_n = elf_segments(img, (u32)len, g_seg_va, g_seg_end, 8);
+
+    /* 用户区页表按需建立（幂等）：kload_prog 可能在 kmain 的任何阶段调用，
+       不能假设 g_kroot 里已经有用户 L1 表。
+       建立之后按 PT_LOAD 段把每一页映射成 identity（装载窗口里虚拟地址
+       就是物理地址），elf_load 才能按虚拟地址写。
+       原来 g_kroot 只映射了 0x80400000 一页，多段 ELF（fork.elf 的第二段
+       在 0x80401070）一写就缺页。 */
+    {
+        u32 l1pte = g_kroot[VPN2(g_user_base)];
+        u32 *ul1;
+        if (!(l1pte & PTE_V)) {
+            ul1 = page_alloc();
+            g_kroot[VPN2(g_user_base)] = ((u32)ul1 >> 12 << 10) | PTE_V;
+        } else {
+            ul1 = (u32 *)((l1pte >> 10) << 12);
+        }
+        for (int si = 0; si < g_seg_n; si++) {
+            u32 va = g_seg_va[si] & ~0xFFFu;
+            u32 end = g_seg_end[si];
+            for (; va < end; va += 4096u) {
+                u32 vpn1 = VPN1(va);
+                if (ul1[vpn1] & PTE_V) continue;
+                ul1[vpn1] = (u32)(((va >> 12) << 10)
+                                  | PTE_V | PTE_R | PTE_W | PTE_X | PTE_U | PTE_A | PTE_D);
+            }
+        }
+    }
 
     /* 记住装的是哪个程序：快照靠它回滚代码区 */
     { int k = 0; while (key[k] && k < 7) { g_loaded_prog[k] = key[k]; k++; } g_loaded_prog[k] = 0; }
@@ -1755,15 +1791,8 @@ void kmain(void)
     term_grid_reset();
     desktop_draw();
 
-    /* 用户页表：只映射代码页；数据页与栈页留给缺页异常按需分配 */
-    u32 uvpn2 = VPN2(g_user_base);
-    u32 *ul1 = page_alloc();
-    g_kroot[uvpn2] = ((u32)ul1 >> 12 << 10) | PTE_V;
-    {
-        u32 code_pa = g_user_base & ~0xFFFu;      /* 代码页物理地址 */
-        ul1[VPN1(g_user_base)] = (u32)(((code_pa >> 12) << 10)
-                                     | PTE_V | PTE_R | PTE_W | PTE_X | PTE_U | PTE_A | PTE_D);
-    }
+    /* 用户区页表由 kload_prog 自己按需建立（见上面的注释），
+       这里不再重复创建——重复创建会覆盖掉装载时建立的段映射。 */
 
     /* 创建 3 个进程，每个 4KB 用户栈 */
     proc_init();

@@ -197,7 +197,9 @@ test("3.5", "还原回原尺寸", async (p) => {
 });
 
 test("3.6", "拖动位移与鼠标一致", async (p) => {
-  await p.evaluate(() => window.rv.ui_snapTo(0, "left"));
+  /* SNAP 的键是 top/tl/tr/bl/br，没有 "left"。
+     传不存在的 zone 会直接返回 false，窗口压根没变。 */
+  ok(await p.evaluate(() => window.rv.ui_snapTo(0, "tl")), "吸附到左上失败");
   await sleep(400);
   await p.evaluate(() => window.rv.ui_snapTo(0, "restore"));
   await sleep(400);
@@ -1292,14 +1294,24 @@ test("13.14", "导入程序入口存在", async (p) => {
 test("13.15", "终止正在运行的进程后回到 shell", async (p) => {
   await shellCmd(p, "run hello.elf");
   await sleep(150);
-  const pid = await p.evaluate(() => {
-    const r = window.rv.state.procs.find((x) => x.state === "RUN");
-    return r ? r.pid : null;
-  });
-  if (pid === null) return;      /* 程序已经跑完，这一轮没东西可终止 */
-  eq(await p.evaluate((id) => window.rv.killProc(id), pid), 0);
-  await sleep(1500);
+  /* 反复终止直到进程表里没有 RUN 或 EXIT 之外的状态。
+     只杀一次是不够的：hello 有三个进程轮转，杀一个另外两个还会跑，
+     而且原来的断言只看终端里有没有 rvsh>——那是假通过，
+     进程没杀掉时终端里照样有旧提示符，后面的用例才发现内核不响应了。 */
+  for (let i = 0; i < 8; i++) {
+    const st = await p.evaluate(() => window.rv.state.procs.map((x) => ({ pid: x.pid, s: x.state })));
+    const run = st.find((x) => x.s === "RUN");
+    if (!run) break;
+    await p.evaluate((id) => window.rv.killProc(id), run.pid);
+    await sleep(400);
+  }
+  await sleep(1200);
+  const st = await p.evaluate(() => window.rv.state.procs.map((x) => x.state));
+  ok(!st.some((x) => x === "RUN"), "终止后还有进程在跑：" + JSON.stringify(st));
   ok((await p.evaluate(() => window.rv.state.term.join("|"))).indexOf("rvsh>") >= 0, "终止后没有回到提示符");
+  /* 内核必须还能接命令：这才是「回到 shell」的真正判据 */
+  const rc = await p.evaluate(() => window.rv.fsWrite("after-kill.txt", "ok"));
+  eq(rc, 0, "终止进程后内核不再响应");
 });
 
 // ── 对抗性用例：边界与注入 ──
@@ -1423,6 +1435,267 @@ test("13.26", "跑飞的用户程序能被单独终止", async (p) => {
 });
 
 // ══════════════════════════════════════════════════════════
+// 14. 外壳基础交互（滚动条 / 终端历史 / 配色 / 选取 / 缩放）
+// ══════════════════════════════════════════════════════════
+test("14.1", "滚动条是自绘深色组件", async (p) => {
+  const v = await p.evaluate(() => {
+    const el = document.querySelector(".panel-dom");
+    const cs = getComputedStyle(el);
+    return { w: cs.scrollbarWidth, c: cs.scrollbarColor };
+  });
+  eq(v.w, "thin", "滚动条没有设成细样式");
+  ok(/rgba?\(255, 255, 255/.test(v.c), "滚动条颜色不是深色主题的半透明白：" + v.c);
+});
+
+test("14.2", "终端能回看被挤出屏幕的历史", async (p) => {
+  await shellCmd(p, "clear");
+  await sleep(700);
+  await shellCmd(p, "manifest");
+  await sleep(1600);
+  const v = await p.evaluate(() => {
+    const el = document.querySelector(".term-dom");
+    el.scrollTop = 0;
+    const ls = [...document.querySelectorAll(".term-line")];
+    return { hist: el.querySelectorAll(".term-line.hist").length,
+             total: ls.length,
+             first: ls.slice(0, 3).map((l) => l.textContent.trim()).filter(Boolean) };
+  });
+  ok(v.hist > 0, "没有历史行——manifest 前面那段还是看不到");
+  ok(v.total > 22, "总行数没有超过一屏：" + v.total);
+  ok(v.first.join("").indexOf("manifest") >= 0 || v.first.join("").indexOf('"cap"') >= 0,
+     "滚到顶看不到 manifest 的开头（说明历史没有真正保存）：" + JSON.stringify(v.first));
+  await p.evaluate(() => { const e = document.querySelector(".term-dom"); e.scrollTop = e.scrollHeight; });
+});
+
+test("14.3", "终端按语义分层上色", async (p) => {
+  /* 先敲一条命令：14.2 之后提示符行是空的，只有 .ta1 没有 .ta2 */
+  await shellCmd(p, "whoami");
+  await sleep(900);
+  /* 提示符/命令现在是内核打属性（.ta1/.ta2），JSON 仍是行首启发式（.tc-json） */
+  const c = await p.evaluate(() => {
+    const ls = [...document.querySelectorAll(".term-line")];
+    const p1 = ls.find((l) => l.querySelector(".ta1") && l.querySelector(".ta2"));
+    const j = ls.find((l) => l.querySelector(".tc-json"));
+    return {
+      prompt: p1 ? getComputedStyle(p1.querySelector(".ta1")).color : null,
+      cmd: p1 ? getComputedStyle(p1.querySelector(".ta2")).color : null,
+      json: j ? getComputedStyle(j.querySelector(".tc-json")).color : null,
+      plain: getComputedStyle(ls[0]).color,
+    };
+  });
+  ok(c.prompt, "提示符没有单独着色（找不到 .ta1）");
+  ok(c.cmd, "用户输入没有单独着色（找不到 .ta2）");
+  ok(c.prompt !== c.cmd, "提示符和命令是同一个颜色：" + c.prompt);
+  ok(c.json, "JSON 没有单独着色");
+  ok(c.json !== c.plain, "JSON 和普通输出同一个颜色");
+});
+
+test("14.4", "终端文字能选中", async (p) => {
+  await p.evaluate(() => {
+    window.getSelection().removeAllRanges();
+    const el = document.querySelector(".term-dom");
+    el.scrollTop = el.scrollHeight;          /* 先回到底部，保证视口里有内容 */
+  });
+  await sleep(300);
+  const t = await p.evaluate(() => {
+    const el = document.querySelector(".term-dom");
+    const box = el.getBoundingClientRect();
+    const ls = [...document.querySelectorAll(".term-line")];
+    /* 只挑真正显示在可视区里的行：历史行可能滚在视口外，
+       拿它的 rect 去点等于点在容器外面，永远选不中。 */
+    const idx = ls.findIndex((l) => {
+      const q = l.getBoundingClientRect();
+      return l.textContent.trim().length > 15 && q.top >= box.top + 2 && q.bottom <= box.bottom - 2;
+    });
+    if (idx < 0) return null;
+    const q = ls[idx].getBoundingClientRect();
+    return { x: q.x, y: q.y, h: q.height };
+  });
+  ok(t, "可视区里没有可拖选的行");
+  /* 逐帧移动。Playwright 的 steps 是在一次调用里连发，浏览器来不及
+     把它当成"拖拽"建立选区；分成多次、每帧一次才和真实鼠标一致。
+     这个用例在全量跑时偶发选不中（单独跑 3/3 都行），所以允许重试两次：
+     真有问题时三次都失败，不会掩盖。 */
+  let n = 0;
+  for (let attempt = 0; attempt < 3 && n === 0; attempt++) {
+    await p.evaluate(() => window.getSelection().removeAllRanges());
+    await sleep(150);
+    await p.mouse.move(t.x + 6, t.y + t.h / 2);
+    await p.mouse.down();
+    for (let k = 1; k <= 12; k++) {
+      await p.mouse.move(t.x + 6 + k * 16, t.y + t.h / 2);
+      await sleep(16);
+    }
+    await p.mouse.up();
+    await sleep(250);
+    n = await p.evaluate(() => String(window.getSelection()).length);
+  }
+  if (n === 0) {
+    const diag = await p.evaluate(([x, y]) => {
+      const e = document.elementFromPoint(x, y);
+      const el = document.querySelector(".term-dom");
+      return {
+        hit: e ? (e.className || e.tagName) : "null",
+        scrollTop: el.scrollTop, scrollH: el.scrollHeight, clientH: el.clientHeight,
+        lines: document.querySelectorAll(".term-line").length,
+        userSel: getComputedStyle(el).userSelect,
+      };
+    }, [t.x + 6, t.y + t.h / 2]);
+    ok(false, "拖选不到文字（长度 0）诊断：" + JSON.stringify(diag) + " 目标 " + JSON.stringify(t));
+  }
+});
+
+test("14.5", "有选区时 Ctrl+C 是复制不是中断", async (p) => {
+  await p.evaluate(() => {
+    const lines = document.querySelectorAll(".term-line");
+    const idx = [...lines].findIndex((l) => l.textContent.trim().length > 10);
+    const rg = document.createRange();
+    rg.selectNodeContents(lines[idx]);
+    const sel = window.getSelection();
+    sel.removeAllRanges(); sel.addRange(rg);
+  });
+  await sleep(200);
+  const before = await p.evaluate(() => window.rv.state.term.join("|").split("^C").length);
+  await p.keyboard.press("Control+c");
+  await sleep(400);
+  const after = await p.evaluate(() => window.rv.state.term.join("|").split("^C").length);
+  eq(after, before, "有选区时还是发了 ^C 中断");
+  ok((await p.evaluate(() => String(window.getSelection()).length)) > 0, "Ctrl+C 把选区清掉了");
+  await p.evaluate(() => window.getSelection().removeAllRanges());
+});
+
+test("14.6", "连续退格能一直删", async (p) => {
+  await shellCmd(p, "clear");
+  await sleep(600);
+  const t = await p.evaluate(() => {
+    const q = document.querySelector(".term-dom").getBoundingClientRect();
+    return { x: q.x + 30, y: q.y + q.height - 30 };
+  });
+  await p.mouse.click(t.x, t.y);
+  await sleep(300);
+  await p.keyboard.type("abcdefgh");
+  await sleep(500);
+  const a = await p.evaluate(() => window.rv.state.term.find((l) => l.includes("abcdefgh")) || "");
+  ok(a, "输入没进终端");
+  for (let i = 0; i < 5; i++) { await p.keyboard.press("Backspace"); await sleep(90); }
+  await sleep(300);
+  const b = await p.evaluate(() => window.rv.state.term.find((l) => l.includes("rvsh>")) || "");
+  ok(b.indexOf("abc") >= 0 && b.indexOf("abcdefgh") < 0, "退格 5 次后不对：" + JSON.stringify(b));
+  for (let i = 0; i < 5; i++) { await p.keyboard.press("Backspace"); await sleep(90); }
+  await sleep(300);
+  const c = await p.evaluate(() => window.rv.state.term.find((l) => l.includes("rvsh>")) || "");
+  ok(c.trim() === "rvsh>", "再退 5 次没删干净：" + JSON.stringify(c));
+});
+
+test("14.7", "窗口四角四边都能拖大", async (p) => {
+  const win = () => p.evaluate(() => { const w = window.rv.state.wins[0]; return [w.x, w.y, w.w, w.h]; });
+  const box = () => p.evaluate(() => { const q = document.querySelectorAll(".win")[0].getBoundingClientRect(); return { x: q.x, y: q.y, w: q.width, h: q.height }; });
+  eq(await p.evaluate(() => document.querySelectorAll(".win")[0].querySelectorAll(".rz").length), 8, "手柄数量");
+  for (const [nm, dx, dy] of [["右下", 100, 70], ["左上", -40, -25], ["左下", -30, 40], ["下边", 0, 40], ["右边", 40, 0]]) {
+    await sleep(750);          /* 等上一次缩放的 pending（600ms）过期 */
+    /* 先把终端提到最前：它的右边缘可能被 Monitor 盖住，
+       那样 elementFromPoint 命中的是别的窗口的表格头，不是缩放手柄。 */
+    const barPt = await p.evaluate(() => {
+      const q = document.querySelectorAll(".win")[0].querySelector(".win-bar").getBoundingClientRect();
+      return { x: q.x + q.width / 2, y: q.y + q.height / 2 };
+    });
+    await p.mouse.click(barPt.x, barPt.y);
+    await sleep(400);
+    const r = await box();     /* 坐标必须在等待之后取：上一次拖动会改变窗口尺寸 */
+    const px = nm.indexOf("右") >= 0 ? r.x + r.w - 4 : nm.indexOf("左") >= 0 ? r.x + 4 : r.x + r.w / 2;
+    const py = nm.indexOf("下") >= 0 ? r.y + r.h - 4 : nm.indexOf("上") >= 0 ? r.y + 4 : r.y + r.h / 2;
+    const b0 = await win();
+    await p.mouse.move(px, py); await p.mouse.down();
+    await p.mouse.move(px + dx, py + dy, { steps: 8 }); await p.mouse.up();
+    await sleep(750);
+    const b1 = await win();
+    ok(b0.join() !== b1.join(), nm + " 拖不动：" + JSON.stringify(b0) + " -> " + JSON.stringify(b1));
+    ok(b1[0] <= 800 && b1[1] <= 600 && b1[2] > 0 && b1[3] > 0,
+       nm + " 之后逻辑坐标越界（u32 负数？）：" + JSON.stringify(b1));
+  }
+});
+
+test("14.8", "终端字号随窗口宽度变化", async (p) => {
+  await p.evaluate(() => window.rv.ui_snapTo(0, "restore"));
+  await sleep(700);
+  const f0 = await p.evaluate(() => window.rv.ui.termFontSize);
+  /* 默认窗口已经顶到 18px 上限，所以往窄里验证：半屏后字号必须变小 */
+  await p.evaluate(() => window.rv.ui_snapTo(0, "left"));
+  await sleep(800);
+  const f1 = await p.evaluate(() => window.rv.ui.termFontSize);
+  ok(f1 < f0, "窗口变窄后字号没变小：" + f0 + " -> " + f1);
+  await p.evaluate(() => window.rv.ui_snapTo(0, "restore"));
+  await sleep(700);
+});
+
+// ══════════════════════════════════════════════════════════
+// 15. 主题（深色 / 浅色）
+// ══════════════════════════════════════════════════════════
+test("15.1", "浅色主题切换生效", async (p) => {
+  const dark = await p.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue("--s0").trim());
+  await p.evaluate(() => window.applyTheme("light"));
+  await sleep(500);
+  const light = await p.evaluate(() => ({
+    s0: getComputedStyle(document.documentElement).getPropertyValue("--s0").trim(),
+    attr: document.documentElement.dataset.theme,
+    termBg: getComputedStyle(document.querySelector(".term-dom")).backgroundColor,
+  }));
+  ok(light.s0 !== dark, "切浅色后 --s0 没变：" + dark + " -> " + light.s0);
+  eq(light.attr, "light");
+  /* 浅色下终端必须是浅底（深底会看不清深色文字） */
+  const m = light.termBg.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/);
+  ok(m && +m[1] > 200 && +m[2] > 200 && +m[3] > 200, "浅色下终端底色不是浅色：" + light.termBg);
+  await p.evaluate(() => window.applyTheme("dark"));
+  await sleep(300);
+});
+
+test("15.2", "浅色下正文对比度达标", async (p) => {
+  await p.evaluate(() => window.applyTheme("light"));
+  await sleep(500);
+  const r = await p.evaluate(() => {
+    const lin = (c) => { c /= 255; return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4); };
+    const L = ([r2, g, b2]) => 0.2126 * lin(r2) + 0.7152 * lin(g) + 0.0722 * lin(b2);
+    const over = (fg, bg) => { const a = fg[3] == null ? 1 : fg[3]; return [0, 1, 2].map((i) => Math.round(fg[i] * a + bg[i] * (1 - a))); };
+    const ratio = (a, b) => { const l1 = L(a), l2 = L(b); return (Math.max(l1, l2) + 0.05) / (Math.min(l1, l2) + 0.05); };
+    const hex = (h) => [parseInt(h.slice(1, 3), 16), parseInt(h.slice(3, 5), 16), parseInt(h.slice(5, 7), 16)];
+    const rgba = (s) => { const m = s.match(/rgba?\(([^)]+)\)/); if (!m) return hex(s); const v = m[1].split(",").map((x) => parseFloat(x)); return [v[0], v[1], v[2], v.length > 3 ? v[3] : 1]; };
+    const root = getComputedStyle(document.documentElement);
+    const v = (n) => root.getPropertyValue(n).trim();
+    const S0 = hex(v("--s0")), S1 = hex(v("--s1"));
+    const t1 = rgba(v("--t1")), t2 = rgba(v("--t2"));
+    return {
+      body: +ratio(over(t1, S0), S0).toFixed(2),
+      bodyOnCard: +ratio(over(t1, S1), S1).toFixed(2),
+      secondary: +ratio(over(t2, S0), S0).toFixed(2),
+    };
+  });
+  ok(r.body >= 4.5, "浅色正文对比度不足：" + r.body);
+  ok(r.bodyOnCard >= 4.5, "浅色卡片上正文对比度不足：" + r.bodyOnCard);
+  ok(r.secondary >= 4.5, "浅色次要文字对比度不足：" + r.secondary);
+  await p.evaluate(() => window.applyTheme("dark"));
+  await sleep(300);
+});
+
+test("15.3", "主题选择会持久化", async (p) => {
+  await p.evaluate(() => window.applyTheme("light"));
+  await sleep(300);
+  const saved = await p.evaluate(() => localStorage.getItem("rvsim.theme"));
+  eq(saved, "light");
+  /* 设置面板里的分段按钮要跟着高亮 */
+  await p.evaluate(() => window.rv.launch("settings"));
+  await sleep(800);
+  const on = await p.evaluate(() => {
+    const seg = document.getElementById("setTheme");
+    if (!seg) return null;
+    const b = seg.querySelector("button.on");
+    return b ? b.dataset.t : null;
+  });
+  eq(on, "light", "设置面板里的外观选中态不对");
+  await p.evaluate(() => { window.applyTheme("dark"); window.rv.launch("settings"); });
+  await sleep(400);
+});
+
+// ══════════════════════════════════════════════════════════
 // 运行器
 // ══════════════════════════════════════════════════════════
 (async () => {
@@ -1471,7 +1744,17 @@ test("13.26", "跑飞的用户程序能被单独终止", async (p) => {
       console.log("  PASS  " + t.id + "  " + t.name);
     } catch (e) {
       fails.push({ id: t.id, name: t.name, err: e.message });
-      console.log("  FAIL  " + t.id + "  " + t.name + "\n        " + e.message);
+      /* 失败时把内核状态一起打出来：只报「内核没有响应」等于没报，
+         得知道那一刻进程在干什么、终端停在哪。 */
+      let extra = "";
+      try {
+        extra = JSON.stringify(await page.evaluate(() => ({
+          procs: window.rv.state.procs.map((x) => x.pid + ":" + x.state),
+          termTail: window.rv.state.term.join("|").slice(-140),
+          cycles: window.rv.state.cycles,
+        })));
+      } catch (_) { extra = "(读不到状态)"; }
+      console.log("  FAIL  " + t.id + "  " + t.name + "\n        " + e.message + "\n        " + extra);
     }
   }
   console.log(`\n总计 ${pass}/${pass + fails.length} 通过`);
