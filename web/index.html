@@ -26,8 +26,8 @@
   --s2:#20262F;   /* 菜单、卡片 */
   --s3:#282F3A;   /* 悬停 */
   --s4:#323A47;   /* 按下 / 选中 */
-  --stroke-sub:rgba(255,255,255,.05);
-  --stroke:rgba(255,255,255,.07);        /* ControlStrokeColorDefault  #12FFFFFF */
+  --stroke-sub:var(--active);
+  --stroke:var(--stroke);        /* ControlStrokeColorDefault  #12FFFFFF */
   --stroke-strong:rgba(255,255,255,.11); /* ControlStrokeColorSecondary #18FFFFFF */
   --t1:#FFFFFF;                    /* TextFillColorPrimary   */
   --t2:rgba(255,255,255,.77);      /* TextFillColorSecondary #C5FFFFFF */
@@ -36,14 +36,24 @@
   --acc:#2DD4BF;
   /* 状态色取 Win11 Dark 的值（#6CCB5F / #FCE100 / #FF99A4）：
      以前只有终端里的一个 #F87171，别处要用红色就各写各的。 */
-  --ok:#6CCB5F; --warn:#FCE100; --err:#FF99A4; --acc-hover:#5EEAD4; --acc-press:#14B8A6; --on-acc:#04211C;
+  --ok:#6CCB5F; --warn:#FCE100; --err:#FF99A4;
+
+  /* 语义 token：交互态、浮层底、阴影。以前这些值散在各处写死，
+     换主题时无处下手。 */
+  --hover:var(--hover);
+  --active:var(--active);
+  --overlay:var(--overlay);
+  --overlay-2:var(--overlay-2);
+  --sh-1:var(--sh-1);
+  --sh-2:var(--sh-2);
+  --sh-3:var(--sh-3); --acc-hover:#5EEAD4; --acc-press:#14B8A6; --on-acc:#04211C;
   --ok:#34D399; --warn:#FBBF24; --danger:#F87171; --danger-strong:#C42B1C;
   --info:#60A5FA;
 
   /* 圆角严格按 WinUI 3：浮层 8 / 控件 4 */
   --r-window:8px; --r-flyout:8px; --r-control:4px; --r-tile:6px;
 
-  --elev-1:0 1px 2px rgba(0,0,0,.30), 0 8px 20px -6px rgba(0,0,0,.45);
+  --elev-1:0 1px 2px rgba(0,0,0,.30), 0 8px 20px -6px var(--sh-3);
   --elev-2:0 1px 2px rgba(0,0,0,.35), 0 18px 44px -12px rgba(0,0,0,.62);
   --elev-3:0 8px 20px rgba(0,0,0,.30), 0 28px 64px -16px rgba(0,0,0,.70);
 
@@ -105,7 +115,7 @@ input{font:inherit;color:inherit;background:none;border:0;outline:0}
   color:var(--t3);letter-spacing:.14em;
   animation:bootFade var(--dur-5) var(--dur-3) var(--ease-decel) both}
 .boot-bar{width:100%;height:3px;margin-top:34px;border-radius:2px;
-  background:rgba(255,255,255,.08);overflow:hidden;
+  background:var(--hover);overflow:hidden;
   animation:bootFade var(--dur-5) var(--dur-4) var(--ease-decel) both}
 .boot-bar i{display:block;height:100%;width:0;border-radius:2px;
   background:linear-gradient(90deg,var(--acc-press),var(--acc-hover));
@@ -133,10 +143,10 @@ input{font:inherit;color:inherit;background:none;border:0;outline:0}
 .dicon{pointer-events:auto;width:76px;height:76px;padding:4px 2px 3px;
   display:flex;flex-direction:column;align-items:center;gap:6px;
   border-radius:7px;user-select:none;transition:background var(--dur-1),box-shadow var(--dur-1)}
-.dicon:hover{background:rgba(255,255,255,.07)}
+.dicon:hover{background:var(--stroke)}
 .dicon.sel{background:rgba(45,212,191,.16);box-shadow:inset 0 0 0 1px rgba(94,234,212,.45)}
 .dicon svg{width:44px;height:44px;flex:0 0 auto;
-  filter:drop-shadow(0 3px 7px rgba(0,0,0,.45))}
+  filter:drop-shadow(0 3px 7px var(--sh-3))}
 .dicon span{font:400 12px/16px var(--font-ui);color:#EDF1F6;text-align:center;
   max-width:76px;overflow:hidden;text-shadow:0 1px 3px rgba(0,0,0,.8);
   /* 两行再省略：Win11 的桌面图标标签是两行。单行的话
@@ -163,7 +173,7 @@ input{font:inherit;color:inherit;background:none;border:0;outline:0}
 /* 吸附布局选择器：悬停最大化按钮 450ms 弹出（Win11 行为） */
 #snapPicker{position:absolute;z-index:70;display:none;gap:6px;
   padding:10px;grid-template-columns:1fr 1fr;
-  background:rgba(32,38,47,.97);
+  background:var(--overlay-2);
   -webkit-backdrop-filter:blur(30px) saturate(180%);
   backdrop-filter:blur(30px) saturate(180%);
   border:1px solid var(--stroke);border-radius:var(--r-flyout);
@@ -189,7 +199,7 @@ input{font:inherit;color:inherit;background:none;border:0;outline:0}
 
 /* 托盘日期面板（点托盘弹出） */
 #trayPanel{position:absolute;z-index:72;display:none;width:280px;padding:16px;
-  background:rgba(32,38,47,.97);
+  background:var(--overlay-2);
   -webkit-backdrop-filter:blur(30px) saturate(180%);
   backdrop-filter:blur(30px) saturate(180%);
   border:1px solid var(--stroke);border-radius:var(--r-flyout);
@@ -208,7 +218,7 @@ input{font:inherit;color:inherit;background:none;border:0;outline:0}
 
 /* 右键菜单 */
 #ctxMenu{position:absolute;z-index:75;display:none;min-width:184px;padding:5px;
-  background:rgba(32,38,47,.97);
+  background:var(--overlay-2);
   -webkit-backdrop-filter:blur(30px) saturate(180%);
   backdrop-filter:blur(30px) saturate(180%);
   border:1px solid var(--stroke);border-radius:var(--r-flyout);
@@ -217,7 +227,7 @@ input{font:inherit;color:inherit;background:none;border:0;outline:0}
 #ctxMenu.on{display:block}
 .ctx-item{padding:7px 12px;border-radius:var(--r-control);
   font:400 13px/18px var(--font-ui);color:var(--t1);cursor:default;white-space:nowrap}
-.ctx-item:hover{background:rgba(255,255,255,.08)}
+.ctx-item:hover{background:var(--hover)}
 .ctx-item.disabled{color:var(--t-disabled);pointer-events:none}
 .ctx-sep{height:1px;margin:4px 8px;background:var(--stroke)}
 
@@ -242,13 +252,13 @@ input{font:inherit;color:inherit;background:none;border:0;outline:0}
   /* 底色用高不透明度的半透明：窗口是每帧都在变的内容，
      backdrop-filter 会让浏览器每帧重算一次背景模糊 —— 实测吞吐从
      12-19 M/s 掉到 4.9 M/s。视觉上 .94 和 .86+blur 几乎看不出差别。 */
-  background:rgba(18,22,29,.94);
+  background:var(--overlay);
   border:1px solid var(--stroke);
   /* Win11 的四层阴影 */
   box-shadow:0 0 0 1px rgba(0,0,0,.12),
              0 2px 4px rgba(0,0,0,.14),
              0 8px 16px rgba(0,0,0,.16),
-             0 16px 32px rgba(0,0,0,.18);
+             0 16px 32px var(--sh-1);
   transition:box-shadow var(--dur-2) var(--ease-decel),border-color var(--dur-2),
              left var(--dur-2) var(--ease-decel),top var(--dur-2) var(--ease-decel),
              width var(--dur-2) var(--ease-decel),height var(--dur-2) var(--ease-decel)}
@@ -259,8 +269,8 @@ input{font:inherit;color:inherit;background:none;border:0;outline:0}
 .win.focused{border-color:rgba(94,234,212,.34);
   box-shadow:0 0 0 1px rgba(94,234,212,.16),
              0 2px 4px rgba(0,0,0,.16),
-             0 8px 16px rgba(0,0,0,.18),
-             0 20px 40px rgba(0,0,0,.22)}
+             0 8px 16px var(--sh-1),
+             0 20px 40px var(--sh-2)}
 /* 吸附到屏幕边缘时，贴边那侧的圆角收成直角 */
 .win.snap-l{border-top-left-radius:0;border-bottom-left-radius:0}
 .win.snap-r{border-top-right-radius:0;border-bottom-right-radius:0}
@@ -273,7 +283,7 @@ input{font:inherit;color:inherit;background:none;border:0;outline:0}
   border-radius:calc(var(--r-window) - 1px) calc(var(--r-window) - 1px) 0 0;
   gap:8px;padding:0 0 0 12px;user-select:none;
   background:linear-gradient(180deg,rgba(255,255,255,.075),rgba(255,255,255,.035));
-  border-bottom:1px solid rgba(255,255,255,.07)}
+  border-bottom:1px solid var(--stroke)}
 .win-ico{width:16px;height:16px;flex:0 0 auto;opacity:.72}
 .win.focused .win-ico{opacity:.95}
 .win-title{font:400 12px/1 var(--font-ui);color:var(--t2);
@@ -283,7 +293,7 @@ input{font:inherit;color:inherit;background:none;border:0;outline:0}
 .win-ctl button{width:46px;height:100%;display:grid;place-items:center;
   color:var(--t2);transition:background var(--dur-1),color var(--dur-1)}
 .win-ctl button svg{width:10px;height:10px}
-.win-ctl button:hover{background:rgba(255,255,255,.09);color:var(--t1)}
+.win-ctl button:hover{background:var(--stroke);color:var(--t1)}
 .win-ctl button:active{background:rgba(255,255,255,.14)}
 .win-ctl button.close:hover{background:var(--danger-strong);color:#fff}
 .win-ctl button.close:active{background:#A4261A;color:#fff}
@@ -292,7 +302,11 @@ input{font:inherit;color:inherit;background:none;border:0;outline:0}
   border-radius:0 0 calc(var(--r-window) - 1px) calc(var(--r-window) - 1px)}
 /* 宿主应用的内容长度是固定的，窗口小时要能滚，不能直接裁掉最后一行 */
 .host-win .win-body{overflow:auto}
-.host-win.solid{background:#12161D}
+/* 宿主侧窗口（设置/帮助/关于/编辑器）一律不透明。
+   原来是半透明（.97）+ 没有模糊，圆角和边缘会把下面的终端文字透出来，
+   浅色主题下尤其明显。Win11 的设置窗口也是不透明的。 */
+.host-win{background:var(--s1)}
+.host-win.solid{background:var(--s1)}
 
 /* 终端：字符网格由内核发布，这里用等宽真字体画 */
 .term-dom{padding:10px 12px;overflow-y:auto;overflow-x:hidden;background:var(--s0);user-select:text;
@@ -339,7 +353,7 @@ input{font:inherit;color:inherit;background:none;border:0;outline:0}
 .ftab td.r,.ptab .r{text-align:right}
 .ftab td.dim{color:var(--t3)}
 .ftab tbody tr{cursor:default}
-.ftab tbody tr:hover td{background:rgba(255,255,255,.05)}
+.ftab tbody tr:hover td{background:var(--active)}
 .ftab tbody tr.sel td{background:rgba(45,212,191,.16)}
 .mono{font-family:var(--font-mono)}
 
@@ -347,20 +361,20 @@ input{font:inherit;color:inherit;background:none;border:0;outline:0}
 #dock{position:absolute;left:0;right:0;bottom:0;height:48px;z-index:40;
   display:flex;align-items:center;padding:0 10px;user-select:none;
   background:rgba(22,28,38,.94);
-  border-top:1px solid rgba(255,255,255,.09);
+  border-top:1px solid var(--stroke);
   box-shadow:0 -8px 24px -12px rgba(0,0,0,.6);
   font:400 12px/16px var(--font-ui);color:var(--t2)}
 .dock-center{position:absolute;left:50%;transform:translateX(-50%);
   display:flex;align-items:center;gap:2px}
 .dock-btn{width:40px;height:40px;border-radius:var(--r-control);display:grid;place-items:center;
   color:var(--t2);transition:background var(--dur-1),color var(--dur-1)}
-.dock-btn:hover{background:rgba(255,255,255,.08);color:var(--t1)}
+.dock-btn:hover{background:var(--hover);color:var(--t1)}
 .dock-btn svg{width:17px;height:17px}
 .dock-apps{display:flex;gap:6px}
 .dock-app{position:relative;width:42px;height:40px;border-radius:var(--r-control);
   display:grid;place-items:center;transition:background var(--dur-1)}
 .dock-app:hover{background:rgba(255,255,255,.10)}
-.dock-app:active{background:rgba(255,255,255,.05)}
+.dock-app:active{background:var(--active)}
 .dock-app svg{width:26px;height:26px;opacity:.66;
   transition:opacity var(--dur-2) var(--ease-decel),transform var(--dur-2) var(--ease-decel)}
 .dock-app:hover svg{opacity:1;transform:scale(1.08)}
@@ -392,7 +406,7 @@ input{font:inherit;color:inherit;background:none;border:0;outline:0}
   transform:translateX(-50%);width:642px;height:auto;
   max-height:calc(100vh - 78px);
   padding:22px;z-index:60;display:flex;flex-direction:column;
-  background:rgba(26,32,42,.97);
+  background:var(--overlay-2);
   -webkit-backdrop-filter:blur(40px) saturate(180%);
   backdrop-filter:blur(40px) saturate(180%);
   border:1px solid var(--stroke);border-radius:var(--r-flyout);box-shadow:var(--elev-3);
@@ -415,7 +429,7 @@ input{font:inherit;color:inherit;background:none;border:0;outline:0}
 .sm-tile{display:flex;flex-direction:column;align-items:center;justify-content:center;
   gap:8px;aspect-ratio:1;padding:10px 6px;border-radius:var(--r-tile);
   transition:background var(--dur-1)}
-.sm-tile:hover{background:rgba(255,255,255,.07)}
+.sm-tile:hover{background:var(--stroke)}
 .sm-tile svg{width:34px;height:34px}
 .sm-tile span{font:400 11.5px/15px var(--font-ui);color:var(--t2);
   max-width:78px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -424,7 +438,7 @@ input{font:inherit;color:inherit;background:none;border:0;outline:0}
 .sm-ri{display:flex;align-items:center;gap:10px;height:36px;padding:0 10px;
   border-radius:var(--r-control);color:var(--t2);font-family:var(--font-mono);font-size:13px;
   transition:background var(--dur-1),color var(--dur-1)}
-.sm-ri:hover{background:rgba(255,255,255,.07);color:var(--t1)}
+.sm-ri:hover{background:var(--stroke);color:var(--t1)}
 .sm-ri svg{width:13px;height:13px;opacity:.5;flex:0 0 auto}
 .sm-user{display:flex;align-items:center;gap:10px;height:54px;margin-top:14px;
   padding-top:14px;border-top:1px solid var(--stroke-sub);flex:0 0 auto}
@@ -434,7 +448,7 @@ input{font:inherit;color:inherit;background:none;border:0;outline:0}
 .sm-user-txt b{font:600 13.5px/18px var(--font-ui);color:var(--t1)}
 .sm-user-txt i{font-style:normal;font:400 11.5px/15px var(--font-ui);color:var(--t3)}
 .sm-power{margin-left:auto;color:var(--t3);padding:6px;border-radius:6px}
-.sm-power:hover{color:var(--t1);background:rgba(255,255,255,.07)}
+.sm-power:hover{color:var(--t1);background:var(--stroke)}
 
 /* ── 调试抽屉 ───────────────────────────────────────────────── */
 #drawer{position:absolute;top:0;right:0;bottom:48px;width:340px;z-index:50;
@@ -451,7 +465,7 @@ body.drawer #drawer{transform:translateX(0)}
 .dw-head b{font:600 12.5px/1 var(--font-ui);color:var(--t1)}
 .dw-head .grow{flex:1}
 .dw-x{width:28px;height:28px;border-radius:6px;display:grid;place-items:center;color:var(--t3)}
-.dw-x:hover{background:rgba(255,255,255,.08);color:var(--t1)}
+.dw-x:hover{background:var(--hover);color:var(--t1)}
 .dw-body{flex:1 1 auto;min-height:0;overflow-y:auto;padding:14px 16px 20px}
 .dw-sec{margin:16px 0 9px;padding-bottom:6px;border-bottom:1px solid var(--stroke-sub);
   font:600 10.5px/1 var(--font-ui);letter-spacing:.1em;text-transform:uppercase;color:var(--t3)}
@@ -510,7 +524,7 @@ body.drawer #drawer{transform:translateX(0)}
 /* 设置窗口内的控件 */
 .set-row{display:flex;align-items:center;justify-content:space-between;
   padding:10px 12px;border-radius:6px}
-.set-row:hover{background:rgba(255,255,255,.04)}
+.set-row:hover{background:var(--hover)}
 .set-row .lb{font:400 12.5px/18px var(--font-ui);color:var(--t1)}
 .set-row .sb{font:400 11px/16px var(--font-ui);color:var(--t3)}
 .seg{display:flex;gap:2px;background:var(--s2);padding:2px;border-radius:6px}
@@ -547,7 +561,7 @@ body.drawer #drawer{transform:translateX(0)}
 .fbar .sep{width:1px;height:15px;margin:0 3px;background:var(--stroke);flex:0 0 auto}
 .fbar button{width:23px;height:22px;display:grid;place-items:center;flex:0 0 auto;
   border-radius:var(--r-control);color:var(--t2)}
-.fbar button:hover{background:rgba(255,255,255,.09);color:var(--t1)}
+.fbar button:hover{background:var(--stroke);color:var(--t1)}
 .fbar button:disabled{color:var(--t-disabled);pointer-events:none}
 .fbar svg{width:14px;height:14px;stroke-width:1.8}
 .fbar .grow{flex:1 1 auto}
@@ -619,7 +633,7 @@ body.drawer #drawer{transform:translateX(0)}
    也就是 Windows 里「切换同一应用的窗口」那个键。 */
 #switcher{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%) scale(.98);
   display:none;gap:10px;padding:14px;border-radius:12px;
-  background:rgba(26,32,42,.96);border:1px solid var(--stroke);
+  background:var(--overlay-2);border:1px solid var(--stroke);
   -webkit-backdrop-filter:blur(30px) saturate(180%);backdrop-filter:blur(30px) saturate(180%);
   box-shadow:0 24px 60px rgba(0,0,0,.55);z-index:200;opacity:0;
   transition:opacity var(--dur-1) var(--ease-decel),transform var(--dur-1) var(--ease-decel)}
@@ -633,6 +647,35 @@ body.drawer #drawer{transform:translateX(0)}
 .sw-item.sel{background:rgba(45,212,191,.14);border-color:rgba(94,234,212,.5)}
 .sw-item.sel span{color:var(--t1)}
 
+
+/* ── 浅色主题 ────────────────────────────────────────────────
+   深色是本命，浅色是一套覆盖：只改 token，不改任何组件规则。
+   配色取 Win11 Light 的层次（#F3F3F3 底 / 白卡片 / 89%-62%-45% 文字）
+   和 GNOME Light 的中性灰，强调色压深到 #0D9488 保证在浅底上够对比。 */
+[data-theme="light"]{
+  --s0:#F3F4F6; --s1:#FFFFFF; --s2:#F9FAFB; --s3:#E5E7EB;
+  --t1:#111827; --t2:rgba(17,24,39,.72); --t3:rgba(17,24,39,.48);
+  --acc:#0D9488;
+  --stroke-sub:rgba(0,0,0,.06); --stroke:rgba(0,0,0,.10); --stroke-strong:rgba(0,0,0,.16);
+  --hover:rgba(0,0,0,.06); --active:rgba(0,0,0,.10);
+  --overlay:rgba(255,255,255,.97); --overlay-2:rgba(255,255,255,.99);
+  --sh-1:rgba(0,0,0,.07); --sh-2:rgba(0,0,0,.10); --sh-3:rgba(0,0,0,.16);
+  --s4:#D1D5DB; --on-acc:#FFFFFF;
+  --ok:#0F7B0F; --warn:#9D5D00; --err:#C42B1C;
+}
+/* 浅色下终端换成浅底深字（对应 macOS Terminal 的 Basic 方案） */
+[data-theme="light"] .term-dom{background:#FFFFFF;color:#1F2328}
+[data-theme="light"] .term-line{color:rgba(31,35,40,.86)}
+[data-theme="light"] .term-line .ta1{color:#0D9488}
+[data-theme="light"] .term-line .ta2{color:#111827}
+[data-theme="light"] .term-line .ta5{color:#C42B1C}
+[data-theme="light"] .term-line .tc-json{color:#0969DA}
+[data-theme="light"] .term-line .tc-log{color:#7C3AED}
+[data-theme="light"] .term-line.hist{color:rgba(31,35,40,.55)}
+[data-theme="light"] .term-line.hit{background:rgba(234,179,8,.28)}
+[data-theme="light"] .term-line.wrap{box-shadow:inset 2px 0 0 rgba(0,0,0,.16)}
+/* 浅色下壁纸的遮罩不要压得太暗 */
+[data-theme="light"] #wall::after{background:linear-gradient(180deg,rgba(255,255,255,.10),rgba(255,255,255,.28))}
 /* ── 滚动条 ───────────────────────────────────────────────────
    默认滚动条是浅色系统组件，放在深色面板上就是一块白胶布。
    按 Win11 / VS Code 深色主题的规格自绘：10px 宽、轨道透明、
@@ -657,7 +700,7 @@ body.drawer #drawer{transform:translateX(0)}
 /* 失焦：标题栏压暗、阴影减一层。三家都有失焦态，我们以前完全没有，
    于是「哪个窗口是当前窗口」只能靠有没有强调色描边去猜。 */
 .win:not(.focused) .win-title{color:var(--t3)}
-.win:not(.focused){box-shadow:rgba(0,0,0,.18) 0 2px 6px,rgba(0,0,0,.22) 0 10px 24px}
+.win:not(.focused){box-shadow:var(--sh-1) 0 2px 6px,var(--sh-2) 0 10px 24px}
 
 .win .rz{position:absolute;z-index:1}
 .win .rz-n{top:0;left:8px;right:8px;height:6px;cursor:ns-resize}
@@ -974,6 +1017,25 @@ function launch(id) {
   closeStartMenu();
 }
 
+/* ══ 主题 ══
+   深色是默认；浅色只是换一套 token（见 [data-theme="light"]）。
+   存在 localStorage，刷新后保持。 */
+function applyTheme(t) {
+  const v = t === "light" ? "light" : "dark";
+  if (v === "light") document.documentElement.dataset.theme = "light";
+  else delete document.documentElement.dataset.theme;
+  try { localStorage.setItem("rvsim.theme", v); } catch (_) {}
+  const seg = document.getElementById("setTheme");
+  if (seg) for (const b of seg.children) b.classList.toggle("on", b.dataset.t === v);
+  /* 换主题后壁纸遮罩、终端字号都可能要重算 */
+  if (window.rv && window.rv.ready) requestAnimationFrame(() => termLayout(winEls[0] && winEls[0].body, true));
+}
+function initTheme() {
+  let t = "dark";
+  try { t = localStorage.getItem("rvsim.theme") || "dark"; } catch (_) {}
+  applyTheme(t);
+}
+
 /* ══ 宿主侧应用窗口（Settings / Guide / About）══ */
 const hostWins = new Map();   /* id -> { el, app, x, y, w, h, min } */
 let hostZ = 30;
@@ -1089,6 +1151,9 @@ function hostWinBody(id) {
       + '<div class="set-row"><div><div class="lb">壁纸</div><div class="sb">桌面背景样式</div></div>'
       + '<div class="seg" id="setWall"><button data-w="0" class="on">极光</button>'
       + '<button data-w="1">深空</button><button data-w="2">素黑</button></div></div>'
+      + '<div class="set-row"><div><div class="lb">外观</div><div class="sb">深色 / 浅色，立即生效</div></div>'
+      + '<div class="seg" id="setTheme"><button data-t="dark" class="on">深色</button>'
+      + '<button data-t="light">浅色</button></div></div>'
       + '<div class="set-row"><div><div class="lb">桌面图标</div><div class="sb">显示应用快捷方式</div></div>'
       + '<div class="sw on" id="setIcons"></div></div>'
       + '<div class="set-row"><div><div class="lb">终端字号</div><div class="sb">自动适配窗口</div></div>'
@@ -1143,6 +1208,16 @@ function hostWinBody(id) {
 
 function bindSettings(root) {
   const wall = $("setWall"), ic = $("setIcons"), fs = $("setFs"), boot = $("setBoot");
+  const th = $("setTheme");
+  if (th) {
+    let cur = "dark";
+    try { cur = localStorage.getItem("rvsim.theme") || "dark"; } catch (e) {}
+    th.querySelectorAll("button").forEach((x) => x.classList.toggle("on", x.dataset.t === cur));
+    th.onclick = (e) => {
+      const b = e.target.closest("button"); if (!b) return;
+      applyTheme(b.dataset.t);
+    };
+  }
   if (boot) {
     try { if (localStorage.getItem("rvsim.skipBoot") === "1") boot.classList.remove("on"); } catch (e) {}
   }
@@ -1934,6 +2009,8 @@ function termLayout(host, force, wPx, hPx) {
   host.style.setProperty("--lh", lh.toFixed(2) + "px");
   termCharW = fs * ratio;
   termLineH = lh;
+  termMetrics.h = 0;      /* 尺寸变了，缓存作废 */
+  termMetrics.ch = 0;
   termPlaceCursor();
 }
 
@@ -2024,6 +2101,16 @@ function termLineHtml(txt) {
 /* ══ 终端网格渲染 ══ */
 let termEls = null, termRows = 0, termCols = 0, termSeq = [];
 let termHistCount = 0;      /* 当前渲染了多少历史行 */
+/* scrollHeight / clientHeight 会强制同步布局。历史行一多（压测到 200 行时
+   DOM 有 1400 个节点），每帧读一次就让帧率从 126 掉到 103。
+   这两个值只在「历史行追加」和「窗口尺寸变化」时才会变，缓存起来。 */
+let termMetrics = { h: 0, ch: 0 };
+/* DOM 里最多保留这么多历史行。实测 584 行（3817 个节点）时帧率 117fps、
+   清空后回到 136fps——节点数是瓶颈。内核 scrollback 仍是 2000 行，
+   这里只限制「同时挂在 DOM 里的行数」，超出就丢最老的。
+   800 行 ≈ 4400 个节点，帧率还能保持在 110 以上。 */
+const HIST_DOM_MAX = 800;
+let termHistBase = 0;      /* DOM 里第一行对应 ring 的偏移 */
 let termHistSynced = -1;    /* 上次读到的 scroll_count */
 let termCharW = 8.4, termLineH = 20;
 let termCurX = 0, termCurY = 0, termCurVis = 0;
@@ -2042,13 +2129,14 @@ function termRender() {
   if (!host || !cols || !rows) return;
 
   /* 用户是不是贴在底部。回看历史时不能强行拉回去。 */
-  const atBottom = host.scrollTop + host.clientHeight >= host.scrollHeight - 8;
+  const atBottom = host.scrollTop + (termMetrics.ch || host.clientHeight)
+    >= (termMetrics.h || host.scrollHeight) - 8;
 
   if (!termEls || termRows !== rows || termCols !== cols) {
     termRows = rows; termCols = cols;
     termSeq = new Array(rows).fill(-1);
     host.querySelectorAll(".term-line").forEach((n) => n.remove());
-    termHistCount = 0; termHistSynced = -1;
+    termHistCount = 0; termHistSynced = -1; termHistBase = 0;
     termEls = [];
     for (let y = 0; y < rows; y++) {
       const d = document.createElement("div");
@@ -2073,16 +2161,17 @@ function termRender() {
 
   if (scrollAddr && sLines && sCount !== termHistSynced) {
     const offS = guestOff(scrollAddr);
-    if (sCount < termHistCount) {
+    if (sCount < termHistBase + termHistCount) {
       host.querySelectorAll(".term-line.hist").forEach((n) => n.remove());
       termHistCount = 0;
+      termHistBase = 0;
     }
     const want = Math.min(sCount, sLines);
-    const add = want - termHistCount;
+    const add = want - (termHistBase + termHistCount);
     /* 索引基准必须在循环外固定：termHistCount 在循环里会自增，
        如果拿它参与算 ring，每行都会多跳一格（读成 ring[0]、ring[2]、ring[4]…），
        越界的地方渲染成空行——表现就是「一半历史行是空白、内容错位」。 */
-    const histBase = termHistCount;
+    const histBase = termHistBase + termHistCount;
     for (let i = 0; i < add; i++) {
       const ring = ((sHead - want + histBase + i) % sLines + sLines) % sLines;
       const base = ring * cols;
@@ -2096,6 +2185,16 @@ function termRender() {
       termHistCount++;
     }
     termHistSynced = sCount;
+    /* 超出上限就丢最老的，并同步偏移 */
+    if (termHistCount > HIST_DOM_MAX) {
+      const drop = termHistCount - HIST_DOM_MAX;
+      const els = host.querySelectorAll(".term-line.hist");
+      for (let i = 0; i < drop && i < els.length; i++) els[i].remove();
+      termHistCount -= drop;
+      termHistBase += drop;
+    }
+    termMetrics.h = host.scrollHeight;
+    termMetrics.ch = host.clientHeight;
   }
 
   const offC = guestOff(cellsAddr), offR = guestOff(rowseqAddr);
@@ -2432,6 +2531,15 @@ function buildEditor(id, path, text) {
   ta.value = text;
   const st = body.querySelector(".ed-st");
   const save = () => {
+    /* 保存前先确认文件还在。以前不管三七二十一直接写，文件被删了
+       也会被静默重建——用户以为自己是在改一个已经不存在的东西。 */
+    const names = window.rv.state.files.map((f) => f.name);
+    if (names.indexOf(path) < 0) {
+      if (!window.confirm("「" + path + "」已经被删除了。\n\n要重新创建它吗？")) {
+        st.textContent = "文件已删除，未保存";
+        return;
+      }
+    }
     window.rv.fsWrite(path, ta.value).then((rc) => {
       st.textContent = rc === 0
         ? "已保存 " + _enc.encode(ta.value).length + " 字节"
@@ -3640,6 +3748,7 @@ function startRvsim() {
        宿主和自动化都能直接读到当前用的是哪一档。 */
     try { applyWallpaper(+(localStorage.getItem("rvsim.wall") || 0), false); }
     catch (e) { applyWallpaper(0, false); }
+    initTheme();
     screenPointerBind();
     setProgress(8, "模拟器就绪，加载镜像…");
     bootUrl("images/kernel.elf", "mini-kernel");
