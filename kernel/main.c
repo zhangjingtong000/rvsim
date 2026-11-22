@@ -30,7 +30,7 @@ extern void enter_u_mode(u32 entry, u32 stack, u32 pid);
 void shell_loop(void);   /* shell 主循环：开机与进程全退出后共用 */
 /* 中断里只标 EXIT，回收放到 shell 主循环（proc_reap 会遍历页表 + 刷前端，
    在中断上下文里做会把内核拖死）。定义在下面，trap 要先看到声明。 */
-extern int g_reap_pending;
+extern u32 g_reap_mask;   /* bit i = 进程 i 待回收 */
 extern const u8 user_prog_start[];
 extern const u8 user_prog_end[];
 extern const u8 fork_prog_start[];
@@ -591,13 +591,13 @@ u32 s_trap_handler(u32 cause, u32 epc, u32 tval, u32 *regs)
                 host_cmd_finish(0);
                 if (nx) {
                     if (nx->pgtbl) proc_switch_satp(nx->pgtbl);
-                    g_reap_pending = (int)dead;   /* 交给 shell 主循环回收 */
+                    g_reap_mask |= (1u << (u32)dead);   /* 交给 shell 主循环回收 */
                     for (int i = 0; i < 32; i++) regs[i] = nx->regs[i];
                     proc_set_timer(20000);
                     return nx->pc;
                 }
                 proc_switch_satp(g_kroot);
-                g_reap_pending = (int)dead;   /* 交给 shell 主循环回收 */
+                g_reap_mask |= (1u << (u32)dead);   /* 交给 shell 主循环回收 */
                 /* 必须先回包再进 shell_loop：shell_loop 不返回，
                    漏掉这一句宿主会一直等到 4 秒超时，报「内核没有响应」——
                    明明终止已经成功了。 */
@@ -609,7 +609,7 @@ u32 s_trap_handler(u32 cause, u32 epc, u32 tval, u32 *regs)
                    proc.c 顶部的注释早就写明了这一点，这里却一直是同步回收。 */
                 if (kp < NPROC && procs[kp].state != PROC_EXIT) {
                     procs[kp].state = PROC_EXIT;
-                    g_reap_pending = (int)kp;
+                    g_reap_mask |= (1u << (u32)kp);
                     host_cmd_finish(0);
                 } else {
                     host_cmd_finish(1);
@@ -1494,7 +1494,7 @@ int g_resume_flag = 0;                  /* shell 主循环看到就切进用户�
 /* 中断里只把进程标成 EXIT，真正的回收放到 shell 主循环：
    proc_reap 会遍历页表、调 front_sync 和 panel_sync_procs，
    这些在中断上下文里做，一旦哪一步慢了或重入，整个内核就不响应了。 */
-int g_reap_pending = -1;
+u32 g_reap_mask = 0;
 
 static void hcmd_name(const char *src, char *out, int cap)
 {
@@ -2191,6 +2191,16 @@ void shell_loop(void)
     extern void shell_input(char);
     extern int g_run_flag, g_fork_flag, g_badptr_flag;
 
+    /* 必须先切回内核页表。
+       进入 shell_loop 的路径有三条：开机、所有进程 exit、中断里 kill 当前进程。
+       后两条都是从用户态过来的，satp 还指着那个进程的页表——而 0x80400000
+       在那个页表里映射的是进程自己的代码副本，不是模板。shell_start 里
+       调 krestart -> proc_setup_image 从 0x80400000 memcpy 模板时，
+       拷到的是「上一轮的进程代码」，甚至可能是已经释放的页。
+       表现就是 suspend/resume 之后进程跑到镜像末尾的 ecall 不退出，
+       继续执行零页，满屏 [S-trap] cause=2（非法指令）。 */
+    proc_switch_satp(g_kroot);
+
     /* shell 不是进程，不该被时间片打断：一旦 s_trap_handler 把 PC
        切到用户进程就会指令缺页。停掉定时器，进用户态前再恢复。 */
     proc_set_timer(0x7FFFFFF0u);
@@ -2214,11 +2224,18 @@ void shell_loop(void)
            每轮只做「读输入 -> 处理窗口命令 -> 发布数据」三件事。 */
         /* 中断里标成 EXIT 的进程在这里回收：proc_reap 要遍历页表、
            刷前端状态，放在中断上下文里做会把内核拖死。 */
-        if (g_reap_pending >= 0) {
+        /* 回收被标记的进程。
+           原来只有一个 g_reap_pending 槽——多个进程同时死时（比如宿主
+           连续 kill 两个跑飞进程），后一个覆盖前一个，前面的永远不回收，
+           进程表里一直挂着 EXIT 行。改成位图，可以同时标记多个。
+           注意：不能遍历「所有 EXIT 进程」来回收——快照恢复出来的进程
+           本来就是 EXIT 状态（那是历史状态，不是刚死的），按状态扫会把
+           它们全清掉，restore 之后进程表就空了。只认显式标记。 */
+        if (g_reap_mask) {
             extern void proc_reap(u32);
-            int rp = g_reap_pending;
-            g_reap_pending = -1;
-            proc_reap((u32)rp);
+            for (u32 i = 0; i < NPROC; i++)
+                if (g_reap_mask & (1u << i)) proc_reap(i);
+            g_reap_mask = 0;
         }
         desktop_mouse();
         win_cmd_poll();

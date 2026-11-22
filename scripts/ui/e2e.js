@@ -1452,15 +1452,31 @@ test("13.26", "跑飞的用户程序能被单独终止", async (p) => {
   ok(live.length >= 2, "跑飞程序没起来：" + JSON.stringify(live));
   ok(live.some((x) => x.state === "RUN"),
      "进程表里看不到 RUN——Monitor 就没法判断该终止哪一行：" + JSON.stringify(live));
-  for (let i = 0; i < 6; i++) {
-    const left = await p.evaluate(() => window.rv.state.procs);
-    if (!left.length) break;
-    eq(await p.evaluate((id) => window.rv.killProc(id), left[0].pid), 0,
-       "终止 " + left[0].pid + " 失败：" + JSON.stringify(left));
-    await sleep(500);
+  /* 只 kill 还活着的进程。pid 0 可能已经因为跑飞被定时器中断标成 EXIT
+     （它确实「已经被终止了」），这时再 kill 会返回 1——但测试把它当成失败，
+     后面的清理就全不执行，spin.elf 的进程继续占 CPU，14.x 整组跟着挂。
+     这是整条污染链的源头。 */
+  try {
+    for (let i = 0; i < 6; i++) {
+      const left = await p.evaluate(() => window.rv.state.procs.filter((x) => x.state !== "EXIT"));
+      if (!left.length) break;
+      eq(await p.evaluate((id) => window.rv.killProc(id), left[0].pid), 0,
+         "终止 " + left[0].pid + " 失败：" + JSON.stringify(left));
+      await sleep(500);
+    }
+    await sleep(900);
+    eq(await p.evaluate(() => window.rv.state.procs), [], "还有进程没被终止");
+  } finally {
+    /* 不管上面断言过没过，都必须把 CPU 抢回来，否则后面的用例全废。 */
+    await p.evaluate(() => {
+      for (const x of window.rv.state.procs) {
+        if (x.state !== "EXIT") window.rv.killProc(x.pid);
+      }
+    }).catch(() => {});
+    await sleep(600);
+    await shellCmd(p, "reset").catch(() => {});
+    await sleep(800);
   }
-  await sleep(900);
-  eq(await p.evaluate(() => window.rv.state.procs), [], "还有进程没被终止");
   await shellCmd(p, "whoami");
   await sleep(1000);
   ok((await p.evaluate(() => window.rv.state.term.join("|"))).indexOf('"user"') >= 0,
