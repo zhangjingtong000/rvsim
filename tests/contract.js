@@ -71,7 +71,15 @@ function record(name, ok, detail) {
   const ms = mOut.indexOf('{"manifest"'), me = mOut.lastIndexOf("]}");
   let caps = [];
   try { caps = JSON.parse(mOut.slice(ms, me + 2)).list || []; } catch (e) {}
-  record("manifest 可解析", caps.length > 0, caps.length + " 项");
+  /* 只断言「> 0」等于没断言：manifest 只剩 1 项也能过。
+     要求条数够、而且关键能力都在。 */
+  const REQUIRED_CAPS = ["manifest", "status", "ps", "run", "assert", "plan", "apply",
+                         "snapshot", "restore", "log", "ls", "cat", "write"];
+  const capNames = new Set(caps.map((c) => c.cap));
+  const missingCaps = REQUIRED_CAPS.filter((n) => !capNames.has(n));
+  record("manifest 可解析且关键能力齐全",
+    caps.length >= 30 && missingCaps.length === 0,
+    caps.length + " 项" + (missingCaps.length ? "，缺 " + missingCaps.join(",") : ""));
 
   // ── T2: 每个 cap 至少被 manifest 声明，且都有 usage/desc ──
   const bad = caps.filter(c => !c.usage || !c.desc);

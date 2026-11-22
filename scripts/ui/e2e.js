@@ -1792,7 +1792,15 @@ test("15.3", "主题选择会持久化", async (p) => {
     console.log("\n失败清单：");
     for (const f of fails) console.log("  " + f.id + "  " + f.name);
   }
-  if (pageErrs.length) console.log("页面报错:", [...new Set(pageErrs)].slice(0, 5));
+  /* 页面 JS 抛异常必须算失败。原来只 console.log —— 即使页面白屏，
+     只要 DOM 断言碰巧还过，就报全绿。ResizeObserver 的循环警告是
+     浏览器自己的噪音，排除掉。 */
+  const realErrs = [...new Set(pageErrs)].filter(
+    (m) => !/ResizeObserver loop/i.test(m));
+  if (realErrs.length) {
+    console.log("页面报错:", realErrs.slice(0, 5));
+    fails.push("页面 JS 抛异常 " + realErrs.length + " 次：" + realErrs.slice(0, 3).join(" | "));
+  }
   await browser.close();
   process.exit(fails.length ? 1 : 0);
 })();
