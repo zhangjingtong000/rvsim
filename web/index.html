@@ -3403,6 +3403,38 @@ function swApply() {
 }
 
 /* ══ 输入 ══ */
+
+/* ── 命令历史 ──
+   <input> 会过滤 \r，所以「回车」不会以 input 事件的形式出现：
+   真实键盘走 keydown，程序化调用走 rv.type()。两处都要记。
+   读输入行用终端网格（termEls），它和内核的字符网格是同步的。
+   这些定义必须在顶层——focusTerm 内部的 const ime 是另一个作用域。 */
+const termHistory = [];
+let termHistIdx = -1, termHistDraft = "";
+
+function termInputLine() {
+  for (let i = termEls.length - 1; i >= 0; i--) {
+    const m = termEls[i].textContent.match(/^rvsh> ?(.*)$/);
+    if (m) return m[1];
+  }
+  return null;
+}
+
+function termPushHistory() {
+  const line = termInputLine();
+  if (line && line !== termHistory[termHistory.length - 1]) {
+    termHistory.push(line);
+    if (termHistory.length > 100) termHistory.shift();
+  }
+  termHistIdx = -1;
+}
+
+function termReplaceInput(text) {
+  const cur = termInputLine();
+  if (cur) for (let i = 0; i < cur.length; i++) window.rv.type("\u007f");
+  for (const ch of text) window.rv.type(ch);
+}
+
 const ime = $("ime");
 document.addEventListener("input", (e) => {
   if (!loaded || !M) return;
@@ -3472,6 +3504,26 @@ document.addEventListener("keydown", (e) => {
 
   /* Alt+方向：Win11 的 Win+方向 被浏览器占用，这里换成 Alt。
      ←/→ 半屏，↑ 最大化，↓ 还原到默认尺寸。 */
+  /* ↑/↓ 翻命令历史。只在终端聚焦、且没按 Alt 时生效
+     （Alt+方向 是窗口布局，下面那段管）。 */
+  if (!e.altKey && !e.ctrlKey && !e.metaKey && (e.key === "ArrowUp" || e.key === "ArrowDown")) {
+    const inTerm = document.activeElement === ime || (e.target && e.target.id === "ime");
+    if (inTerm && termHistory.length) {
+      e.preventDefault();
+      if (e.key === "ArrowUp") {
+        if (termHistIdx < 0) { termHistDraft = termInputLine() || ""; termHistIdx = termHistory.length - 1; }
+        else if (termHistIdx > 0) termHistIdx--;
+        termReplaceInput(termHistory[termHistIdx]);
+      } else {
+        if (termHistIdx < 0) return;
+        termHistIdx++;
+        if (termHistIdx >= termHistory.length) { termHistIdx = -1; termReplaceInput(termHistDraft); }
+        else termReplaceInput(termHistory[termHistIdx]);
+      }
+      return;
+    }
+  }
+
   if (e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey) {
     const map = { ArrowLeft: "left", ArrowRight: "right", ArrowUp: "top", ArrowDown: "restore" };
     const z = map[e.key];
@@ -3729,7 +3781,15 @@ window.rv = {
       rate: curRate, cycles: M._rv_cycles() >>> 0, pc: hx(M._rv_pc()),
     };
   },
-  type(s) { if (!M || !loaded) return false; for (const b of _enc.encode(s)) M._rv_uart_write(b); if (!ticking) startTicking(); return true; },
+  type(s) {
+    if (!M || !loaded) return false;
+    /* 回车：先把这一行记进历史，再交给内核。此刻终端网格里
+       最后一行仍是 "rvsh> 命令"，正好读得到。 */
+    if (s === "\r" || s === "\n") termPushHistory();
+    for (const b of _enc.encode(s)) M._rv_uart_write(b);
+    if (!ticking) startTicking();
+    return true;
+  },
   cmd(s) { if (!M || !loaded) return false; sendCmd(s); return true; },
   click(x, y) {
     if (!M) return false;
