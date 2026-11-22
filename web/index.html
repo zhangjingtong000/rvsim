@@ -2074,6 +2074,9 @@ function termLayout(host, force, wPx, hPx) {
   lh = Math.max(fs * 1.15, Math.min(fs * 1.55, lh));
   const key = fs.toFixed(2) + "|" + lh.toFixed(2);
   if (!force && host.dataset.fsKey === key) return;
+  /* 改字号/行高之前先记住「是否贴在底部」。窗口最大化、拖大、切主题
+     都会走到这里，不记住的话内容会停在旧位置，最新输出看不见。 */
+  const wasAtBottom = host.scrollTop + host.clientHeight >= host.scrollHeight - 12;
   host.dataset.fsKey = key;
   host.style.fontSize = fs.toFixed(2) + "px";
   host.style.lineHeight = lh.toFixed(2) + "px";
@@ -2084,6 +2087,7 @@ function termLayout(host, force, wPx, hPx) {
   termMetrics.h = 0;      /* 尺寸变了，缓存作废 */
   termMetrics.ch = 0;
   termPlaceCursor();
+  if (wasAtBottom) host.scrollTop = host.scrollHeight;
 }
 
 /* 按内核给的属性字节分段上色。
