@@ -108,11 +108,15 @@ static bool mem_write32(cpu_t *c, u32 va, u32 v)
         if (!trans(c, va, ACC_STORE, &pa)) return false;
         return store_u32_phys(c, pa, v);
     }
-    for (int i = 0; i < 4; i++) {
-        u32 pa;
-        if (!trans(c, va + i, ACC_STORE, &pa)) return false;
-        if (!store_u8_phys(c, pa, (v >> (8 * i)) & 0xFF)) return false;
-    }
+    /* 先把 4 个字节的翻译全部做完，再统一写。
+       原来的循环是「翻译一个写一个」：第 1 个字节写进去了，第 2 个字节
+       翻译失败就直接 return false——此时内存里已经是半个字，
+       而 RISC-V 规定非对齐 store 要么整体生效要么整体不生效。 */
+    u32 pa[4];
+    for (int i = 0; i < 4; i++)
+        if (!trans(c, va + i, ACC_STORE, &pa[i])) return false;
+    for (int i = 0; i < 4; i++)
+        if (!store_u8_phys(c, pa[i], (v >> (8 * i)) & 0xFF)) return false;
     return true;
 }
 
@@ -123,9 +127,12 @@ static bool mem_write16(cpu_t *c, u32 va, u32 v)
         if (!trans(c, va, ACC_STORE, &pa)) return false;
         return store_u16_phys(c, pa, v);
     }
-    u32 pa;
-    if (!trans(c, va, ACC_STORE, &pa) || !store_u8_phys(c, pa, v & 0xFF)) return false;
-    if (!trans(c, va + 1, ACC_STORE, &pa) || !store_u8_phys(c, pa, (v >> 8) & 0xFF)) return false;
+    /* 同上：两半都要先翻译成功才落笔。 */
+    u32 pa0, pa1;
+    if (!trans(c, va, ACC_STORE, &pa0)) return false;
+    if (!trans(c, va + 1, ACC_STORE, &pa1)) return false;
+    if (!store_u8_phys(c, pa0, v & 0xFF)) return false;
+    if (!store_u8_phys(c, pa1, (v >> 8) & 0xFF)) return false;
     return true;
 }
 
