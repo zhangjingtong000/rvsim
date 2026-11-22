@@ -2347,7 +2347,14 @@ function filesToast(msg) {
 /* 窗口内的小输入框：不用 window.prompt（浅色系统弹窗在深色桌面上很突兀） */
 function filesAsk(title, value) {
   return new Promise((resolve) => {
-    const body = (winEls[2] && winEls[2].body) || $("os");
+    /* 对话框优先挂在文件窗口里（贴着文件列表），但窗口关掉之后
+       winEls[2].body 是 detached 节点——建在里面等于建在虚空，
+       桌面右键「新建文本文件」会静默失效。这里检查可见性，不可见就挂到桌面。 */
+    const fw = winEls[2];
+    const fwVisible = fw && fw.el && fw.el.isConnected
+      && fw.el.style.display !== "none"
+      && fw.el.getBoundingClientRect().width > 0;
+    const body = fwVisible ? fw.body : $("os");
     if (!body) return resolve(null);
     const old = body.querySelector(".fdlg");
     if (old) old.remove();
@@ -2522,11 +2529,13 @@ function bindFilesBar(fs) {
     }).catch((e) => filesToast("新建文件夹失败：" + e.message));
       });
     } else if (act === "rename") {
+      /* 没选中时只提示，不弹输入框——弹一个空输入框让人填，
+         用户会以为「填个名字就能重命名谁」，但根本没有目标。 */
       if (selName) filesRename(selName);
-      else filesAsk("先点一行选中，再重命名", "");
+      else filesToast("先点一行选中，再重命名");
     } else if (act === "del") {
       if (selName) filesDelete(selName);
-      else filesAsk("先点一行选中，再删除", "");
+      else filesToast("先点一行选中，再删除");
     } else if (act === "import") {
       importProgram();
     }
