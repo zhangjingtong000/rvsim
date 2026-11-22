@@ -307,7 +307,10 @@ static void cmd_restore(const char *line)
     uart_puts("{\"restore\":");
     uart_dec(id);
     uart_puts(",\"ok\":true,\"prog\":\"");
-    uart_puts(snap_prog((u32)id));
+    /* 必须显式声明：隐式声明按 int 处理，指针被截断成 32 位再传进
+       uart_puts，会去读一个非法地址。 */
+    { extern const char *snap_prog(u32);
+      uart_puts(snap_prog((u32)id)); }
     uart_puts("\"}\n");
 }
 
@@ -324,8 +327,10 @@ void shell_input(char ch)
         g_line[g_len] = 0;
         if (!was_quiet) uart_putc('\n');
 
-        /* 解析 "cmd > file"：把 > 之后的部分当文件名，命令部分留给分派 */
-        {
+        /* 解析 "cmd > file"：把 > 之后的部分当文件名，命令部分留给分派。
+           echo 例外：它的参数里出现 > 是正常内容，不该被当重定向
+           （`echo 你好 <>&` 原来会输出 `你好 <`，然后把 `&` 当文件名）。 */
+        if (!starts_with(g_line, "echo ")) {
             char *gt = 0;
             for (char *p = g_line; *p; p++) if (*p == '>') { gt = p; break; }
             if (gt) {
