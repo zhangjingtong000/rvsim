@@ -230,6 +230,12 @@ make dts                      # 构建 dts/minimal.dtb
 
 ## 已知限制
 
+**没有 W^X（可写不可执行 / 可执行不可写）**。内核镜像链接出来是一个 RWX LOAD 段
+（构建时 ld 会警告 `has a LOAD segment with RWX permissions`），用户代码页也是
+`R|W|X|U`。真实系统会做页级分离，这里没做——这是明确的设计边界，不是遗漏。
+演示时如果被问到「为什么不做 W^X」，答案就是「没做，代价是攻击面变大，
+收益在单机演示里不明显」。
+
 1. 不做 C/F/D/B/V 扩展
 2. 不做 JIT（32 MIPS 解释执行）
 3. 单 hart

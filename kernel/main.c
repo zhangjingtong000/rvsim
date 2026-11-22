@@ -42,6 +42,19 @@ extern const u8 badptr_prog_end[];
 
 u32 *g_kroot;   /* 供 vm.c 的按需分页使用 */
 
+/* ── 宿主协议地址（必须和 web/index.html 里的常量逐字一致）──
+   0x83FFE000  win_info_t[3]   窗口表（11 个 u32 × 3）
+   0x83FFE200  窗口命令字
+   0x83FFE210  win_pos_t       窗口位置
+   0x83FE0000  term_sync_t     终端网格（17 个 u32，新字段只能追加在末尾）
+   0x83FD0000  proc_row_t[5]   进程表
+   0x83FD1000  file_row_t[16]  文件表
+   0x83FD2000  sys_sync_t      系统状态
+   0x83FFC000  host_cmd_t      宿主下行命令
+   0x83FFD000  数据页（文件内容）
+   两侧各写一遍，靠这段注释和 docs/ui-spec.md 第 0 章维持同步。
+   改任何一侧都要同时改另一侧，否则宿主会读到错位的数据。 */
+
 /* 当前装载的程序的入口与 PT_LOAD 段。
    此前 pc 直接写死 g_user_base，而 .data/.bss 在第二页没人映射——
    进程一访问就缺页拿到零页，数据全丢。 */
