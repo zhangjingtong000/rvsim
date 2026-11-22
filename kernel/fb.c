@@ -154,6 +154,56 @@ static void term_newline(void)
     }
 }
 
+/* 软换行：行满时不要在词中间硬断，把行末最后一个「词」搬到下一行。
+   终端是字符网格，没有「词」的概念，所以这里用空格做近似：
+   从行尾往回最多 12 格找最近的空格，找到就把空格之后的内容搬走。
+
+   只搬 <= 11 个字符的尾巴（再长就让它硬断），这样对表格和 ASCII art
+   基本无影响——那些行通常没有合适的空格断点，或者断点离行尾很远。
+   返回 1 表示做了软换行（调用方就不用再 term_newline）。 */
+static int term_break_char(u32 c)
+{
+    /* 空格之外，JSON/表格里常见的分隔符也算断点。
+       只看空格的话，manifest 那种 `{"cap":"help","usage":...}`
+       整行没有空格，软换行永远不触发。 */
+    return c == ' ' || c == ',' || c == ':' || c == '{' || c == '}'
+        || c == '[' || c == ']' || c == '|' || c == '/' || c == ';';
+}
+
+static int term_soft_wrap(void)
+{
+    if (g_term_cx < TERM_COLS) return 0;
+    int sp = -1;
+    for (int i = TERM_COLS - 1; i >= TERM_COLS - 16 && i > 0; i--) {
+        if (term_break_char(g_term[g_term_cy][i])) { sp = i; break; }
+    }
+    if (sp <= 0) return 0;
+    /* 尾巴长度 = COLS - 1 - sp；超过 11 就不值得搬 */
+    int n = TERM_COLS - 1 - sp;
+    if (n <= 0 || n > 15) return 0;
+
+    u32 tmp[16];
+    u8  tmpa[16];
+    for (int i = 0; i < n; i++) {
+        tmp[i]  = g_term[g_term_cy][sp + 1 + i];
+        tmpa[i] = g_term_attr[g_term_cy][sp + 1 + i];
+        g_term[g_term_cy][sp + 1 + i] = ' ';
+        g_term_attr[g_term_cy][sp + 1 + i] = 0;
+    }
+    g_term_dirty[g_term_cy] = 1;
+    g_row_seq[g_term_cy]++;
+    term_newline();
+    g_wrap[g_term_cy] = 1;
+    for (int i = 0; i < n && g_term_cx < TERM_COLS; i++) {
+        g_term[g_term_cy][g_term_cx] = tmp[i];
+        g_term_attr[g_term_cy][g_term_cx] = tmpa[i];
+        g_term_cx++;
+    }
+    g_term_dirty[g_term_cy] = 1;
+    g_row_seq[g_term_cy]++;
+    return 1;
+}
+
 /* 把一个字符放进网格；返回 1 表示网格有变化 */
 int term_grid_putc(char c)
 {
@@ -177,6 +227,7 @@ int term_grid_putc(char c)
         /* 拿到完整码点：能画就画，画不了就丢 */
         if (utf8_cp >= 0xA0) {                  /* 非 ASCII 可打印字符 */
             int w = is_wide(utf8_cp) ? 2 : 1;
+            if (g_term_cx + w > TERM_COLS && !term_soft_wrap()) { term_newline(); g_wrap[g_term_cy] = 1; }
             if (g_term_cx + w > TERM_COLS) { term_newline(); g_wrap[g_term_cy] = 1; }
             g_term[g_term_cy][g_term_cx] = utf8_cp;
             g_term_attr[g_term_cy][g_term_cx] = g_attr_cur;
@@ -198,6 +249,7 @@ int term_grid_putc(char c)
     if (b < 32) return 0;
     if (b > 126) return 0;
 
+    if (g_term_cx >= TERM_COLS && !term_soft_wrap()) { term_newline(); g_wrap[g_term_cy] = 1; }
     if (g_term_cx >= TERM_COLS) { term_newline(); g_wrap[g_term_cy] = 1; }
     g_term_attr[g_term_cy][g_term_cx] = g_attr_cur;
     g_term[g_term_cy][g_term_cx++] = (u32)b;
