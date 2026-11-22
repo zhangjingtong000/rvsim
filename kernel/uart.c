@@ -113,8 +113,17 @@ int uart_at_prompt(u32 mark)
     static const char *pat = "rvsh> ";
     if (mark > g_uart_tail_n) mark = g_uart_tail_n;
     if (mark < 6) return 0;
-    for (u32 i = 0; i < 6; i++)
-        if (g_uart_tail[mark - 6 + i] != pat[i]) return 0;
+    /* g_uart_tail 是环形缓冲，而且 mark 的语义是「从开头数第 mark 个字节」
+       （命令开始时的输出长度），不是缓冲末尾。
+       有效数据起点 = (head + CAP - n) % CAP，第 mark 个字节在
+       (head + CAP - (n - mark)) % CAP。原来直接按下标 0 算，
+       缓冲一绕回（输出超过 4KB）就比错位置，at_prompt 永远 false。 */
+    u32 n = g_uart_tail_n;
+    u32 pos = (g_uart_head + UART_TAIL_CAP - (n - mark)) % UART_TAIL_CAP;
+    for (u32 i = 0; i < 6; i++) {
+        u32 idx = (pos + UART_TAIL_CAP - 6 + i) % UART_TAIL_CAP;
+        if (g_uart_tail[idx] != pat[i]) return 0;
+    }
     return 1;
 }
 

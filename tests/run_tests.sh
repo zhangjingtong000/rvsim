@@ -98,4 +98,6 @@ else
   echo "  跳过：未安装 node"
 fi
 
-exit $failed
+# 不能直接 exit $failed：退出码只取低 8 位，失败数超过 255 会回绕成 0。
+if [ "$failed" -gt 0 ]; then exit 1; fi
+exit 0

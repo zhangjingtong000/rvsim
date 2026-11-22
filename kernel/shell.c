@@ -122,8 +122,15 @@ static void cmd_assert(const char *line)
 
     int want = 0, neg = 0;
     if (*p == '-') { neg = 1; p++; }
+    const char *digits = p;
     while (*p >= '0' && *p <= '9') { want = want * 10 + (*p - '0'); p++; }
     if (neg) want = -want;
+    /* 解析后还有残留字符（比如 assert at_prompt=true 里的 "true"）就报错，
+       不能静默当成 0——那样「断言通过」的含义和字面完全相反。 */
+    if (p == digits || (*p && *p != ' ' && *p != '\n' && *p != '\r')) {
+        uart_puts("{\"ok\":false,\"why\":\"值必须是整数\",\"hint\":\"at_prompt 用 1/0 表示\"}\n");
+        return;
+    }
 
     int got;
     {
@@ -348,6 +355,10 @@ extern int g_term_silent;
             }
             else if (streq(g_line, "run")) {
                 extern int g_run_flag, g_fork_flag;
+                extern char g_exec_name[32];
+                /* 清掉上次的程序名，回到默认的 hello.elf。
+                   不清的话 run fork 之后再裸 run 会重跑 fork。 */
+                g_exec_name[0] = 0;
                 g_fork_flag = 0;
                 g_run_flag = 1;
             }
@@ -365,11 +376,6 @@ extern int g_term_silent;
                 } else {
                     uart_puts("{\"ok\":false,\"why\":\"用法: run <文件名>\"}\n");
                 }
-            }
-            else if (streq(g_line, "run fork")) {
-                extern int g_run_flag, g_fork_flag;
-                g_fork_flag = 1;
-                g_run_flag = 1;
             }
             else if (streq(g_line, "reset")) {
                 extern int krestart(void);

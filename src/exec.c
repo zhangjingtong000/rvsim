@@ -277,7 +277,7 @@ bool cpu_step(cpu_t *c)
     /* 每条指令（含 trap 路径）统一计数一次，防止某条路径漏加导致 cycles 不增 */
     c->cycles++;
     /* docs/02:352：mcountinhibit.CY(bit0)=1 时 mcycle 停止自增 */
-    if (!(c->csr.mcountinhibit & 0x1)) c->csr.mcycle = c->cycles;
+    if (!(c->csr.mcountinhibit & 0x1)) c->csr.mcycle = c->mcycle_base + c->cycles;
     if (!(c->csr.mcountinhibit & 0x4)) c->csr.minstret++;
 
     /* 中断注入（在指令之间） */
@@ -408,15 +408,25 @@ bool cpu_step(cpu_t *c)
             }
         } else {
             switch (funct3) {
-            case 0: if (funct7 & 0x20) wr(c, rd, a - b); else wr(c, rd, a + b); break;
+            case 0:
+                /* 规范要求 funct7 ∈ {0x00, 0x20}，其它都是非法编码。
+                   原来只看 bit5，funct7=0x40/0x60 会被当成 ADD/SUB 执行。 */
+                if (funct7 != 0 && funct7 != 0x20) {
+                    do_trap(c, CAUSE_ILLEGAL_INSTRUCTION, insn); return true;
+                }
+                if (funct7 == 0x20) wr(c, rd, a - b); else wr(c, rd, a + b);
+                break;
             case 1: if (funct7 != 0) { do_trap(c, CAUSE_ILLEGAL_INSTRUCTION, insn); return true; }
                     wr(c, rd, a << (b & 0x1F)); break;
             case 2: wr(c, rd, ((s32)a < (s32)b) ? 1u : 0u); break;
             case 3: wr(c, rd, (a < b) ? 1u : 0u); break;
             case 4: wr(c, rd, a ^ b); break;
             case 5: {
-                if (funct7 & 0x20) wr(c, rd, (u32)((s32)a >> (b & 0x1F)));
-                else               wr(c, rd, a >> (b & 0x1F));
+                if (funct7 != 0 && funct7 != 0x20) {
+                    do_trap(c, CAUSE_ILLEGAL_INSTRUCTION, insn); return true;
+                }
+                if (funct7 == 0x20) wr(c, rd, (u32)((s32)a >> (b & 0x1F)));
+                else                wr(c, rd, a >> (b & 0x1F));
                 break;
             }
             case 6: wr(c, rd, a | b); break;
@@ -486,10 +496,11 @@ bool cpu_step(cpu_t *c)
                 if (!csr_write_priv(&c->csr, csr_addr, nv)) {
                     do_trap(c, CAUSE_ILLEGAL_INSTRUCTION, insn); return true;
                 }
-                /* mcycle 写入必须同步回 cpu.cycles，否则下一步 c->csr.mcycle = c->cycles
-                   会把刚写入的值覆盖掉（这正是设计文档 §3.1 指出的"双份存储"错误） */
+                /* 写 mcycle 只改基准偏移，不动 cpu.cycles。
+                   原来是 c->cycles = c->csr.mcycle —— 程序一条 csrw mcycle, 0
+                   就能把「已执行条数」清零，--max-cycles 的跑飞保护直接失效。 */
                 if (csr_addr == CSR_MCYCLE || csr_addr == CSR_MCYCLEH)
-                    c->cycles = c->csr.mcycle;
+                    c->mcycle_base = c->csr.mcycle - c->cycles;
             }
             wr(c, rd, old);
         }

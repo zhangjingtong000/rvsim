@@ -2624,7 +2624,9 @@ function panelsRender() {
   if (mon) {
     const base = (ram + (PROC_SYNC_PA - 0x80000000)) >>> 2;
     const rows = [];
-    for (let i = 0; i < 8; i++) {
+    /* 内核的 NPROC 是 5，这里原来按 8 遍历——多读的 3 项是未初始化 RAM，
+       一旦 NPROC 改动或残留数据非零，会渲染出幽灵进程。 */
+    for (let i = 0; i < 5; i++) {
       const b = base + i * 5;
       if (!A[b + 4]) continue;
       const st = ["READY", "RUN", "EXIT", "—", "SUSPEND"][A[b + 1]] || "?";

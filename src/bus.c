@@ -140,7 +140,13 @@ static bool uart_write(u32 off, int len, u32 val)
         g_out_win[7] = ch;
         if (strstr(g_out_win, "login:")) g_login_seen = true;
         if (strstr(g_out_win, "assword:")) g_password_seen = true;
-        if (g_login_seen && (ch == '#')) g_shell_prompt_seen = true;
+        /* 只在「# 空格」这个边界上认提示符，而且只触发一次。
+           原来只要 login 过，之后任何输出里的 '#' 都会触发一次命令注入——
+           cat 一个含 # 的文件就会在用户不知情时执行 uname -a。 */
+        if (g_login_seen && ch == ' ' && g_out_win[6] == '#' && !g_shell_prompt_seen) {
+            g_shell_prompt_seen = true;
+            g_login_seen = false;   /* 一次性：注入完就不再匹配 */
+        }
         /* TX 完成：THR 为空，若 THRI 使能则触发中断让驱动继续写 */
         if (g_uart.ier & 0x02) {
             g_plic.pending |= (1u << PLIC_UART_IRQ);
@@ -389,7 +395,9 @@ static bool disp_write(u32 off, int len, u32 val)
         case 0x30: pl->d_x0 = val; break;
         case 0x34: pl->d_y0 = val; break;
         case 0x38: pl->d_x1 = val; break;
-        case 0x3C: pl->d_x1 = val; pl->d_seq++; break;   /* 写 d_x1 即提交该平面 */
+        /* 0x38 写 d_x1，0x3C 写 d_y1 并提交。原来 0x3C 又写了一次 d_x1，
+           d_y1 永远保持 0——一旦前端开始用 damage rect，只会重绘一条线。 */
+        case 0x3C: pl->d_y1 = val; pl->d_seq++; break;   /* 写 d_y1 即提交该平面 */
         default: break;
         }
         return true;
@@ -403,7 +411,7 @@ static bool disp_write(u32 off, int len, u32 val)
     case 0x20: g_disp.dmg_x0 = val; break;
     case 0x24: g_disp.dmg_y0 = val; break;
     case 0x28: g_disp.dmg_x1 = val; break;
-    case 0x2C: g_disp.dmg_x1 = val; break;
+    case 0x2C: g_disp.dmg_y1 = val; break;
     case 0x30:
         if (val) g_disp.frame_seq++;
         break;
@@ -411,7 +419,7 @@ static bool disp_write(u32 off, int len, u32 val)
     case 0x44: g_disp.mouse_x = val; break;
     case 0x48: g_disp.mouse_y = val; break;
     case 0x4C: g_disp.mouse_btn = val; break;
-    case 0x50: g_disp.mouse_ev++; g_disp.mouse_ev = g_disp.mouse_ev; break;
+    case 0x50: g_disp.mouse_ev++; break;
     case 0x54: g_disp.key_code = val; break;
     case 0x58: g_disp.key_scan = val; break;
     case 0x5C: g_disp.key_mods = val; break;

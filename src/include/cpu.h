@@ -17,6 +17,10 @@ typedef struct {
     bool running;
     bool halted;
     u64  cycles;
+    /* mcycle 的基准偏移：程序可见的 mcycle = mcycle_base + cycles。
+       写 mcycle 时只改 base，不动 cycles——cycles 是「已经执行了多少条」的
+       只增计数，也是 --max-cycles 唯一的预算依据，不能让程序清零。 */
+    u64  mcycle_base;
     u64  max_cycles;
     u32  last_pc;        /* 死循环检测：上一轮 pc */
     u32  pc_stuck;       /* 连续停在同一 pc 的次数 */

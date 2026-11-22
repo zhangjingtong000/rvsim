@@ -1851,8 +1851,8 @@ void kmain(void)
         evt_emit(EVT_SPAWN, i, g_entry, procs[i].code_pa, 0);
     }
 
-    /* 定时器：默认关闭（yield 已足够验证轮转；打开见 RVSIM_TIMER 环境无对应，
-       如需启用改成 1）。保留代码路径以便后续完善。 */
+    /* 定时器：默认开启（抢占式调度靠它驱动）。注释曾经写「默认关闭」，
+       和紧接着的 csrs mie/proc_set_timer 相反，读代码的人会被误导。 */
 
     /* 使能 M 模式定时器中断与全局中断（必须在 M 模式做） */
     __asm__ volatile("csrs mie, %0" : : "r"(0x80u));    /* MTIE */

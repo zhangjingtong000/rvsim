@@ -22,6 +22,10 @@ void proc_create(u32 pid, u32 entry, u32 stack_pa)
     memset(procs[pid].regs, 0, sizeof(procs[pid].regs));
     procs[pid].regs[1] = procs[pid].sp;   /* x2(sp) 存在偏移 4，即 regs[1] */
     procs[pid].regs[10] = pid;            /* x10 = a0 = pid */
+    /* fd 表必须初始化成「全空」。proc_init 把整个 procs 清零，fd_slot 全是 0，
+       而 0 是合法的文件槽——开机进程的 4 个 fd 会全部指向文件槽 0，
+       任何 open() 都拿不到 fd，read(0) 还会读到那个文件。 */
+    for (int fd = 0; fd < 4; fd++) { procs[pid].fd_slot[fd] = -1; procs[pid].fd_pos[fd] = 0; }
 }
 
 /* 前端进程视图：把进程表写进 RAM 最后一页。
