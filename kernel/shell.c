@@ -306,7 +306,9 @@ static void cmd_restore(const char *line)
     }
     uart_puts("{\"restore\":");
     uart_dec(id);
-    uart_puts(",\"ok\":true}\n");
+    uart_puts(",\"ok\":true,\"prog\":\"");
+    uart_puts(snap_prog((u32)id));
+    uart_puts("\"}\n");
 }
 
 void shell_input(char ch)

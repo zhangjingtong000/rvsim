@@ -1933,6 +1933,15 @@ int snap_exists(u32 id)
     return 0;
 }
 
+/* 快照记录的程序名。restore 的返回值里带上它，
+   外部才能验证「恢复的是快照时的那个程序」，而不是只能看 nrun 涨没涨。 */
+const char *snap_prog(u32 id)
+{
+    for (u32 i = 0; i < SNAP_SLOTS; i++)
+        if (g_snaps[i].used && g_snaps[i].id == id) return g_snaps[i].prog;
+    return "";
+}
+
 int snap_restore(u32 id)
 {
     __asm__ volatile("csrs sstatus, %0" : : "r"(0x40000u));

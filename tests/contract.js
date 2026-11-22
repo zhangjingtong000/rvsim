@@ -100,9 +100,19 @@ function record(name, ok, detail) {
   /* fork 跑完后进程都已退出，ps.nproc 会是 0，不能直接比。
      这里改用「spawn 事件数」本身：fork 演示应产生 4 条
      （开机 3 个 + fork 子进程 1 个）。若 fork 不记录事件，这里会是 3。 */
-  console.log("      [dbg] T5 halted=" + M._rv_result() + " priv=" + M._rv_priv());
   const spawn1 = cnt1 && cnt1.count ? cnt1.count.spawn : -1;
-  record("fork 子进程被记入事件流", spawn1 === 4, `spawn=${spawn1}（期望 4）`);
+  /* 交叉 oracle：计数接口说的数，必须和逐条事件流里数出来的数一致。
+     原来只写 `spawn1 === 4`——4 是「开机 3 + fork 子进程 1」这个推理的
+     结论，不是独立观测；事件流漏记 fork 子进程时，只要别处凑够 4 条
+     也会误判通过。 */
+  const logAll = send("log all");
+  const spawnLines = logAll.split("\n").filter((l) => {
+    const t = l.trim();
+    return /^-?\d+\s+-?\d+\s+spawn\b/.test(t);
+  }).length;
+  record("fork 子进程被记入事件流（计数与事件流交叉一致）",
+    spawn1 === 4 && spawnLines === spawn1,
+    `count.spawn=${spawn1} 事件流里 spawn 行=${spawnLines}（都应为 4）`);
 
   // ── T6: 从文件系统装载 ELF 并执行 ──
   {
@@ -130,6 +140,12 @@ function record(name, ok, detail) {
   // ── T9: restore 后进程必须能被再次调度（独立 oracle：nrun 增长）──
   send("reset");
   send("snapshot");
+  /* 记下快照时的进程状态签名（按 pid 排序的 pid:pc）。restore 的定义是
+     「恢复到快照那一刻」，所以恢复后这个签名必须逐字相同。 */
+  const pcSig = (j) => j && j.procs
+    ? j.procs.slice().sort((a, b) => a.pid - b.pid).map((p) => p.pid + ":" + p.pc).join(",")
+    : "";
+  const snapSig = pcSig(json(send("ps")));
   send("run badptr");
   send("restore 1");
   const psA = json(send("ps"));
@@ -138,6 +154,20 @@ function record(name, ok, detail) {
   const nrunA = psA ? psA.procs.reduce((s, x) => s + x.nrun, 0) : -1;
   const nrunB = psB ? psB.procs.reduce((s, x) => s + x.nrun, 0) : -1;
   record("restore 后进程可被再次调度", nrunB > nrunA, `nrun ${nrunA} -> ${nrunB}`);
+
+  /* 上面那条只证明「有进程在跑」，证明不了「跑的是快照时的那个程序」。
+     restore 曾经因为 g_loaded_prog 只存 7 个字符（hello.elf -> hello.e）
+     永远装载失败，但返回值被丢弃，nrun 照样涨——所以这条断言必须看输出内容。
+     快照时装载的是 hello.elf，它的特征输出是 AAAABBBBCCCC。 */
+  /* 「恢复的是快照时的程序」不能靠输出内容判断（restore 恢复的是快照
+     那一刻的 pc/寄存器，进程从中间继续，不会重新打印），也不能靠 pc 签名
+     （恢复后进程会继续跑，pc 必然变）。restore 现在把快照记录的程序名
+     放进返回值，直接断言它。 */
+  const restJ = json(send("restore 1"));
+  const restProg = restJ && restJ.prog ? restJ.prog : "";
+  record("restore 恢复的是快照时的程序",
+    restProg === "hello.elf",
+    `prog=${JSON.stringify(restProg)}（期望 hello.elf）`);
 
   // ── T10: log 全量与 log count 的总数一致 ──
   const cntAll = json(send("log count"));

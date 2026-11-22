@@ -364,6 +364,8 @@ input{font:inherit;color:inherit;background:none;border:0;outline:0}
 .ftab tbody tr.sel td{background:rgba(45,212,191,.16)}
 .mono{font-family:var(--font-mono)}
 
+.sm-empty{padding:20px 16px;color:var(--t3);font-size:12.5px;text-align:center;line-height:1.6}
+
 /* ── Dock ───────────────────────────────────────────────────── */
 #dock{position:absolute;left:0;right:0;bottom:0;height:48px;z-index:40;
   display:flex;align-items:center;padding:0 10px;user-select:none;
@@ -1367,8 +1369,34 @@ function openStartMenu() {
   const inp = m.querySelector("#smSearch");
   inp.oninput = () => {
     const q = inp.value.trim().toLowerCase();
-    for (const t of tiles.children)
-      t.style.display = !q || t.dataset.name.includes(q) ? "" : "none";
+    let shown = 0;
+    /* 磁贴和「推荐」两处都要过滤。原来只过滤磁贴，搜一个命令名
+       （比如 ps）时上面的磁贴全消失、下面的推荐却原样留着，
+       看起来像「搜到了但没高亮」。 */
+    for (const t of tiles.children) {
+      const hit = !q || t.dataset.name.includes(q);
+      t.style.display = hit ? "" : "none";
+      if (hit) shown++;
+    }
+    for (const r of rec.children) {
+      const hit = !q || r.textContent.toLowerCase().includes(q);
+      r.style.display = hit ? "" : "none";
+      if (hit) shown++;
+    }
+    /* 两边都没命中时给一句明确的话，而不是留一片空白 */
+    let empty = m.querySelector(".sm-empty");
+    if (q && !shown) {
+      if (!empty) {
+        empty = document.createElement("div");
+        empty.className = "sm-empty";
+        const u = m.querySelector(".sm-user");
+        if (u) u.parentNode.insertBefore(empty, u); else m.appendChild(empty);
+      }
+      empty.textContent = "没有匹配「" + inp.value.trim() + "」的应用或命令";
+      empty.style.display = "";
+    } else if (empty) {
+      empty.style.display = "none";
+    }
   };
   inp.onkeydown = (e) => {
     if (e.key === "Escape") { closeStartMenu(); e.preventDefault(); }
