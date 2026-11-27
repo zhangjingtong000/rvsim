@@ -1,0 +1,18 @@
+# 统一用 LF，避免 Windows 上 checkout 后 .sh / Makefile / 汇编因 CRLF 失效
+* text=auto eol=lf
+*.sh text eol=lf
+*.mk text eol=lf
+Makefile text eol=lf
+*.S text eol=lf
+*.s text eol=lf
+*.ld text eol=lf
+*.dts text eol=lf
+*.c text eol=lf
+*.h text eol=lf
+*.py text eol=lf
+*.js text eol=lf
+*.json text eol=lf
+*.yml text eol=lf
+*.md text eol=lf
+*.txt text eol=lf
+*.ps1 text eol=crlf
