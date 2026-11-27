@@ -392,11 +392,16 @@ extern int g_term_silent;
                 uart_puts(" 个进程到就绪状态\n");
             }
             else if (ADV && (starts_with(g_line, "kill ") || starts_with(g_line, "suspend ")
-                          || starts_with(g_line, "resume "))) {
+                          || starts_with(g_line, "resume-pid "))) {
                 /* 进程操作。kill 结束并回收物理页；suspend 退出调度；
-                   resume 重新就绪并立刻切进用户态。
+                   resume-pid 重新就绪并立刻切进用户态。
                    正在运行的进程杀不掉——它占着 CPU，shell 根本收不到命令，
-                   那种情况由 Monitor 里的「终止」交给定时器中断处理。 */
+                   那种情况由 Monitor 里的「终止」交给定时器中断处理。
+
+                   为什么带参数的那条叫 resume-pid 而不是 resume：无参数的
+                   resume 是全局的「让就绪进程开跑」（见下面 streq(g_line,
+                   "resume") 分支），两条语义不同。manifest 里同名会被 agent
+                   按 key 建索引时覆盖掉一条，等于少一项能力。 */
                 extern int proc_kill(u32), proc_suspend(u32), proc_resume(u32);
                 extern int g_resume_flag;
                 int is_kill = g_line[0] == 'k';
@@ -407,12 +412,12 @@ extern int g_term_silent;
                 u32 pid = 0; int has = 0;
                 while (*q >= '0' && *q <= '9') { pid = pid * 10u + (u32)(*q - '0'); q++; has = 1; }
                 if (!has) {
-                    uart_puts("{\"ok\":false,\"why\":\"用法: kill|suspend|resume <pid>\"}\n");
+                    uart_puts("{\"ok\":false,\"why\":\"用法: kill|suspend|resume-pid <pid>\"}\n");
                 } else {
                     int r = is_kill ? proc_kill(pid) : (is_susp ? proc_suspend(pid) : proc_resume(pid));
                     if (r == 0) {
                         uart_puts("{\"ok\":true,\"op\":\"");
-                        uart_puts(is_kill ? "kill" : (is_susp ? "suspend" : "resume"));
+                        uart_puts(is_kill ? "kill" : (is_susp ? "suspend" : "resume-pid"));
                         uart_puts("\",\"pid\":");
                         uart_dec((int)pid);
                         uart_puts("}\n");

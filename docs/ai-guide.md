@@ -67,7 +67,7 @@ rvsh> help         # 只有命令名
 | 能力 | 用途 |
 |---|---|
 | `kill <pid>` | 结束进程并回收代码页/堆页/页表 |
-| `suspend <pid>` / `resume <pid>` | 挂起 / 恢复 |
+| `suspend <pid>` / `resume-pid <pid>` | 挂起 / 恢复（无参数的 `resume` 是让就绪进程开跑，见上表） |
 | `ls [path]` | 列文件（可只看某个前缀） |
 | `cat <name>` | 读文件内容 |
 | `write <name> <text>` | 写文件（覆盖） |

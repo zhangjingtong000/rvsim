@@ -16,7 +16,8 @@
 
 ## 30 秒验证
 
-只想确认「这套东西能不能跑」，下面三条命令就够（干净克隆，Linux/WSL）：
+只想确认「这套东西能不能跑」，下面三条命令就够（干净克隆，Linux/WSL；第一条会联网拉
+capstone 与 riscv-tests，约 10 MB，离线做法见「离线 / 网络受限时怎么构建」）：
 
 ```bash
 make deps && make -j4
@@ -37,6 +38,17 @@ make deps && make -j4
 
 ## 当前状态（2026-11-21）
 
+> **这些状态数字的来源与可复核性**：下表与后文的实测值都来自**开发机上的完整构建**
+> （2026-11-21 那一轮，Linux/WSL + gcc 13 + riscv64-unknown-elf-gcc）。
+> 仓库**有意不包含**构建产物与测试依赖：`build/`、`third_party/`、
+> `tests/riscv-tests/` 都在 `.gitignore` 里，`web/images/kernel.elf` 也由 `make`
+> 生成而不入库。所以「干净克隆后直接看到这一片绿灯」不成立——必须先
+> `make deps && make`。今天在一台新机器上按「运行 → 首次使用」的步骤能复现到哪一步，
+> 取决于能否联网拿到 capstone / riscv-tests，以及是否自备 Linux `Image` 与 QEMU。
+> 有三类东西本仓库无法自带，下文各自标注：**Linux 镜像**（`third_party/linux-image/`
+> 不入库）、**QEMU 交叉验证**（需 `qemu-system-riscv32`）、**浏览器 e2e**（需
+> playwright + chromium）。
+
 | 验收门 | 目标 | 状态 | 证据 |
 |---|---|---|---|
 | Gate 0 环境 | 工具链可用、91 个测试可编译 | ✅ | `build/` 产物 |
@@ -45,14 +57,14 @@ make deps && make -j4
 | Gate 3 RV32M + RV32A | 8/8 + 10/10 | ✅ | `./tests/run_tests.sh rv32um` / `rv32ua` |
 | Gate 4 特权级与计数器 | 16/16 | ✅ | `./tests/run_tests.sh rv32mi` |
 | Gate 5 S 模式 + Sv32 | 6/6 | ✅ | `./tests/run_tests.sh rv32si` |
-| Gate 6 启动 Linux | 进 shell + 执行命令 | ✅ | `uname -a` / `ls /` / `cat /proc/cpuinfo` / `free` / `ps` |
+| Gate 6 启动 Linux | 进 shell + 执行命令 | ✅（开发机） | `uname -a` / `ls /` / `cat /proc/cpuinfo` / `free` / `ps`；Linux `Image` 不入库，需自备到 `third_party/linux-image/` |
 | Gate 7a 迷你内核 | M→S→U + Sv32 + 多进程 + 系统调用 | ✅ | 3 进程 `ABCABC...` 轮转 |
 | **抢占式调度** | 定时器中断驱动，非 yield | ✅ | `B→C→A` 轮转，37/38/38 均衡 |
 | **缺页处理** | 按需分配物理页 | ✅ | 实测 4 次 store page fault 后正常继续 |
 | **CoreMark** | 跑通并给出分数 | ✅ | 333 iters/sec（guest 时间，读法见「性能特征」） |
 | **可视化增强** | 反汇编 + 阶段视图 + 热图 | ✅ | 13 行反汇编、5 阶段动态点亮、512 格热图 |
-| **QEMU 语义对照** | 与 QEMU 比对计算结果 | ✅ | 四个 CRC 值完全一致 |
-| Gate 7b WASM 可视化 | 浏览器调试界面 | ✅ | 90 KB wasm，Node + 浏览器双验证 |
+| **QEMU 语义对照** | 与 QEMU 比对计算结果 | ⚠ 部分 | **只有** CoreMark 四个 CRC 一致（指令语义级）；设计里的「串口输出行集合一致」**未实现**，见「测试覆盖」 |
+| Gate 7b WASM 可视化 | 浏览器调试界面 | ✅ | 94 KB wasm，Node + 浏览器双验证 |
 
 **riscv-tests：91/91（82 个官方用例 + 9 个自写定向）；能力契约：19/19；界面 e2e：153/153。**
 
@@ -87,7 +99,7 @@ make deps && make -j4
 | 测试 | riscv-tests **91**（82 官方 + 9 定向）+ 能力契约 **19** + 界面 e2e **153** |
 | 解释速度 | **约 25.8 MIPS**（CoreMark 12.58 亿条 / 48.7 秒墙钟；轻负载微基准可达 32） |
 | WASM 体积 | 96,112 字节（约 94 KB） |
-| 内核镜像 | 115,104 字节（`web/images/kernel.elf`，`make` 自动同步） |
+| 内核镜像 | 115,104 字节（`make` 编出 `build/kernel.elf` 并复制到 `web/images/kernel.elf`；`.gitignore` 忽略 `*.elf`，仓库里没有这个文件，需先构建） |
 | Linux 启动 | 6.1.14，约 3 亿条指令到 shell |
 
 ## 目录
@@ -96,8 +108,8 @@ make deps && make -j4
 src/            模拟器：CPU/CSR/trap/MMU/总线/外设/加载器
 kernel/         迷你内核：M 模式启动、Sv32、S/U 切换、系统调用、
                 图形界面下行通道（文件/进程操作）
-web/            桌面外壳：index.html（结构+样式+逻辑）、WASM 运行时、
-                images/kernel.elf
+web/            桌面外壳：index.html（结构+样式+逻辑）、WASM 运行时
+                （rvsim.<hash>.js/.wasm，脚本生成）、images/kernel.elf（make 生成）
 dts/            自写设备树
 tests/          riscv-tests + 能力契约 + 批量跑分器
 scripts/ui/     界面 e2e（153 用例）与性能/尺寸测量脚本
@@ -117,7 +129,9 @@ docs/           ui-spec.md（功能与接口契约）、ui-benchmark.md（对标
 | `snapshot` / `restore` / `resume` | 存档、回滚、续跑 |
 | `status` | 一次拿到进程数、事件数、计划数、快照数、是否空闲 |
 
-32 项能力全部可调用：`replay` 从事件流重建存活进程并与 `ps` 交叉验证，`verify` 在 trap 侧独立计数（`unaccounted_ecall` 为 0），`regs`/`setreg`/`setpc` 让 AI 与前端在寄存器读写上对等。
+**37 项能力**全部可调用：`replay` 从事件流重建存活进程并与 `ps` 交叉验证，`verify` 在 trap 侧独立计数（`unaccounted_ecall` 为 0），`regs`/`setreg`/`setpc` 让 AI 与前端在寄存器读写上对等。
+
+这个数字不是手写的：**以 `manifest` 输出的 `caps` 字段为准**，它就是 `kernel/main.c` 里 `g_caps[]` 的条数。清单里每条能力的 `cap` 都唯一，agent 可以放心按 `cap` 建索引：无参数的 `resume` 是「让就绪进程开跑」，带 pid 的那条叫 `resume-pid <pid>`（恢复被挂起的进程），两条语义不同，因此不复用同一个 key。
 
 **内核已具备的操作系统要素**：真 ELF 加载器（PT_LOAD 段、BSS 清零、每进程独立物理代码页）、内存文件系统（文件 + 目录 + 路径）、文件描述符（open/read/close，用户程序可按 fd 顺序读文件）、shell 输出重定向（`cmd > file`）、多用户与权限（login / whoami / chmod，uid 0 为 root）、每进程独立地址空间（fork 时复制代码页，父子隔离）。
 
@@ -131,7 +145,7 @@ docs/           ui-spec.md（功能与接口契约）、ui-benchmark.md（对标
 - 缺页异常按需分配（`cause 13/15`），非法地址终止进程
 - 系统调用：`write` / `exit` / `getpid` / `yield` / `fork` / `sbrk`
 - `sscratch` 换栈 + `SUM=1` 读用户内存；优雅关机（syscon）
-- 内核内 shell：`help` / `ps` / `run` / `reset` / `mem` / `uptime`
+- 内核内 shell：37 条命令（`help` / `ps` / `run` / `reset` / `mem` / `uptime` 是最早的一批；完整清单以 `manifest` 为准）
 
 ## 代码结构要点
 
@@ -186,7 +200,7 @@ node scripts/ui/e2e.js
 ./build/rvsim --elf build/kernel.elf
 
 # 可视化（先编译 WASM）
-./scripts/build_wasm.sh    # 重新生成 web/rvsim.js + .wasm（含 capstone，必须一起编）
+./scripts/build_wasm.sh    # 重新生成 web/rvsim.<hash>.js + .wasm（文件名按内容哈希，含 capstone，必须一起编）
 cd web && python3 -m http.server 8777
 ```
 
@@ -250,10 +264,39 @@ tar xzf rvsim-deps.tgz && make -j4                              # 目标机器
 
 前两套在 `./tests/run_tests.sh all` 里；界面 e2e 单独跑（需要 node + playwright + 浏览器），由 `./scripts/ci.sh` 串起来。**`run_tests.sh` 绿了不等于全绿。**
 
-两条口径说明：
+三条口径说明：
 
 - **PMP 未经检验**：`rv32mi-p-*` 中涉及 PMP 的用例在 `G=0` 配置下不校验权限，属于「通过但没验到」，因此不能声称 PMP 已验证。要补这块，需让用例在 `G=1` 下运行，并确认越权访问会触发异常。
 - **QEMU 对照只比 CRC**：`tests/qemu_crosscheck.sh` 比对四个 CRC 与 CoreMark Size，不比时间、不比 cycle 数。QEMU 侧因跑得比 10 秒门槛快，会打印 `ERROR! Must execute for at least 10 secs for a valid result!` 与 `Errors detected`，脚本靠 `timeout` 结束——不影响 CRC 一致性结论。
+- **Gate 6 的「串口行集合一致」未实现**：Gate 6 的验收标准里还有一项——同一份 Linux `Image` + 同一份 `dts/minimal.dtb`，在本模拟器与 `qemu-system-riscv32 -M virt` 上各跑一遍，抓串口输出比对**行集合**。**本仓库没有做这一项**：现有的 QEMU 交叉验证只有 CoreMark 的四个 CRC（`docs/CHANGELOG-review.md` 有对照表），CRC 一致证明指令语义正确，但不证明「启动 Linux 进 shell 后执行命令的输出一致」。补它需要 Linux 镜像与 `qemu-system-riscv32`，本机两者都没有，因此这项状态是「未实现」，不是「已验证」。
+
+### 想自己复核这些数字
+
+站在一台新机器上，从干净克隆开始：
+
+```bash
+# 1) 拉依赖（联网一次，约 10 MB）：capstone 源码 + riscv-tests
+./scripts/fetch_deps.sh all          # 等价于 make deps
+
+# 2) 构建：模拟器 + 内核镜像（并复制到 web/images/kernel.elf）+ 9 个定向测试
+make -j4 && make directed
+
+# 3) 回归：82 个官方用例 + 9 个定向 + 19 项能力契约
+./tests/run_tests.sh all             # 期望 91/91 与契约 19/19
+                                     # total==0 时脚本会 exit 1，不会把「一个都没跑」判成通过
+
+# 4) 界面 e2e（另开一个终端：cd web && python3 -m http.server 8799）
+node scripts/ui/e2e.js               # 期望 153/153，需要 playwright + chromium
+
+# 5) Linux：自备 third_party/linux-image/Image（仓库不含）
+./build/rvsim --image third_party/linux-image/Image --dtb dts/minimal.dtb \
+  --max-cycles 4000000000 < /dev/null
+
+# 6) QEMU 交叉验证：需要 qemu-system-riscv32 + 同一份 Image/dtb
+./tests/qemu_crosscheck.sh
+```
+
+第 3 步是分水岭：它只依赖 `make deps` 能拉到的两样东西，不依赖 Linux 镜像、QEMU 或浏览器。第 4 步需要 playwright，CI 里用 `./scripts/ci.sh` 串起来（缺 playwright 时想跳过必须显式加 `--allow-skip`，默认跳过即失败）。第 5、6 步依赖本仓库不提供的 Linux 镜像，能跑到哪一步取决于你自备的镜像与工具链。
 
 ## 设计取舍
 

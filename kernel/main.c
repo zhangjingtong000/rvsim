@@ -384,7 +384,7 @@ static const cap_t g_caps[] = {
     {"reset",    "reset",                   "",                0, "把全部进程重置到就绪"},
     {"kill",     "kill <pid>",              "pid 取 0..4",     1, "结束一个用户进程并回收它的代码页/堆页/页表；正在运行的进程要在 Monitor 里终止"},
     {"suspend",  "suspend <pid>",           "pid 取 0..4",     1, "让一个就绪进程退出调度"},
-    {"resume",   "resume <pid>",            "pid 取 0..4",     1, "恢复被挂起的进程并立刻切进用户态"},
+    {"resume-pid", "resume-pid <pid>",      "pid 取 0..4",     1, "恢复被挂起的进程并立刻切进用户态（无参数的 resume 是「让就绪进程开跑」，两者语义不同）"},
     {"mem",      "mem",                     "",                0, "物理内存大小与累计缺页次数（自启动起）"},
     {"uptime",   "uptime",                  "",                0, "读取虚拟时钟 mtime"},
     {"log",      "log [all] | log count [type] | log last <n> | log find <pid>", "spawn|exit|ecall|restore", 0, "事件流：全部（带摘要）/计数/最近 n 条/按进程过滤"},
