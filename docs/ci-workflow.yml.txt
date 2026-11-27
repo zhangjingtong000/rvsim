@@ -1,3 +1,7 @@
+# 原 .github/workflows/ci.yml 内容。
+# 推送时因 token 缺少 workflow scope 被 GitHub 拒绝，暂以文本形式保留。
+# 如需启用 CI：在仓库网页上新建 .github/workflows/ci.yml 并粘贴以下内容。
+
 name: CI
 
 # 三套回归：riscv-tests（82 官方 + 9 定向）、能力契约、界面 e2e。
