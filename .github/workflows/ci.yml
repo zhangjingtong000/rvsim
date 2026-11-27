@@ -81,10 +81,11 @@ jobs:
           # e2e.js 会自动探测 chromium，这里显式给一下更稳
           CHROME: ""
         run: |
+          set -o pipefail
           python3 -m http.server 8799 --directory web &
           sleep 2
           curl -fsS -o /dev/null http://127.0.0.1:8799/index.html
-          node scripts/ui/e2e.js
+          node scripts/ui/e2e.js 2>&1 | tee e2e.log
 
       - name: 失败时保留日志
         if: failure()
@@ -92,5 +93,6 @@ jobs:
         with:
           name: e2e-logs
           path: |
+            e2e.log
             *.log
-          if-no-files-found: ignore
+          if-no-files-found: warn
