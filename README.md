@@ -192,12 +192,22 @@ cd web && python3 -m http.server 8777
 **首次使用（干净克隆）必须先拉依赖**：
 
 ```bash
-./scripts/fetch_deps.sh all   # 等价于 make deps：capstone + riscv-tests + dtb 工具
-make                          # 构建 build/rvsim
-make directed                 # 构建 4 个定向测试 ELF
-make dts                      # 构建 dts/minimal.dtb
+./scripts/fetch_deps.sh all   # 等价于 make deps：下载 capstone + riscv-tests 并编译 p 测试
+make                          # 构建 build/rvsim 与 build/kernel.elf（并同步到 web/images）
+make directed                 # 构建 9 个定向测试 ELF
+make dts                      # 构建 dts/minimal.dtb（需要 dtc，仅手动验证 dtb 时才需要）
 ./tests/run_tests.sh all      # 回归（应 91/91 + 契约 19/19）
 ```
+
+环境要求（缺哪个 `make` 都会报出来）：
+
+| 依赖 | 用途 | 缺了会怎样 |
+|---|---|---|
+| `gcc` / `make` | 编译模拟器 | 直接编不了 |
+| `riscv64-unknown-elf-gcc` | 编译迷你内核与定向测试 | `make` 在 kernel 阶段失败 |
+| `python3` / `node` | `count_lines.py`、能力契约、界面 e2e | 对应步骤跳过或失败 |
+| `dtc` | 编译 dts | 只有 `make dts` 需要 |
+| 网络 | `make deps` 拉 capstone / riscv-tests | 需要一次性联网 |
 
 缺 capstone 时 `make` 会直接提示 `先执行：make deps`，不会只丢一个 `capstone.h not found`。
 

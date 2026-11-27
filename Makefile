@@ -62,6 +62,11 @@ $(TARGET): $(OBJS) $(CAPSTONE_HDR) $(CAPSTONE_OBJS)
 	@mkdir -p $(OBJDIR)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
+# 干净克隆里 third_party/ 不存在。让每个模拟器目标文件都先过 capstone 头检查，
+# 否则 make 会先跑到 disasm.c 的 #include 才报 "capstone.h not found"，
+# 而不是给出 "先执行 make deps" 的提示。
+$(OBJS): | $(CAPSTONE_HDR)
+
 $(OBJDIR)/capstone/%.o: $(CAPSTONE_DIR)/%.c
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) $(CS_CFLAGS) -c -o $@ $<
