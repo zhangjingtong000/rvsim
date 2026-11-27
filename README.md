@@ -58,12 +58,11 @@ make deps && make -j4
 
 **riscv-tests：91/91（82 个官方用例 + 9 个自写定向）；能力契约：19/19；界面 e2e：153/153。**
 
-**CI**：`.github/workflows/ci.yml` 分两个 job（内核 / 界面），跑的就是上面这些命令；
-本地等价物是 `./scripts/ci.sh
+**CI**：工作流内容以文本形式保存在 [`docs/ci-workflow.yml.txt`](docs/ci-workflow.yml.txt)，分两个 job（内核 / 界面），跑的就是上面这些命令。
+本仓库**没有** `.github/workflows/ci.yml`——推送用的 token 缺 `workflow` scope，该文件无法入库，所以内容保留在文档里，**也没有在真实 GitHub runner 上跑过**（本机无 runner；命令序列与本地一致，YAML 语法已校验）。启用方式：在仓库网页新建 `.github/workflows/ci.yml`，把 `docs/ci-workflow.yml.txt` 的内容粘进去。本地等价物是 `./scripts/ci.sh
 
 # 缺环境（没有 playwright）时想跳过，必须显式说明；默认跳过即失败
-./scripts/ci.sh --allow-skip`。这份工作流**没有在真实 GitHub runner 上跑过**
-（本机没有 runner），命令序列和本地一致、YAML 语法已校验——第一次推送后请看 Actions 页面。
+./scripts/ci.sh --allow-skip`。
 
 91 项只覆盖模拟器指令。能力层（manifest/assert/plan/snapshot）由
 `tests/contract.js` 覆盖；桌面外壳（窗口 / 终端 / 文件 / 进程 / 菜单 /
