@@ -14,6 +14,27 @@
 
 面向 AI 的使用说明见 `docs/ai-guide.md`；终端内可执行 `guide` 与 `manifest`。
 
+## 30 秒验证
+
+只想确认「这套东西能不能跑」，下面三条命令就够（干净克隆，Linux/WSL）：
+
+```bash
+make deps && make -j4
+./build/rvsim --elf tests/riscv-tests/isa/rv32ui-p-add
+# 期望输出末尾： [rvsim] 结果：PASS
+```
+
+本机实测输出（gcc 13 + riscv64-unknown-elf-gcc）：
+
+```
+[rvsim] ELF=tests/riscv-tests/isa/rv32ui-p-add entry=0x80000000 装载=9492 字节 tohost=0x80001000
+[rvsim] 开始执行，max_cycles=50000000
+[rvsim] 停止：执行 512 条指令，cycles=512，priv=3，pc=0x8000004c
+[rvsim] 结果：PASS
+```
+
+这三条只证明「依赖拉齐了 + 模拟器编出来了 + 能跑完一条 RV32I 自检」。91 项回归、19 项能力契约、153 项界面 e2e 见下面的「运行」一节；网络受限时**先看**「离线 / 网络受限时怎么构建」。
+
 ---
 
 ## 当前状态（2026-11-21）
@@ -199,6 +220,8 @@ make dts                      # 构建 dts/minimal.dtb（需要 dtc，仅手动�
 ./tests/run_tests.sh all      # 回归（应 91/91 + 契约 19/19）
 ```
 
+只想先确认能跑，用开头的「30 秒验证」；拉依赖失败（GitHub 直连不通、机器离线）看下面「离线 / 网络受限时怎么构建」。
+
 环境要求（缺哪个 `make` 都会报出来）：
 
 | 依赖 | 用途 | 缺了会怎样 |
@@ -210,6 +233,53 @@ make dts                      # 构建 dts/minimal.dtb（需要 dtc，仅手动�
 | 网络 | `make deps` 拉 capstone / riscv-tests | 需要一次性联网 |
 
 缺 capstone 时 `make` 会直接提示 `先执行：make deps`，不会只丢一个 `capstone.h not found`。
+
+### 离线 / 网络受限时怎么构建
+
+`make deps`（即 `./scripts/fetch_deps.sh all`）实际做了两件联网的事：
+
+| 目标 | 拉什么 | 落到哪 |
+|---|---|---|
+| capstone | GitHub 上 `capstone-engine/capstone` 的 **5.0.7 源码 tarball**（`archive/refs/tags/5.0.7.tar.gz`），只取源码 + 头文件，不需要 cmake——本项目手工编译其中 11 个 `.c` | `third_party/capstone/` |
+| riscv-tests | `riscv-software-src/riscv-tests` 的 **`git clone --recursive --depth 1`**（必须带 `env` 子模块，`isa` 测试的链接脚本在 `env/p/link.ld`），拉完当场用 `riscv64-unknown-elf-gcc` 编出 82 个 `rv32*-p-*` ELF | `tests/riscv-tests/` |
+
+`linux` 那一项不下载任何东西，只打印「自己去 kernel.org 编译」的指引；`third_party/linux-image/Image` 是可选的。
+
+两个目录都被 `.gitignore` 忽略，所以它们既不会进仓库，也正是「离线构建」唯一需要补齐的东西。
+
+**GitHub 直连失败时走代理**：
+
+```bash
+export https_proxy=http://127.0.0.1:7897     # 换成你自己的代理地址
+./scripts/fetch_deps.sh all
+```
+
+脚本读的是**大写** `HTTPS_PROXY`（它会把这个值显式传给 `curl -x` 和 `git -c http.proxy`），
+所以更保险的写法是：
+
+```bash
+HTTPS_PROXY=http://127.0.0.1:7897 make deps
+```
+
+小写 `https_proxy` 也能工作，因为 `curl` 和 `git` 自己会读这个环境变量；但如果你换 `wget` 分支就不一定了，直接导出大写最稳。
+
+**完全离线（或从另一台已构建好的机器拷）**：
+
+```bash
+# 在能联网/已构建的机器上
+tar czf rvsim-deps.tgz third_party/capstone tests/riscv-tests
+
+# 在目标机器上（仓库根目录解包）
+tar xzf rvsim-deps.tgz
+make -j4
+```
+
+要点：
+
+- 两个目录都不大：本机 `third_party/capstone` 约 **1.5 MB**、`tests/riscv-tests` 约 **8.7 MB**（含 82 个已编译 ELF），U 盘拷也很快。
+- `tests/riscv-tests` 里**已编译好的 `rv32*-p-*` ELF 要一起拷**，否则目标机器还需要 `riscv64-unknown-elf-gcc` 重编一遍。
+- 判断依赖是否齐：`third_party/capstone/include/capstone/capstone.h` 存在，`make` 就不再要求先跑 `make deps`；`tests/riscv-tests/isa/rv32ui-p-add` 存在，`./tests/run_tests.sh` 才有用例可跑。
+- 只用 tarball 回退路径拿到的 riscv-tests **不含 `env` 子模块**，官方用例编不出来（脚本会打印警告）。这种情况下从别处拷一份完整的 `tests/riscv-tests` 更省事。
 
 ## Gate 7a 的完成度（如实说明）
 
