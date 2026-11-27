@@ -56,7 +56,9 @@ make deps && make -j4
 
 **riscv-tests：91/91（82 个官方用例 + 9 个自写定向）；能力契约：19/19；界面 e2e：153/153。**
 
-**CI**：工作流内容以文本形式保存在 [`docs/ci-workflow.yml.txt`](docs/ci-workflow.yml.txt)，分两个 job（内核 / 界面），跑的就是「运行」一节里的命令。仓库里没有 `.github/workflows/ci.yml`——推送用的 token 缺 `workflow` scope，该文件无法入库，因此也没在真实 GitHub runner 上跑过（本机无 runner；命令序列与本地一致，YAML 语法已校验）。启用方式：在仓库网页新建 `.github/workflows/ci.yml`，把 `docs/ci-workflow.yml.txt` 的内容粘进去。本地等价物是 `./scripts/ci.sh`；缺 playwright 时想跳过必须显式加 `--allow-skip`，默认跳过即失败。
+**CI**：`.github/workflows/ci.yml` 已启用，分两个 job（内核 / 界面），跑的就是「运行」一节的命令。**已在真实 GitHub Actions runner 上跑通**：内核 job 走完工具链安装 → 拉 capstone/riscv-tests → 构建 → 定向测试 → 内核回归 → 镜像同步，全部 success；界面 job 装 Playwright + chromium 后跑 `scripts/ui/e2e.js`。首次运行时界面 job 失败过一次（e2e 日志当时拿不到，未定位到具体用例），第二次全绿——这类时序敏感用例偶发失败属已知情况，日志现在会以 artifact 形式上链。本地等价物是 `./scripts/ci.sh`；缺 playwright 时想跳过必须显式加 `--allow-skip`，默认跳过即失败。
+
+[![CI](https://github.com/zhangjingtong000/rvsim/actions/workflows/ci.yml/badge.svg)](https://github.com/zhangjingtong000/rvsim/actions/workflows/ci.yml)
 
 ## 桌面外壳（2026-11 新增）
 
