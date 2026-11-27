@@ -35,7 +35,7 @@
 | **QEMU 语义对照** | 与 QEMU 比对计算结果 | ✅ | 四个 CRC 值完全一致 |
 | Gate 7b WASM 可视化 | 浏览器调试界面 | ✅ | 90 KB wasm，Node + 浏览器双验证 |
 
-**riscv-tests：91/91（82 个官方用例 + 9 个自写定向）；能力契约：18/18；界面 e2e：153/153。**
+**riscv-tests：91/91（82 个官方用例 + 9 个自写定向）；能力契约：19/19；界面 e2e：153/153。**
 
 **CI**：`.github/workflows/ci.yml` 分两个 job（内核 / 界面），跑的就是上面这些命令；
 本地等价物是 `./scripts/ci.sh
@@ -82,14 +82,14 @@ ANSI 16 色（我们不解析转义序列，改成了内核语义属性上色）
 
 | 项 | 值 |
 |---|---|
-| 模拟器源码 | **2,581 行**（`src/`，含 FDT 解析、反汇编适配） |
-| 迷你内核 | **6,375 行**（`kernel/`，含事件日志、能力清单、快照、计划、图形界面下行通道） |
-| 桌面外壳 | **3,827 行**（`web/index.html`，单文件 HTML/CSS/JS） |
-| 规格文档 | `docs/ui-spec.md` 521 行 / **153 项功能**；`docs/ui-benchmark.md` 379 行 |
-| 测试 | riscv-tests **91**（82 官方 + 9 定向）+ 能力契约 **18** + 界面 e2e **153** |
+| 模拟器源码 | **2,543 行**（`src/`，16 个文件，含 FDT 解析、反汇编适配） |
+| 迷你内核 | **6,580 行**（`kernel/`，20 个文件，含事件日志、能力清单、快照、计划、图形界面下行通道） |
+| 桌面外壳 | **3,943 行**（`web/index.html`，单文件 HTML/CSS/JS） |
+| 规格文档 | `docs/ui-spec.md` 549 行 / **154 项功能**；`docs/ui-benchmark.md` 386 行 |
+| 测试 | riscv-tests **91**（82 官方 + 9 定向）+ 能力契约 **19** + 界面 e2e **153** |
 | 解释速度 | **约 25.8 MIPS**（CoreMark 12.58 亿条 / 48.7 秒；轻负载微基准可达 32） |
 | WASM 体积 | 96,112 字节（约 94 KB） |
-| 内核镜像 | 113,036 字节（`web/images/kernel.elf`，`make` 自动同步） |
+| 内核镜像 | 115,104 字节（`web/images/kernel.elf`，`make` 自动同步） |
 | Linux 启动 | 6.1.14，约 3 亿条指令到 shell |
 
 > 行数会随代码变化，重跑 `python3 scripts/count_lines.py` 即可，不要手改。
@@ -165,7 +165,7 @@ RAIL 的帧预算是 16.66ms、应用实际可用 10ms，上面的 p99 都在预
 ## 运行
 
 ```bash
-# 回归：91 个指令测试 + 18 项能力契约
+# 回归：91 个指令测试 + 19 项能力契约
 ./tests/run_tests.sh all
 
 # 界面 e2e（需要先起前端：cd web && python3 -m http.server 8799）
@@ -196,7 +196,7 @@ cd web && python3 -m http.server 8777
 make                          # 构建 build/rvsim
 make directed                 # 构建 4 个定向测试 ELF
 make dts                      # 构建 dts/minimal.dtb
-./tests/run_tests.sh all      # 回归（应 91/91 + 契约 18/18）
+./tests/run_tests.sh all      # 回归（应 91/91 + 契约 19/19）
 ```
 
 缺 capstone 时 `make` 会直接提示 `先执行：make deps`，不会只丢一个 `capstone.h not found`。
@@ -233,8 +233,8 @@ make dts                      # 构建 dts/minimal.dtb
 **没有 W^X（可写不可执行 / 可执行不可写）**。内核镜像链接出来是一个 RWX LOAD 段
 （构建时 ld 会警告 `has a LOAD segment with RWX permissions`），用户代码页也是
 `R|W|X|U`。真实系统会做页级分离，这里没做——这是明确的设计边界，不是遗漏。
-演示时如果被问到「为什么不做 W^X」，答案就是「没做，代价是攻击面变大，
-收益在单机演示里不明显」。
+如果被问到「为什么不做 W^X」，答案是：没做，代价是攻击面变大，
+收益在单机演示里不明显。
 
 1. 不做 C/F/D/B/V 扩展
 2. 不做 JIT（32 MIPS 解释执行）
@@ -273,7 +273,7 @@ dtc -I dts -O dtb -o /tmp/alt.dtb /tmp/alt.dts
 
 **边界（如实说明）**：`g_ram[]` 是编译期静态数组，所以 dtb 里 `memory` 节点的 **base 和 size 都不会被采用**——解析出来只做**一致性校验**，与编译期值不符时打印警告。改 RAM 基址或容量必须重新编译。设备大小（`UART_SIZE`/`PLIC_SIZE`/`CLINT_SIZE`）同理是编译期常量，dtb 只覆盖基址。这样做的理由：RISC-V 的 RAM 布局决定了 `g_ram[]` 的数组下标计算，运行时改不了；MMIO 窗口大小在外设实现里也是固定的。
 
-### 必须在论文/演示里如实说明的三条
+### 必须如实说明的三条限制
 
 **一、`pmpaddr` 是假 PASS。** `rv32mi-p-*` 里涉及 PMP 的用例在 `G=0` 配置下不真正检查权限，属于"通过但没验证到"。**不要说"PMP 已验证"。**
 
@@ -282,7 +282,7 @@ dtc -I dts -O dtb -o /tmp/alt.dtb /tmp/alt.dts
 - `333 iters/sec` 是按 guest 时间算的，**虚高约 4 倍**（按墙钟折算约 80 iters/sec）
 - 由它推算的 `3.33 CoreMark/MHz（假设 100MHz）` 没有真实硬件时钟依据
 
-**可信的只有四个 CRC 值**（与官方校验值、与 QEMU 完全一致），它证明的是**功能正确**，不是性能。论文里如果要给性能数字，必须说明时间基准来自 `mtime` 而非墙钟。
+**可信的只有四个 CRC 值**（与官方校验值、与 QEMU 完全一致），它证明的是**功能正确**，不是性能。如果要给性能数字，必须说明时间基准来自 `mtime` 而非墙钟。
 
 **三、QEMU 对照脚本只比 CRC，不比时间。** QEMU 侧会打印 `ERROR! Must execute for at least 10 secs for a valid result!` 和 `Errors detected`（因为它跑得比 10 秒门槛快），脚本靠 `timeout 280` 结束。这不影响 CRC 一致性结论，但要在文档里说清楚。
 

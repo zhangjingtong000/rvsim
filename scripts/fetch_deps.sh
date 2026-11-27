@@ -76,7 +76,13 @@ fetch_riscv_tests() {
     fi
     rm -rf "$tmp"
     echo "源码已就位，开始编译 rv32 的 p 测试..."
-    if ( cd tests/riscv-tests/isa && make XLEN=32 rv32ui rv32um rv32ua rv32mi rv32si ) >/dev/null 2>&1; then
+    # 只编 -p 变体（bare-metal）。-v 变体链接 newlib 的 string.h，
+    # 没装 newlib 的工具链会直接编不过——而 -v 从来没被本项目的测试用到。
+    if ( cd tests/riscv-tests/isa && \
+         pt=""; for d in rv32ui rv32um rv32ua rv32mi rv32si; do
+             for f in "$d"/*.S; do [ -e "$f" ] && pt="$pt $d-p-$(basename "$f" .S)"; done
+         done; \
+         make -j"$(nproc 2>/dev/null || echo 4)" XLEN=32 $pt ) >/dev/null 2>&1; then
         echo "编译完成：$(ls tests/riscv-tests/isa/rv32*-p-* 2>/dev/null | grep -v '\.' | wc -l) 个 ELF"
     else
         echo "编译失败。请确认 riscv64-unknown-elf-gcc 在 PATH 里，然后手动执行："
