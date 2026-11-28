@@ -574,6 +574,34 @@ u32 m_trap_handler(u32 cause, u32 epc, u32 tval, u32 *regs)
 /* 切换到 next 进程：保存当前上下文，装载 next 的上下文 */
 u32 s_trap_handler(u32 cause, u32 epc, u32 tval, u32 *regs)
 {
+    /* 内核态（S 模式）里再进 trap：不能按「用户异常」处理。
+       s_entry.S 的 trap 入口用 sscratch 换栈；内核里再来一次 trap 时 sscratch
+       里是用户 sp，入口会把它当内核栈，接着在 `sw ra,0(sp)` 上 store 缺页，
+       再触发一次 trap —— 无限递归。现场表现：进程表停在 `n:RUN`、终端不再
+       输出、宿主所有下行命令 4 秒超时「内核没有响应」（界面 e2e 13.15 起
+       连续 16 条失败就是这个）。
+       现在入口按 sstatus.SPP 区分来源，内层 trap 复用内核栈、不再换栈；
+       这里把出问题的进程摘掉，回 shell 主循环，让宿主还能把系统救回来。 */
+    {
+        u32 ss;
+        __asm__ volatile("csrr %0, sstatus" : "=r"(ss));
+        if (ss & 0x100u) {
+            static u32 n_ktrap;
+            if (n_ktrap < 4) {
+                n_ktrap++;
+                kprintf("\n[K-trap] 内核态异常 cause=%x epc=%x tval=%x cur=%d\n",
+                        cause, epc, tval, cur_proc);
+            }
+            if (cur_proc >= 0 && cur_proc < NPROC &&
+                procs[cur_proc].state == PROC_RUN) {
+                procs[cur_proc].state = PROC_EXIT;
+                g_reap_mask |= (1u << (u32)cur_proc);
+            }
+            proc_set_timer(0x7FFFFFF0u);
+            shell_loop();          /* 不返回 */
+        }
+    }
+
     /* 定时器中断（S 模式 STI）：抢占当前进程 */
     if ((cause & 0x80000000u) && ((cause & 0x7FFFFFFFu) == 5)) {
         /* 0) 宿主在 Monitor 里点了「终止」：跑飞的用户程序占着 CPU，
@@ -772,6 +800,12 @@ u32 s_trap_handler(u32 cause, u32 epc, u32 tval, u32 *regs)
                 shell_loop();          /* 不返回 */
             }
             for (int i = 0; i < 32; i++) regs[i] = next->regs[i];
+            /* 必须连同 satp 一起切到 next 的页表：其它三处进程切换
+               （定时器抢占、yield、kill）都切了，只有这里漏了。
+               漏了之后 next 是拿着上一个进程的页表在跑，它的缺页会被
+               按 cur_proc 的页表映射到别处，重试还是缺页——一路空转到
+               宿主超时「内核没有响应」。 */
+            if (next->pgtbl) proc_switch_satp(next->pgtbl);
             return next->pc;
         }
         if (a7 == 5) {           /* sbrk(inc)：扩展用户堆，返回旧堆顶 */

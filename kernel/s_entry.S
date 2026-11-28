@@ -26,11 +26,21 @@ enter_s_mode:
 .align 4
 .globl s_trap_entry
 s_trap_entry:
+    # 先看 sstatus.SPP：1 = 这次 trap 来自 S 模式（内核里又进了一次 trap）。
+    # 那种情况下 sscratch 里存的是用户 sp，原来无条件 `mv sp, sscratch` 会把
+    # 用户 sp 当内核栈，紧接着 `sw ra,0(sp)` 就 store 缺页，再触发一次 trap，
+    # 形成无限递归（进程表停在 RUN、终端静默、宿主命令全部超时）。
+    # 内层 trap 直接复用当前内核栈，不再换栈。
+    csrr    t0, sstatus
+    andi    t0, t0, 0x100           # SPP
+    bnez    t0, 2f
+    # 来自 U 模式：把内核栈顶换进来，用户 sp 存进 sscratch
     # 把 csrrw 拆成三条独立指令：既能绕开“csrrw 在 rd==rs1 时是否先读后写”的
     # 实现差异，也便于单独验证 csrw sscratch 是否真的写进去了。
     csrr    t0, sscratch            # t0 = 内核栈顶（enter_u_mode 设的）
     csrw    sscratch, sp            # sscratch = 用户 sp（这一次是独立的 csrw）
     mv      sp, t0                  # sp = 内核栈
+2:
     addi    sp, sp, -132
     sw      x1,  0(sp)
     sw      x2,  4(sp)              # 占位，稍后填用户 sp
@@ -73,6 +83,15 @@ s_trap_entry:
     call    s_trap_handler
     csrw    sepc, a0
 
+    # 返回路径也要区分来源。正常工作流里内层 trap 的处理函数直接回 shell
+    # 主循环（不返回），这里只是为了不再把内核栈换成用户 sp——换错之后
+    # 内核代码会在用户地址上继续压栈，必然再次 store 缺页。
+    csrr    t0, sstatus
+    andi    t0, t0, 0x100           # SPP
+    beqz    t0, 7f
+    addi    t1, sp, 132             # 内层：sscratch 的位置填出栈后的内核 sp，
+    sw      t1, 4(sp)               # 让下面共享的 csrrw 变成恒等变换
+7:
     lw      x1,  0(sp)
     lw      x3,  8(sp)
     lw      x4, 12(sp)
