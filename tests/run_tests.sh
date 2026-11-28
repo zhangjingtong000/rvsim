@@ -22,7 +22,16 @@ total=0; passed=0; failed=0
 FAILED_LIST=""
 
 for p in $PREFIXES; do
-  files=$(ls "$ISA_DIR"/${p}-p-* 2>/dev/null | grep -v '\.')
+  # 只按「文件名本身有没有点」筛：riscv-tests 编出来的镜像是 rv32ui-p-add
+  # （没有扩展名），同目录里还有 .dump / .hex 之类。
+  # 不能用 ls 全路径再接 grep -v '\.'：检出路径里一旦带点（/tmp/rvsim.1/、
+  # C:/work/rvsim.v2/），82 个官方用例会被一次性全滤掉，报告成 0/0。
+  files=""
+  for t in "$ISA_DIR"/${p}-p-*; do
+    [ -e "$t" ] || continue
+    case "$(basename "$t")" in *.*) continue ;; esac
+    files="$files $t"
+  done
   [ -z "$files" ] && continue
   sub_total=0; sub_pass=0
   for t in $files; do

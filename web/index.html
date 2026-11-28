@@ -27,7 +27,7 @@
   --s3:#282F3A;   /* 悬停 */
   --s4:#323A47;   /* 按下 / 选中 */
   --stroke-sub:var(--active);
-  --stroke:var(--stroke);        /* ControlStrokeColorDefault  #12FFFFFF */
+  --stroke:rgba(255,255,255,.07); /* ControlStrokeColorDefault  #12FFFFFF */
   --stroke-strong:rgba(255,255,255,.11); /* ControlStrokeColorSecondary #18FFFFFF */
   --t1:#FFFFFF;                    /* TextFillColorPrimary   */
   --t2:rgba(255,255,255,.77);      /* TextFillColorSecondary #C5FFFFFF */
@@ -39,14 +39,17 @@
   --ok:#6CCB5F; --warn:#FCE100; --err:#FF99A4;
 
   /* 语义 token：交互态、浮层底、阴影。以前这些值散在各处写死，
-     换主题时无处下手。 */
-  --hover:var(--hover);
-  --active:var(--active);
-  --overlay:var(--overlay);
-  --overlay-2:var(--overlay-2);
-  --sh-1:var(--sh-1);
-  --sh-2:var(--sh-2);
-  --sh-3:var(--sh-3); --acc-hover:#5EEAD4; --acc-press:#14B8A6; --on-acc:#04211C;
+     换主题时无处下手。
+     这里必须是具体值：曾经写成「变量指向它自己」（`--hover` 的值是 `var(--hover)`），
+     按 CSS 规范属于循环引用，整条声明无效——深色主题下 hover / 按下 /
+     浮层底 / 阴影全部拿不到值（浅色主题另有覆盖，所以一直没暴露）。 */
+  --hover:rgba(255,255,255,.06);
+  --active:rgba(255,255,255,.10);
+  --overlay:rgba(32,38,47,.97);
+  --overlay-2:rgba(26,31,39,.99);
+  --sh-1:rgba(0,0,0,.30);
+  --sh-2:rgba(0,0,0,.45);
+  --sh-3:rgba(0,0,0,.60); --acc-hover:#5EEAD4; --acc-press:#14B8A6; --on-acc:#04211C;
   --ok:#34D399; --warn:#FBBF24; --danger:#F87171; --danger-strong:#C42B1C;
   --info:#60A5FA;
 

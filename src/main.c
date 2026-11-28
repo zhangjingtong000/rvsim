@@ -9,7 +9,6 @@
 #include "include/fdt.h"
 #include "include/loader.h"
 #include "include/disasm.h"
-#include "include/bus.h"
 
 static volatile sig_atomic_t g_stop = 0;
 static void on_sigint(int s) { (void)s; g_stop = 1; }

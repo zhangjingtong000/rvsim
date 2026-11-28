@@ -3,9 +3,11 @@ name: CI
 # 三套回归：riscv-tests（82 官方 + 9 定向）、能力契约、界面 e2e。
 # 本地等价命令：./scripts/ci.sh（内核）+ scripts/ui/ci-e2e.ps1（Windows 侧界面）。
 #
-# 注意：这份工作流没有在真实 GitHub runner 上跑过——本机没有 runner，
-# 只能保证命令序列和 scripts/ci.sh 一致、YAML 语法正确。
-# 第一次推送后请看一眼 Actions 页面，把实际踩到的坑补回来。
+# 这份工作流在真实 GitHub runner 上跑过：内核 job 通过；界面 job 曾在 head
+# 636898b 那轮整片失败（e2e 137/153，13.15 起连续 16 条「内核没有响应」），
+# 根因是内核 trap 入口的嵌套 trap 与 exit 路径漏切 satp，已修（见 README
+# 「CI 实际结论」）。改这里的步骤后请在 Actions 页面确认结论，不要只看本地
+# scripts/ci.sh 的结果。
 
 on:
   push:

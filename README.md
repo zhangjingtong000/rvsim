@@ -63,12 +63,19 @@ make deps && make -j4
 | **缺页处理** | 按需分配物理页 | ✅ | 实测 4 次 store page fault 后正常继续 |
 | **CoreMark** | 跑通并给出分数 | ✅ | 333 iters/sec（guest 时间，读法见「性能特征」） |
 | **可视化增强** | 反汇编 + 阶段视图 + 热图 | ✅ | 13 行反汇编、5 阶段动态点亮、512 格热图 |
-| **QEMU 语义对照** | 与 QEMU 比对计算结果 | ✅ | CoreMark 四个 CRC 一致（	ests/qemu_crosscheck.sh）+ **Linux 串口行集合一致**（	ests/qemu_linux_crosscheck.sh，uname -a 逐字节相同，ls //ree 归一化后一致） |
+| **QEMU 语义对照** | 与 QEMU 比对计算结果 | ✅ | CoreMark 四个 CRC 一致（`tests/qemu_crosscheck.sh`）+ **Linux 串口行集合一致**（`tests/qemu_linux_crosscheck.sh`，`uname -a` 逐字节相同，`ls /`、`free` 归一化后一致） |
 | Gate 7b WASM 可视化 | 浏览器调试界面 | ✅ | 94 KB wasm，Node + 浏览器双验证 |
 
 **riscv-tests：91/91（82 个官方用例 + 9 个自写定向）；能力契约：19/19；界面 e2e：153/153。**
 
-**CI**：`.github/workflows/ci.yml` 已启用，分两个 job（内核 / 界面），跑的就是「运行」一节的命令。**已在真实 GitHub Actions runner 上跑通**：内核 job 走完工具链安装 → 拉 capstone/riscv-tests → 构建 → 定向测试 → 内核回归 → 镜像同步，全部 success；界面 job 装 Playwright + chromium 后跑 `scripts/ui/e2e.js`。首次运行时界面 job 失败过一次（e2e 日志当时拿不到，未定位到具体用例），第二次全绿——这类时序敏感用例偶发失败属已知情况，日志现在会以 artifact 形式上链。本地等价物是 `./scripts/ci.sh`；缺 playwright 时想跳过必须显式加 `--allow-skip`，默认跳过即失败。
+**CI**：`.github/workflows/ci.yml` 已启用，分两个 job（内核 / 界面），跑的就是「运行」一节的命令。本地等价物是 `./scripts/ci.sh`；缺 playwright 时想跳过必须显式加 `--allow-skip`，默认跳过即失败。
+
+**CI 实际结论（2026-11-28）**：run [46105194216](https://github.com/zhangjingtong000/rvsim/actions/runs/46105194216)（head `636898b`）**界面 job 失败**——e2e **137/153**，从 `13.15 终止正在运行的进程后回到 shell` 起连续 16 条报「内核没有响应」；内核 job 通过。这个失败不是抖动：本机复现到的现场是进程表停在 `2:RUN`、终端停在 `[U] proc 0 exit(0)` 之后不再输出、cycles 还在涨，定位到内核两处问题：
+
+1. `kernel/s_entry.S` 的 trap 入口无条件用 `sscratch` 换栈。**内核态里再进 trap**（嵌套）时 `sscratch` 里是用户 sp，入口会把它当内核栈，紧接着 `sw ra,0(sp)` 就 store 缺页，再触发一次 trap → 无限递归。表现就是内核彻底静默、宿主所有下行命令 4 秒超时「内核没有响应」。
+2. `kernel/main.c` 的 `exit` 路径切进程时漏了 `proc_switch_satp(next->pgtbl)`（定时器抢占 / `yield` / `kill` 三处都切了，只有这里漏），下一个进程拿着上一个进程的页表在跑。
+
+两处修好之后，本机 `./tests/run_tests.sh all` **91/91**、界面 e2e **153/153**（同一套 `scripts/ui/e2e.js`）。修复提交之后的 CI 结论见 Actions 页面，本页 badge 显示的就是仓库最近一次运行的真实结论——不再声称「全部 success」。
 
 [![CI](https://github.com/zhangjingtong000/rvsim/actions/workflows/ci.yml/badge.svg)](https://github.com/zhangjingtong000/rvsim/actions/workflows/ci.yml)
 
@@ -92,14 +99,14 @@ make deps && make -j4
 
 | 项 | 值 |
 |---|---|
-| 模拟器源码 | **2,543 行**（`src/`，16 个文件，含 FDT 解析、反汇编适配） |
-| 迷你内核 | **6,580 行**（`kernel/`，20 个文件，含事件日志、能力清单、快照、计划、图形界面下行通道） |
-| 桌面外壳 | **3,943 行**（`web/index.html`，单文件 HTML/CSS/JS） |
+| 模拟器源码 | **2,528 行**（`src/`，16 个文件，含 FDT 解析、反汇编适配） |
+| 迷你内核 | **6,631 行**（`kernel/`，20 个文件，含事件日志、能力清单、快照、计划、图形界面下行通道） |
+| 桌面外壳 | **3,946 行**（`web/index.html`，单文件 HTML/CSS/JS） |
 | 规格文档 | `docs/ui-spec.md` 549 行 / **154 项功能**；`docs/ui-benchmark.md` 386 行 |
 | 测试 | riscv-tests **91**（82 官方 + 9 定向）+ 能力契约 **19** + 界面 e2e **153** |
 | 解释速度 | **约 25.8 MIPS**（CoreMark 12.58 亿条 / 48.7 秒墙钟；轻负载微基准可达 32） |
 | WASM 体积 | 96,112 字节（约 94 KB） |
-| 内核镜像 | 115,104 字节（`make` 编出 `build/kernel.elf` 并复制到 `web/images/kernel.elf`；`.gitignore` 忽略 `*.elf`，仓库里没有这个文件，需先构建） |
+| 内核镜像 | 115,480 字节（`make` 编出 `build/kernel.elf` 并复制到 `web/images/kernel.elf`；`.gitignore` 忽略 `*.elf`，仓库里没有这个文件，需先构建） |
 | Linux 启动 | 6.1.14，约 3 亿条指令到 shell |
 
 ## 目录
@@ -115,7 +122,12 @@ tests/          riscv-tests + 能力契约 + 批量跑分器
 scripts/ui/     界面 e2e（153 用例）与性能/尺寸测量脚本
 docs/           ui-spec.md（功能与接口契约）、ui-benchmark.md（对标表）、
                 需求/设计/调研、开发记录（CHANGELOG-review.md）
+bench/          CoreMark 上游整棵源码树（114 个文件，含 doxygen 生成的 HTML），
+                原样引入只读：`make coremark` 用它跑分。不要在这里改东西，
+                要更新就整棵替换成上游新版本。
 ```
+
+`web/images/` 里有两样东西值得说明：`kernel.elf` 是 `make` 生成的产物（`.gitignore` 忽略 `*.elf`，仓库里没有它）；`rv32ui-p-add` 是**唯一入库的 ELF**（15,480 字节，取自 riscv-tests 的 `isa/rv32ui-p-add`，与上游编译产物逐字节相同），供调试面板的「rv32ui-p-add」按钮在干净克隆里直接点开跑 ISA 自检。它没有 `.elf` 后缀，所以不受 `*.elf` 忽略规则约束——入库是有意的，不是漏网。
 
 ## AI-OS 能力
 
@@ -144,7 +156,7 @@ docs/           ui-spec.md（功能与接口契约）、ui-benchmark.md（对标
 - 完整上下文切换：`s_trap_entry` 保存 x1-x31 + 用户 `sp`，切换时整组恢复并切 `satp`
 - 缺页异常按需分配（`cause 13/15`），非法地址终止进程
 - 系统调用：`write` / `exit` / `getpid` / `yield` / `fork` / `sbrk`
-- `sscratch` 换栈 + `SUM=1` 读用户内存；优雅关机（syscon）
+- `sscratch` 换栈（按 `sstatus.SPP` 区分来源：来自 U 才换栈，内核里再进 trap 复用内核栈，不会把用户 sp 当内核栈）+ `SUM=1` 读用户内存；优雅关机（syscon）
 - 内核内 shell：37 条命令（`help` / `ps` / `run` / `reset` / `mem` / `uptime` 是最早的一批；完整清单以 `manifest` 为准）
 
 ## 代码结构要点
