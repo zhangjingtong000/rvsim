@@ -37,4 +37,7 @@ sed -i "s/rvsim\.[0-9a-f]\{10\}\.wasm/rvsim.$HASH.wasm/g; s/\"rvsim\.wasm\"/\"rv
     # rvsim.js 本身也会被缓存（它内部写着 wasm 文件名），js 也带哈希改名
     mv -f web/rvsim.js "web/rvsim.$HASH.js"
     sed -i "s|src=\"rvsim[^\"]*\.js[^\"]*\"|src=\"rvsim.$HASH.js\"|" web/index.html
+# emcc 产物的权限跟着 umask 走，CI（Linux）上可能落成 755，而仓库里记的是 644。
+# 那样「只改了 mode」也会被 CI 的 git status 当成不同步，把同步检查变成假红灯。
+chmod 644 "web/rvsim.$HASH.wasm" "web/rvsim.$HASH.js"
 echo "生成完成: rvsim.$HASH.wasm $(ls -l web/rvsim.$HASH.wasm | awk '{print $5}') 字节"
