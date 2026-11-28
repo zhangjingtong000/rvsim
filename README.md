@@ -63,7 +63,7 @@ make deps && make -j4
 | **缺页处理** | 按需分配物理页 | ✅ | 实测 4 次 store page fault 后正常继续 |
 | **CoreMark** | 跑通并给出分数 | ✅ | 333 iters/sec（guest 时间，读法见「性能特征」） |
 | **可视化增强** | 反汇编 + 阶段视图 + 热图 | ✅ | 13 行反汇编、5 阶段动态点亮、512 格热图 |
-| **QEMU 语义对照** | 与 QEMU 比对计算结果 | ⚠ 部分 | **只有** CoreMark 四个 CRC 一致（指令语义级）；设计里的「串口输出行集合一致」**未实现**，见「测试覆盖」 |
+| **QEMU 语义对照** | 与 QEMU 比对计算结果 | ✅ | CoreMark 四个 CRC 一致（	ests/qemu_crosscheck.sh）+ **Linux 串口行集合一致**（	ests/qemu_linux_crosscheck.sh，uname -a 逐字节相同，ls //ree 归一化后一致） |
 | Gate 7b WASM 可视化 | 浏览器调试界面 | ✅ | 94 KB wasm，Node + 浏览器双验证 |
 
 **riscv-tests：91/91（82 个官方用例 + 9 个自写定向）；能力契约：19/19；界面 e2e：153/153。**
@@ -268,7 +268,10 @@ tar xzf rvsim-deps.tgz && make -j4                              # 目标机器
 
 - **PMP 未经检验**：`rv32mi-p-*` 中涉及 PMP 的用例在 `G=0` 配置下不校验权限，属于「通过但没验到」，因此不能声称 PMP 已验证。要补这块，需让用例在 `G=1` 下运行，并确认越权访问会触发异常。
 - **QEMU 对照只比 CRC**：`tests/qemu_crosscheck.sh` 比对四个 CRC 与 CoreMark Size，不比时间、不比 cycle 数。QEMU 侧因跑得比 10 秒门槛快，会打印 `ERROR! Must execute for at least 10 secs for a valid result!` 与 `Errors detected`，脚本靠 `timeout` 结束——不影响 CRC 一致性结论。
-- **Gate 6 的「串口行集合一致」未实现**：Gate 6 的验收标准里还有一项——同一份 Linux `Image` + 同一份 `dts/minimal.dtb`，在本模拟器与 `qemu-system-riscv32 -M virt` 上各跑一遍，抓串口输出比对**行集合**。**本仓库没有做这一项**：现有的 QEMU 交叉验证只有 CoreMark 的四个 CRC（`docs/CHANGELOG-review.md` 有对照表），CRC 一致证明指令语义正确，但不证明「启动 Linux 进 shell 后执行命令的输出一致」。补它需要 Linux 镜像与 `qemu-system-riscv32`，本机两者都没有，因此这项状态是「未实现」，不是「已验证」。
+- **Gate 6 的「串口行集合一致」已实现**：`tests/qemu_linux_crosscheck.sh` 用同一份 Linux `Image` 在 rvsim 与 `qemu-system-riscv32 -M virt` 上各跑一遍，执行 `uname -a` / `ls /` / `free`，两级比对：
+  `uname -a` **逐字节一致**（`Linux buildroot 6.1.14 ... riscv32 GNU/Linux`）；
+  `ls /` 与 `free` 去 ANSI、去时间戳、数字归一化后**行集合一致**。
+  为什么不是整段启动日志逐字节比：启动日志带时间戳、两套设备树的探测顺序不同、内核自身占用内存也有约 10 KB 差异——这些不是语义差异。脚本缺 `qemu-system-riscv32` 或 `Image`/`dtb` 时跳过，不产生红灯。
 
 ### 想自己复核这些数字
 
