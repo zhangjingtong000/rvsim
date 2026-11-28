@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # 反复 reset，看页池占用是否上涨（泄漏）。
 set -u
-cd /home/rvsim || exit 1
+cd "$(dirname "$0")/.." || exit 1
 N="${1:-10}"
 
 OUT=$(
