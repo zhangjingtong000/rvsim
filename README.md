@@ -70,12 +70,14 @@ make deps && make -j4
 
 **CI**：`.github/workflows/ci.yml` 已启用，分两个 job（内核 / 界面），跑的就是「运行」一节的命令。本地等价物是 `./scripts/ci.sh`；缺 playwright 时想跳过必须显式加 `--allow-skip`，默认跳过即失败。
 
-**CI 实际结论（2026-11-28）**：run [46105194216](https://github.com/zhangjingtong000/rvsim/actions/runs/46105194216)（head `636898b`）**界面 job 失败**——e2e **137/153**，从 `13.15 终止正在运行的进程后回到 shell` 起连续 16 条报「内核没有响应」；内核 job 通过。这个失败不是抖动：本机复现到的现场是进程表停在 `2:RUN`、终端停在 `[U] proc 0 exit(0)` 之后不再输出、cycles 还在涨，定位到内核两处问题：
+**CI 实际结论（2026-11-28）**：两个 job 都在真实 runner 上跑过，一红一绿都记在这里：
 
-1. `kernel/s_entry.S` 的 trap 入口无条件用 `sscratch` 换栈。**内核态里再进 trap**（嵌套）时 `sscratch` 里是用户 sp，入口会把它当内核栈，紧接着 `sw ra,0(sp)` 就 store 缺页，再触发一次 trap → 无限递归。表现就是内核彻底静默、宿主所有下行命令 4 秒超时「内核没有响应」。
-2. `kernel/main.c` 的 `exit` 路径切进程时漏了 `proc_switch_satp(next->pgtbl)`（定时器抢占 / `yield` / `kill` 三处都切了，只有这里漏），下一个进程拿着上一个进程的页表在跑。
+- **修复前** run [46105194216](https://github.com/zhangjingtong000/rvsim/actions/runs/46105194216)：内核 job success；界面 job **failure**，e2e **137/153**，从 `13.15 终止正在运行的进程后回到 shell` 起连续 16 条报「内核没有响应」。不是抖动：本机复现到的现场是进程表停在 `2:RUN`、终端停在 `[U] proc 0 exit(0)` 之后不再输出、cycles 还在涨，根因是内核两处问题——
+  1. `kernel/s_entry.S` 的 trap 入口无条件用 `sscratch` 换栈。**内核态里再进 trap**（嵌套）时 `sscratch` 里是用户 sp，入口会把它当内核栈，紧接着 `sw ra,0(sp)` 就 store 缺页，再触发一次 trap → 无限递归。表现就是内核彻底静默、宿主所有下行命令 4 秒超时「内核没有响应」。
+  2. `kernel/main.c` 的 `exit` 路径切进程时漏了 `proc_switch_satp(next->pgtbl)`（定时器抢占 / `yield` / `kill` 三处都切了，只有这里漏），下一个进程拿着上一个进程的页表在跑。
+- **修复后** run [46118946829](https://github.com/zhangjingtong000/rvsim/actions/runs/46118946829)（head `910ad52`）：内核 job **success**（91/91 + 能力契约 19/19），界面 job **success**，e2e **153/153**（`13.15` PASS）。同一份代码在本机也是 91/91 + 153/153。
 
-两处修好之后，本机 `./tests/run_tests.sh all` **91/91**、界面 e2e **153/153**（同一套 `scripts/ui/e2e.js`）。修复提交之后的 CI 结论见 Actions 页面，本页 badge 显示的就是仓库最近一次运行的真实结论——不再声称「全部 success」。
+本页 badge 显示的就是仓库最近一次运行的真实结论，不再声称「全部 success」。
 
 [![CI](https://github.com/zhangjingtong000/rvsim/actions/workflows/ci.yml/badge.svg)](https://github.com/zhangjingtong000/rvsim/actions/workflows/ci.yml)
 
