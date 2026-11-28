@@ -10,7 +10,7 @@
 一台 RISC-V（RV32IMA）模拟器上运行的迷你操作系统。通过**串口**交互：
 你发送文本命令，它以文本/JSON 回应。
 
-**它不是 POSIX shell。** 没有管道、通配符、`~`、环境变量。**但有输出重定向**：`cmd > file` 会把命令输出写进文件。。
+**它不是 POSIX shell。** 没有管道、通配符、`~`、环境变量。**但有输出重定向**：`cmd > file` 会把命令输出写进文件。
 写 `ps -ef` 或 `log | tail` 一定会失败。
 
 ---
@@ -29,53 +29,55 @@ rvsh> help         # 只有命令名
 
 ## 3. 能力清单
 
+**37 条全部可调用**，与内核 `manifest` 输出的 `caps` 一致。下表由
+`scripts/gen_cap_table.py` 从 `kernel/main.c` 的 `g_caps[]` 生成，不要手改；
+改了能力表就重跑 `python3 scripts/gen_cap_table.py --write`（`--check` 只校验是否过期）。
+
+<!-- CAP-TABLE:BEGIN（由 scripts/gen_cap_table.py 生成，勿手改） -->
 | 能力 | 用法 | 说明 |
 |---|---|---|
-| `help` | `help` | 命令名列表 |
-| `manifest` | `manifest` | 全部能力的结构化清单 |
-| `guide` | `guide` | 精简版使用指南 |
-| `status` | `status` | 一次拿到 nproc/events/plans/snaps/uart_len/at_prompt |
-| `ps` | `ps` | 进程表 JSON |
-| `run` | `run <prog>` | 装载并运行，prog ∈ hello / fork / badptr |
-| `reset` | `reset` | 把进程重置到就绪 |
-| `mem` | `mem` | 物理内存与累计缺页次数 |
-| `uptime` | `uptime` | 虚拟时钟 mtime |
-| `log` | 见 §4 | 事件流 |
-| `tail` | `tail` | 最近一段串口输出 |
-| `assert` | 见 §5 | 断言 |
-| `plan` | 见 §6 | 生成计划但不执行 |
-| `plans` | `plans` | 列出待执行计划 |
-| `apply` | `apply <id>` | 执行计划（执行后计划即被消耗） |
-| `snapshot` | `snapshot` | 保存进程状态快照 |
-| `snaps` | `snaps` | 列出快照 |
-| `restore` | `restore <id>` | 回滚（不可逆） |
-| `resume` | `resume` | 让就绪进程开跑（restore/reset 之后必须用它） |
-| `replay` | `replay` | 从事件流重建存活进程，与 `ps` 交叉验证 |
-| `regs` | `regs [pid]` | 读某进程的 32 个寄存器 |
-| `setreg` | `setreg <pid> <reg> <val>` | 改写寄存器（不可逆，调试用） |
-| `setpc` | `setpc <pid> <addr>` | 改写执行点（不可逆，调试用） |
-| `verify` | `verify` | 交叉验证：trap 侧计数 vs 事件流 |
+| `help` | `help` | 列出全部命令 |
+| `manifest` | `manifest` | 输出本能力清单（机器可解析） |
+| `status` | `status` | 统一状态入口（JSON）：at_prompt 表示发命令时系统是否停在提示符 |
+| `ps` | `ps` | 进程表（JSON）：pc=用户态入口，nrun=被调度次数 |
+| `run` | `run <file>` | 装载指定程序并启动 3 个初始进程；fork 演示会额外创建子进程（共 4 个） |
+| `reset` | `reset` | 把全部进程重置到就绪 |
+| `kill` | `kill <pid>` | 结束一个用户进程并回收它的代码页/堆页/页表；正在运行的进程要在 Monitor 里终止 |
+| `suspend` | `suspend <pid>` | 让一个就绪进程退出调度 |
+| `resume-pid` | `resume-pid <pid>` | 恢复被挂起的进程并立刻切进用户态（无参数的 resume 是「让就绪进程开跑」，两者语义不同） |
+| `mem` | `mem` | 物理内存大小与累计缺页次数（自启动起） |
+| `uptime` | `uptime` | 读取虚拟时钟 mtime |
+| `log` | `log [all] \| log count [type] \| log last <n> \| log find <pid>` | 事件流：全部（带摘要）/计数/最近 n 条/按进程过滤 |
+| `tail` | `tail` | 输出最近一段串口内容，换行显示为 \| |
+| `assert` | `assert <key>=<value> \| <key>: <value> \| <key> <value>` | 断言：内核直接回答是否成立，返回 want/got/ok |
+| `plan` | `plan run <prog> \| plan reset \| plan restore <snap_id>` | 登记一个计划但不执行；用 apply <id> 执行 |
+| `plans` | `plans` | 列出待执行的计划 |
+| `apply` | `apply <plan_id>` | 执行指定计划 |
+| `snapshot` | `snapshot` | 保存当前进程状态快照，返回快照编号 |
+| `snaps` | `snaps` | 列出快照：id 用于 restore，evt_seq 是该快照时的事件序号 |
+| `restore` | `restore <snap_id>` | 恢复到指定快照（回滚，改变当前进程状态） |
+| `guide` | `guide` | 使用指南：事件字段语义、序号体系、易错点 |
+| `resume` | `resume` | 让就绪进程开始运行（restore/reset 之后用） |
+| `replay` | `replay` | 从事件流重建存活进程，与 ps 交叉验证 |
+| `regs` | `regs [pid]` | 读某进程的 32 个寄存器（默认 pid 0） |
+| `verify` | `verify` | 交叉验证：trap 侧独立计数 vs 事件流 |
+| `setreg` | `setreg <pid> <reg> <val>` | 改写进程寄存器（调试用，不可逆） |
+| `setpc` | `setpc <pid> <addr>` | 改写进程执行点（调试用，不可逆） |
+| `ls` | `ls [path]` | 列出内存文件；给路径则只列该前缀之下 |
+| `cat` | `cat <name>` | 读取文件内容 |
+| `write` | `write <name> <text>` | 写入文件（覆盖），返回字节数 |
+| `rm` | `rm <name>` | 删除文件 |
+| `mkdir` | `mkdir <path>` | 创建目录（名字里可以带 / 表示层级） |
+| `login` | `login <user>` | 切换当前用户（uid 0 是 root） |
+| `whoami` | `whoami` | 当前用户与 uid |
+| `clear` | `clear` | 清空窗口里的终端内容（不动 UART 历史） |
+| `echo` | `echo <text>` | 原样输出一段文本（不包 JSON，给欢迎语用） |
+| `chmod` | `chmod <name> <0\|1>` | 改文件权限（仅 root） |
+<!-- CAP-TABLE:END -->
 
----
-
-
-### 上面这张表不全，以 `manifest` 为准
-
-上表只列了核心能力，实际有 **37 条**。用 `manifest` 拿完整清单（机器可解析）。
-下表是上表**漏掉**的部分，都是真实可用的：
-
-| 能力 | 用途 |
-|---|---|
-| `kill <pid>` | 结束进程并回收代码页/堆页/页表 |
-| `suspend <pid>` / `resume-pid <pid>` | 挂起 / 恢复（无参数的 `resume` 是让就绪进程开跑，见上表） |
-| `ls [path]` | 列文件（可只看某个前缀） |
-| `cat <name>` | 读文件内容 |
-| `write <name> <text>` | 写文件（覆盖） |
-| `rm <name>` | 删文件 |
-| `mkdir <name>` | 建目录 |
-| `login` / `whoami` / `chmod` | 多用户与权限（uid 0 是 root） |
-| `clear` / `echo` | 清屏 / 原样输出 |
-| `cmd > file` | 输出重定向 |
+`run` 的 `<file>` 是 **RAMFS 里的任意程序**，不是固定几个名字：`run hello.elf`、
+`run fork.elf`、`run badptr.elf`、`run spin.elf` 都能跑，裸名自动补 `.bin`。
+`ls` 能看到当前装载了哪些。`manifest` 的 `run` 行参数列写的就是这一点。
 
 **有文件系统和多用户**。别绕开它们——AI 操控一个系统时，「能读写文件」和
 「知道当前是谁」是最基本的两件事。

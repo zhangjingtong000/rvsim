@@ -1,15 +1,14 @@
 > **本目录是 CoreMark 的节选，不是完整上游树。**
 >
-> 只保留 RV32 移植所需的源码（core_*.c/h、ee_printf_official.c、start_cm.S、cm_stubs.*）
-> 与许可/说明文件。已删除：
-> - docs/（doxygen 生成的 HTML，77 个文件）
-> - arebones/、linux/、macos/、cygwin/、reebsd/、posix/、
-tems/、simple/、zephyr/（其它平台的移植目录）
-> - Makefile（上游的多平台构建脚本——本仓库用顶层 Makefile 直接编译，只引用本目录的源码）
-> - .github/（上游 CI 配置）
+> 只保留 RV32 移植所需的源码（`core_*.c`、`core_portme.h`、`ee_printf_official.c`、
+> `start_cm.S`、`cm_stubs.c/h`）与许可、说明文件。已删除的内容：
+> - `docs/`：上游用 doxygen 生成的 HTML 文档，共 77 个文件
+> - 其它平台的移植目录：`barebones/`、`linux/`、`macos/`、`cygwin/`、`freebsd/`、
+>   `posix/`、`systems/`、`simple/`、`zephyr/`
+> - `Makefile`：上游的多平台构建脚本；本仓库用顶层 Makefile 直接编译，只引用本目录的源码
+> - `.github/`：上游的 CI 配置
 >
-> 构建方式见仓库顶层 Makefile 的 uild/coremark.elf 目标；许可见 LICENSE.md。
-
+> 构建方式见仓库顶层 Makefile 的 `build/coremark.elf` 目标；许可见 `LICENSE.md`。
 
 # Introduction
 

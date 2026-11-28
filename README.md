@@ -14,6 +14,16 @@
 
 面向 AI 的使用说明见 `docs/ai-guide.md`；终端内可执行 `guide` 与 `manifest`。
 
+![桌面：终端 / Monitor / Files](docs/screenshots/desktop.png)
+
+**界面三件套**：桌面外壳（上图）、终端（贴到内核的真实 shell）、Monitor（进程表）。
+
+| 终端 | Monitor |
+|---|---|
+| ![终端](docs/screenshots/terminal.png) | ![Monitor](docs/screenshots/monitor.png) |
+
+截图由 `node scripts/ui/screenshots.js` 生成（起静态服务后跑，需要 playwright）。
+
 ## 30 秒验证
 
 只想确认「这套东西能不能跑」，下面三条命令就够（干净克隆，Linux/WSL；第一条会联网拉
@@ -28,15 +38,18 @@ make deps && make -j4
 本机实测输出（gcc 13 + riscv64-unknown-elf-gcc）：
 
 ```
-[rvsim] ELF=tests/riscv-tests/isa/rv32ui-p-add entry=0x80000000 装载=9492 字节 tohost=0x80001000
+[rvsim] ELF=tests/riscv-tests/isa/rv32ui-p-add entry=0x80000000 装载=<N> 字节 tohost=0x80001000
 [rvsim] 开始执行，max_cycles=50000000
 [rvsim] 停止：执行 512 条指令，cycles=512，priv=3，pc=0x8000004c
 [rvsim] 结果：PASS
 ```
 
+`装载=<N>` 不写死：riscv-tests 没有固定 commit，同一份用例在不同拉取时刻编出来的字节数会变
+（本仓库实测过 9492 与 1796 两种），把它当精确输出就复现不了。**判定只看最后一行 `PASS`。**
+
 这三条只证明「依赖拉齐了 + 模拟器编出来了 + 能跑完一条 RV32I 自检」。完整的 91 项回归、19 项能力契约、153 项界面 e2e 见「测试覆盖」；网络受限时先看「离线 / 网络受限时怎么构建」。
 
-## 当前状态（2026-11-21）
+## 当前状态（2026-11-28）
 
 > **这些状态数字的来源与可复核性**：下表与后文的实测值都来自**开发机上的完整构建**
 > （2026-11-21 那一轮，Linux/WSL + gcc 13 + riscv64-unknown-elf-gcc）。
@@ -64,7 +77,7 @@ make deps && make -j4
 | **CoreMark** | 跑通并给出分数 | ✅ | 333 iters/sec（guest 时间，读法见「性能特征」） |
 | **可视化增强** | 反汇编 + 阶段视图 + 热图 | ✅ | 13 行反汇编、5 阶段动态点亮、512 格热图 |
 | **QEMU 语义对照** | 与 QEMU 比对计算结果 | ✅ | CoreMark 四个 CRC 一致（`tests/qemu_crosscheck.sh`）+ **Linux 串口行集合一致**（`tests/qemu_linux_crosscheck.sh`，`uname -a` 逐字节相同，`ls /`、`free` 归一化后一致） |
-| Gate 7b WASM 可视化 | 浏览器调试界面 | ✅ | 94 KB wasm，Node + 浏览器双验证 |
+| Gate 7b WASM 可视化 | 浏览器调试界面 | ✅ | 95 KB wasm，Node + 浏览器双验证 |
 
 **riscv-tests：91/91（82 个官方用例 + 9 个自写定向）；能力契约：19/19；界面 e2e：153/153。**
 
@@ -101,13 +114,13 @@ make deps && make -j4
 
 | 项 | 值 |
 |---|---|
-| 模拟器源码 | **2,528 行**（`src/`，16 个文件，含 FDT 解析、反汇编适配） |
-| 迷你内核 | **6,631 行**（`kernel/`，20 个文件，含事件日志、能力清单、快照、计划、图形界面下行通道） |
+| 模拟器源码 | **2,542 行**（`src/`，16 个文件，含 FDT 解析、反汇编适配） |
+| 迷你内核 | **6,638 行**（`kernel/`，20 个文件，含事件日志、能力清单、快照、计划、图形界面下行通道） |
 | 桌面外壳 | **3,946 行**（`web/index.html`，单文件 HTML/CSS/JS） |
 | 规格文档 | `docs/ui-spec.md` 549 行 / **154 项功能**；`docs/ui-benchmark.md` 386 行 |
 | 测试 | riscv-tests **91**（82 官方 + 9 定向）+ 能力契约 **19** + 界面 e2e **153** |
 | 解释速度 | **约 25.8 MIPS**（CoreMark 12.58 亿条 / 48.7 秒墙钟；轻负载微基准可达 32） |
-| WASM 体积 | 96,112 字节（约 94 KB） |
+| WASM 体积 | 96,935 字节（约 95 KB；`scripts/build_wasm.sh` 产出，文件名带内容哈希） |
 | 内核镜像 | 115,480 字节（`make` 编出 `build/kernel.elf` 并复制到 `web/images/kernel.elf`；`.gitignore` 忽略 `*.elf`，仓库里没有这个文件，需先构建） |
 | Linux 启动 | 6.1.14，约 3 亿条指令到 shell |
 
@@ -121,12 +134,13 @@ web/            桌面外壳：index.html（结构+样式+逻辑）、WASM 运�
                 （rvsim.<hash>.js/.wasm，脚本生成）、images/kernel.elf（make 生成）
 dts/            自写设备树
 tests/          riscv-tests + 能力契约 + 批量跑分器
-scripts/ui/     界面 e2e（153 用例）与性能/尺寸测量脚本
+scripts/        构建与统计：build_wasm.sh、fetch_deps.sh、gen_cap_table.py、count_lines.py
+scripts/ui/     界面 e2e（153 用例）、界面截图（screenshots.js）与性能/尺寸测量脚本
 docs/           ui-spec.md（功能与接口契约）、ui-benchmark.md（对标表）、
-                需求/设计/调研、开发记录（CHANGELOG-review.md）
-bench/          CoreMark 上游整棵源码树（114 个文件，含 doxygen 生成的 HTML），
-                原样引入只读：`make coremark` 用它跑分。不要在这里改东西，
-                要更新就整棵替换成上游新版本。
+                screenshots/（README 顶部三张截图）、需求/设计/调研、开发记录（CHANGELOG-review.md）
+bench/          CoreMark 的节选（16 个文件）：RV32 移植用的源码 + 许可/说明，
+                只读引用，`make coremark` 用它跑分。已裁掉上游的多平台移植目录
+                与 doxygen 文档，不是完整上游树；要更新就整棵换成上游新版本。
 ```
 
 `web/images/` 里有两样东西值得说明：`kernel.elf` 是 `make` 生成的产物（`.gitignore` 忽略 `*.elf`，仓库里没有它）；`rv32ui-p-add` 是**唯一入库的 ELF**（15,480 字节，取自 riscv-tests 的 `isa/rv32ui-p-add`，与上游编译产物逐字节相同），供调试面板的「rv32ui-p-add」按钮在干净克隆里直接点开跑 ISA 自检。它没有 `.elf` 后缀，所以不受 `*.elf` 忽略规则约束——入库是有意的，不是漏网。
@@ -242,6 +256,39 @@ make dts                      # 构建 dts/minimal.dtb（需要 dtc，仅手动�
 
 缺 capstone 时 `make` 会直接提示 `先执行：make deps`，不会只丢一个 `capstone.h not found`。
 
+### 界面 e2e 前置（Linux / WSL / Windows）
+
+e2e 跑的是真实浏览器驱动真实前端，比 `run_tests.sh` 多三道门槛，缺哪道都会失败：
+
+1. **Node ≥ 20**。Ubuntu 24.04 的 `apt install nodejs` 给的是 **18.19**，`node scripts/ui/e2e.js`
+   会在 `require("playwright")` 之后直接因版本不足退出。用 nvm 或 NodeSource 装 20/22。
+2. **Playwright + 浏览器依赖**。`npm i -D playwright && npx playwright install --with-deps chromium`。
+   `--with-deps` 会装系统库；只做 `install chromium` 时常见的报错是缺 `libatk-1.0.so.0`
+   （以及 `libnss3`、`libgbm` 一类），浏览器进程根本起不来。
+3. **前端静态服务**。e2e 默认连 `http://127.0.0.1:8799/index.html`：
+
+   ```bash
+   cd web && python3 -m http.server 8799 &
+   node scripts/ui/e2e.js          # 153 个用例
+   node scripts/ui/e2e.js --grep 13.  # 只跑某一组
+   ```
+
+   换地址用 `RVSIM_URL`，指定浏览器用 `CHROME`（默认自动找 Windows 的 Chrome / Linux 的
+   `chromium`，都没有就用 Playwright 自带的那份）。
+
+**Windows 侧单列一条**：WSL 里通常没有 Chrome，界面 e2e 要在 Windows 跑。仓库自带
+`scripts/ui/ci-e2e.ps1`，它从脚本位置推出仓库根、自动起前端服务并跑 e2e：
+
+```powershell
+powershell -File scripts/ui/ci-e2e.ps1    # 或 pwsh -File（PowerShell 7）
+```
+
+它依赖 `NODE_PATH` 能找到 playwright（脚本会先找全局 npm 根下的 `@playwright/mcp`，
+Windows PowerShell 5.1 与 PowerShell 7 都能跑）。CI 的界面 job 用 `ubuntu-latest` +
+`node 20` + `npx playwright install --with-deps chromium`，与上面三条门槛一一对应。
+
+截图也用同一套依赖：`node scripts/ui/screenshots.js` 生成 `docs/screenshots/` 里的三张图。
+
 ### 离线 / 网络受限时怎么构建
 
 `make deps`（即 `./scripts/fetch_deps.sh all`）实际做两件联网的事：
@@ -276,7 +323,7 @@ tar xzf rvsim-deps.tgz && make -j4                              # 目标机器
 | 能力契约 `tests/contract.js` | 19 | manifest / assert / plan / snapshot 等能力层 |
 | 界面 e2e `scripts/ui/e2e.js` | 153 | 桌面外壳：窗口 / 终端 / 文件 / 进程 / 菜单 / 键盘 |
 
-前两套在 `./tests/run_tests.sh all` 里；界面 e2e 单独跑（需要 node + playwright + 浏览器），由 `./scripts/ci.sh` 串起来。**`run_tests.sh` 绿了不等于全绿。**
+前两套在 `./tests/run_tests.sh all` 里；界面 e2e 单独跑（需要 node ≥ 20 + playwright + 浏览器，前置见「界面 e2e 前置」），由 `./scripts/ci.sh` 串起来。**`run_tests.sh` 绿了不等于全绿。**
 
 三条口径说明：
 
