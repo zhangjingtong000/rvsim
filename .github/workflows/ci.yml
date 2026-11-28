@@ -1,7 +1,9 @@
 name: CI
 
-# 三套回归：riscv-tests（82 官方 + 9 定向）、能力契约、界面 e2e。
-# 本地等价命令：./scripts/ci.sh（内核）+ scripts/ui/ci-e2e.ps1（Windows 侧界面）。
+# 三套回归：riscv-tests（82 官方 + 9 定向）、能力契约、界面 e2e；
+# 外加一项「入库的 wasm 是否由当前源码生成」的同步检查。
+# 本地等价命令：./scripts/ci.sh（内核）+ scripts/ui/ci-e2e.ps1（Windows 侧界面）
+# + ./scripts/build_wasm.sh（wasm）。
 #
 # 这份工作流在真实 GitHub runner 上跑过：内核 job 通过；界面 job 曾在 head
 # 636898b 那轮整片失败（e2e 137/153，13.15 起连续 16 条「内核没有响应」），
@@ -98,3 +100,39 @@ jobs:
             e2e.log
             *.log
           if-no-files-found: warn
+
+  # 入库的 wasm 曾经停在 11-19，而 src/bus.c、src/exec.c 在 11-22 还改过——
+  # 网页演示一直跑着缺两处修复的旧二进制，两个 job 却都绿。这个 job 就是为了
+  # 让「改了源码忘了重建 wasm」永久变成红灯。
+  #
+  # 用 ubuntu-24.04 而不是 latest：wasm 字节受 emcc 版本影响，而 emscripten
+  # （3.1.6~dfsg-7）由 apt 提供。换 runner 镜像前先在本地重跑一次比对。
+  wasm:
+    name: wasm 与源码同步
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安装 Emscripten
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            emscripten make curl ca-certificates
+          emcc --version | head -1
+
+      - name: 拉 capstone（wasm 必须把 capstone 一起编进去）
+        run: ./scripts/fetch_deps.sh capstone
+
+      - name: 重建 wasm 并检查入库版本是否与源码一致
+        run: |
+          ./scripts/build_wasm.sh
+          # 同步时：生成的文件名与仓库里那份相同，web/ 下无任何改动。
+          # 不同步时：多了新哈希的 .wasm/.js，index.html 也被改写。
+          if [ -n "$(git status --porcelain -- web)" ]; then
+            echo "::error::web/ 里的 wasm 与源码不同步。本地重跑 ./scripts/build_wasm.sh，把生成物一起提交。"
+            git status --porcelain -- web
+            git diff -- web/index.html
+            exit 1
+          fi
+          echo "wasm 与源码一致"

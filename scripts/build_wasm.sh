@@ -26,7 +26,7 @@ emcc -O2 -s WASM=1 -s MODULARIZE=1 -s EXPORT_NAME=createRvsim \
   -I src/include -I third_party/capstone/include -I third_party/capstone -I third_party/capstone/arch/RISCV \
   -DCAPSTONE_HAS_RISCV -DCAPSTONE_USE_SYS_DYN_MEM=1 \
   -o web/rvsim.js \
-  web/wasm_entry.c src/exec.c src/csr.c src/bus.c src/mmu.c src/loader_mem.c src/fdt.c src/disasm.c \
+  web/wasm_entry.c src/exec.c src/csr.c src/bus.c src/mmu.c src/loader.c src/fdt.c src/disasm.c \
   $CAPSTONE
 
 # 给 wasm 文件名带上内容哈希：浏览器缓存太顽固，

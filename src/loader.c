@@ -45,20 +45,19 @@ static u8 *read_file(const char *path, long *sz)
     return buf;
 }
 
-bool loader_load_elf(const char *path, loaded_t *out)
+/* 解析一份 ELF32 镜像。buf 可能来自不可信文件（网页的「导入 .elf」），
+   所以每个偏移都先验界。原生 loader_load_elf 与 WASM 的
+   loader_load_elf_mem 共用这一份解析，不留第二份复制粘贴。 */
+static bool loader_parse(const u8 *buf, long sz, loaded_t *out)
 {
     memset(out, 0, sizeof(*out));
-    long sz = 0;
-    u8 *buf = read_file(path, &sz);
-    if (!buf) { fprintf(stderr, "loader: 打不开 %s\n", path); return false; }
-
-    if (sz < (long)sizeof(elf32_ehdr_t)) { free(buf); return false; }
+    if (sz < (long)sizeof(elf32_ehdr_t)) return false;
     elf32_ehdr_t *eh = (elf32_ehdr_t *)buf;
     if (eh->e_ident[0] != 0x7F || eh->e_ident[1] != 'E' ||
         eh->e_ident[2] != 'L'  || eh->e_ident[3] != 'F') {
-        fprintf(stderr, "loader: 不是 ELF\n"); free(buf); return false;
+        fprintf(stderr, "loader: 不是 ELF\n"); return false;
     }
-    if (eh->e_ident[4] != 1) { fprintf(stderr, "loader: 不是 ELF32\n"); free(buf); return false; }
+    if (eh->e_ident[4] != 1) { fprintf(stderr, "loader: 不是 ELF32\n"); return false; }
 
     /* 文件头里的偏移和数量全部来自不可信文件，做指针算术前先逐个验界。
        原来的写法直接 buf + e_phoff + i * e_phentsize，一个
@@ -67,11 +66,11 @@ bool loader_load_elf(const char *path, loaded_t *out)
     if (eh->e_phentsize != sizeof(elf32_phdr_t)) {
         fprintf(stderr, "loader: e_phentsize=%u 不是 %zu\n",
                 eh->e_phentsize, sizeof(elf32_phdr_t));
-        free(buf); return false;
+        return false;
     }
     if (eh->e_phoff > (u32)sz ||
         (u64)eh->e_phoff + (u64)eh->e_phnum * sizeof(elf32_phdr_t) > (u64)sz) {
-        fprintf(stderr, "loader: 程序头表越界\n"); free(buf); return false;
+        fprintf(stderr, "loader: 程序头表越界\n"); return false;
     }
 
     out->entry = eh->e_entry;
@@ -82,15 +81,15 @@ bool loader_load_elf(const char *path, loaded_t *out)
         if (ph->p_type != PT_LOAD) continue;
         /* 减法判上界：p_offset + p_filesz 在 u32 里会回绕 */
         if (ph->p_offset > (u32)sz || ph->p_filesz > (u32)sz - ph->p_offset) {
-            fprintf(stderr, "loader: 段越界\n"); free(buf); return false;
+            fprintf(stderr, "loader: 段越界\n"); return false;
         }
         if (ph->p_filesz > ph->p_memsz) {
-            fprintf(stderr, "loader: p_filesz > p_memsz\n"); free(buf); return false;
+            fprintf(stderr, "loader: p_filesz > p_memsz\n"); return false;
         }
         u8 *dst = bus_ram();
         if (ph->p_paddr < RAM_BASE || (u64)ph->p_paddr + ph->p_memsz > (u64)RAM_BASE + RAM_SIZE) {
             fprintf(stderr, "loader: 段 0x%08x 超出 RAM\n", ph->p_paddr);
-            free(buf); return false;
+            return false;
         }
         u32 off = ph->p_paddr - RAM_BASE;
         memcpy(dst + off, buf + ph->p_offset, ph->p_filesz);
@@ -105,7 +104,7 @@ bool loader_load_elf(const char *path, loaded_t *out)
         if (eh->e_shentsize != sizeof(elf32_shdr_t) ||
             eh->e_shoff > (u32)sz ||
             (u64)eh->e_shoff + (u64)eh->e_shnum * sizeof(elf32_shdr_t) > (u64)sz) {
-            fprintf(stderr, "loader: 节头表越界\n"); free(buf); return false;
+            fprintf(stderr, "loader: 节头表越界\n"); return false;
         }
         elf32_shdr_t *shs = (elf32_shdr_t *)(buf + eh->e_shoff);
         for (u32 i = 0; i < eh->e_shnum; i++) {
@@ -132,8 +131,27 @@ bool loader_load_elf(const char *path, loaded_t *out)
         }
     }
 
-    free(buf);
     return true;
+}
+
+/* 文件入口：读盘后交给 loader_parse。 */
+bool loader_load_elf(const char *path, loaded_t *out)
+{
+    long sz = 0;
+    u8 *buf = read_file(path, &sz);
+    if (!buf) { fprintf(stderr, "loader: 打不开 %s\n", path); return false; }
+    bool ok = loader_parse(buf, sz, out);
+    free(buf);
+    return ok;
+}
+
+/* 内存入口：WASM 前端把 .elf 读进 heap 后调用这里，不走 fopen。
+   以前它在 src/loader_mem.c 里是 loader.c 的复制粘贴；删掉那个死文件时
+   必须把这条路径迁到本文件，否则 wasm 构建链接失败。 */
+bool loader_load_elf_mem(const u8 *buf, long sz, loaded_t *out)
+{
+    if (!buf || sz <= 0) return false;
+    return loader_parse(buf, sz, out);
 }
 
 bool loader_load_raw(const char *path, u32 addr, u32 *entry_out, u32 *size_out)
