@@ -81,14 +81,16 @@ make deps && make -j4
 
 **riscv-tests：91/91（82 个官方用例 + 9 个自写定向）；能力契约：19/19；界面 e2e：153/153。**
 
-**CI**：`.github/workflows/ci.yml` 已启用，分两个 job（内核 / 界面），跑的就是「运行」一节的命令。本地等价物是 `./scripts/ci.sh`；缺 playwright 时想跳过必须显式加 `--allow-skip`，默认跳过即失败。
+**CI**：`.github/workflows/ci.yml` 已启用，分三个 job（内核 / 界面 / wasm 与源码同步），跑的就是「运行」一节的命令加 `scripts/build_wasm.sh`。本地等价物是 `./scripts/ci.sh`；缺 playwright 时想跳过必须显式加 `--allow-skip`，默认跳过即失败。
 
-**CI 实际结论（2026-11-28）**：两个 job 都在真实 runner 上跑过，一红一绿都记在这里：
+**CI 实际结论（2026-11-28）**：三个 job 都在真实 runner 上跑过，一红一绿都记在这里：
 
 - **修复前** run [46105194216](https://github.com/zhangjingtong000/rvsim/actions/runs/46105194216)：内核 job success；界面 job **failure**，e2e **137/153**，从 `13.15 终止正在运行的进程后回到 shell` 起连续 16 条报「内核没有响应」。不是抖动：本机复现到的现场是进程表停在 `2:RUN`、终端停在 `[U] proc 0 exit(0)` 之后不再输出、cycles 还在涨，根因是内核两处问题——
   1. `kernel/s_entry.S` 的 trap 入口无条件用 `sscratch` 换栈。**内核态里再进 trap**（嵌套）时 `sscratch` 里是用户 sp，入口会把它当内核栈，紧接着 `sw ra,0(sp)` 就 store 缺页，再触发一次 trap → 无限递归。表现就是内核彻底静默、宿主所有下行命令 4 秒超时「内核没有响应」。
   2. `kernel/main.c` 的 `exit` 路径切进程时漏了 `proc_switch_satp(next->pgtbl)`（定时器抢占 / `yield` / `kill` 三处都切了，只有这里漏），下一个进程拿着上一个进程的页表在跑。
 - **修复后** run [46118946829](https://github.com/zhangjingtong000/rvsim/actions/runs/46118946829)（head `910ad52`）：内核 job **success**（91/91 + 能力契约 19/19），界面 job **success**，e2e **153/153**（`13.15` PASS）。同一份代码在本机也是 91/91 + 153/153。
+- **加到三个 job 后** run [46128425339](https://github.com/zhangjingtong000/rvsim/actions/runs/46128425339)（head `e0ee06e`）：三个 job **全 success**，wasm job 用 24 秒跑完（拉 capstone + 重建 + 比对）。
+  这个 job 第一次跑（run [46127967857](https://github.com/zhangjingtong000/rvsim/actions/runs/46127967857)）其实红过一次，但**不是** wasm 真不同步：日志里重新生成的仍是 `rvsim.27dd04ea1f.wasm`（md5 前 10 位一致）、大小也一样，只有 git 认为文件被改——emcc 在 Linux runner 上把产物落成 755，而仓库记的是 644。`build_wasm.sh` 末尾补 `chmod 644` 后转绿。这条保留在案：新增的检查本身也得验证不会假红。
 
 本页 badge 显示的就是仓库最近一次运行的真实结论，不再声称「全部 success」。
 
